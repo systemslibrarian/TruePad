@@ -1,0 +1,682 @@
+/* ============================================================================
+ * TruePad exhibit theme
+ * Dark reading-room palette: near-black paper, pad symbols in phosphor gold,
+ * burns in ember red. All layout is fluid; no breakpoint hides content.
+ * ========================================================================= */
+
+:root {
+  --paper: #11100c;
+  --panel: #191712;
+  --panel-edge: #2a2619;
+  --ink: #e8e2d2;
+  --ink-dim: #a89f88;
+  --gold: #e8b84b;
+  --gold-dim: #8a712f;
+  --ember: #e05d44;
+  --ember-dim: #5c2a22;
+  --safe: #7fb069;
+  --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0 auto;
+  max-width: 68rem;
+  padding: 2rem 1.25rem 4rem;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 1rem/1.6 Georgia, "Times New Roman", serif;
+}
+
+a {
+  color: var(--gold);
+}
+
+code,
+output,
+textarea,
+input,
+select,
+.pad-grid,
+.candidates,
+.pad-label {
+  font-family: var(--mono);
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* ---- masthead ---------------------------------------------------------- */
+
+.masthead h1 {
+  font-size: clamp(2.4rem, 6vw, 3.6rem);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.masthead .accent {
+  color: var(--gold);
+}
+
+.tagline {
+  max-width: 46rem;
+  color: var(--ink-dim);
+  font-size: 1.05rem;
+}
+
+.conditions {
+  list-style: none;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.75rem;
+}
+
+.conditions li {
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-top: 3px solid var(--gold-dim);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.9rem;
+  color: var(--ink-dim);
+}
+
+.conditions strong {
+  display: block;
+  color: var(--ink);
+  margin-bottom: 0.3rem;
+}
+
+/* ---- stations ---------------------------------------------------------- */
+
+.station {
+  margin-top: 3.5rem;
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 0.75rem;
+  padding: 1.5rem 1.75rem 1.75rem;
+}
+
+.station h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+}
+
+.step {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  margin-right: 0.5rem;
+  border-radius: 50%;
+  background: var(--gold);
+  color: var(--paper);
+  font-size: 1.1rem;
+  vertical-align: 0.1em;
+}
+
+.lede {
+  color: var(--ink-dim);
+  max-width: 52rem;
+  margin-top: 0.25rem;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-end;
+  margin: 1rem 0;
+}
+
+label,
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--ink-dim);
+}
+
+input,
+select,
+textarea {
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--panel-edge);
+  border-radius: 0.4rem;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.95rem;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+summary:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+textarea {
+  resize: vertical;
+  width: 100%;
+}
+
+button {
+  cursor: pointer;
+  border: 1px solid var(--panel-edge);
+  border-radius: 0.4rem;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0.55rem 1.1rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+}
+
+button.primary {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: var(--paper);
+  font-weight: 700;
+}
+
+button:hover {
+  filter: brightness(1.12);
+}
+
+/* ---- pad grid & ledger -------------------------------------------------- */
+
+.pad-identity {
+  display: flex;
+  gap: 1rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.pad-label {
+  color: var(--gold);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.pad-summary {
+  color: var(--ink-dim);
+  font-size: 0.85rem;
+}
+
+.pad-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+}
+
+.pad-grid .cell {
+  min-width: 1.9em;
+  text-align: center;
+  padding: 0.25em 0.2em;
+  border-radius: 0.25rem;
+  background: #201d14;
+  border: 1px solid var(--panel-edge);
+  color: var(--gold);
+}
+
+.pad-grid .cell.burned {
+  background: var(--ember-dim);
+  border-color: var(--ember-dim);
+  color: var(--ember);
+  text-decoration: line-through;
+}
+
+@keyframes burn-flash {
+  from {
+    background: var(--ember);
+    color: var(--paper);
+  }
+}
+
+.pad-grid .cell.just-burned {
+  animation: burn-flash 0.9s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pad-grid .cell.just-burned {
+    animation: none;
+  }
+}
+
+.ledger {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2.5rem;
+  margin: 1.25rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--panel-edge);
+}
+
+.ledger div {
+  display: flex;
+  flex-direction: column;
+}
+
+.ledger dt {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-dim);
+}
+
+.ledger dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 1.05rem;
+}
+
+.ledger .motto dd {
+  color: var(--gold);
+  font-style: italic;
+  font-family: Georgia, serif;
+}
+
+/* ---- meter -------------------------------------------------------------- */
+
+.meter {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: var(--paper);
+  border: 1px solid var(--panel-edge);
+  border-radius: 0.5rem;
+}
+
+.meter-row {
+  display: grid;
+  grid-template-columns: 8.5rem 1fr 4.5rem;
+  gap: 0.75rem;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--ink-dim);
+  margin-bottom: 0.5rem;
+}
+
+.meter-track {
+  height: 0.9rem;
+  background: #201d14;
+  border-radius: 0.45rem;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 0.45rem;
+  transition: width 0.3s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meter-fill {
+    transition: none;
+  }
+}
+
+.meter-fill.message {
+  background: var(--ink-dim);
+}
+
+.meter-fill.pad {
+  background: var(--gold);
+}
+
+.meter.low .meter-fill.pad {
+  background: #d99b2b;
+}
+
+.meter.exhausted .meter-fill.message {
+  background: var(--ember);
+}
+
+.meter-value {
+  text-align: right;
+  font-family: var(--mono);
+  color: var(--ink);
+}
+
+.meter-status {
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
+  color: var(--ink-dim);
+}
+
+.meter.low .meter-status {
+  color: #d99b2b;
+}
+
+.meter.exhausted .meter-status {
+  color: var(--ember);
+  font-weight: 700;
+}
+
+/* ---- refusal wall & wire card ------------------------------------------ */
+
+.refusal {
+  margin: 1rem 0;
+  padding: 1rem 1.25rem;
+  border: 2px solid var(--ember);
+  border-radius: 0.5rem;
+  background: var(--ember-dim);
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
+.wire {
+  margin-top: 1.25rem;
+  border: 1px dashed var(--gold-dim);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  background: var(--paper);
+}
+
+.wire h3 {
+  margin: 0;
+  color: var(--gold);
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.wire-note {
+  color: var(--ink-dim);
+  font-size: 0.85rem;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.wire dl {
+  margin: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.wire dt {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-dim);
+}
+
+.wire dd {
+  margin: 0;
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.wire-cipher dd {
+  color: var(--gold);
+  font-size: 1.05rem;
+  letter-spacing: 0.05em;
+}
+
+/* ---- receiver ----------------------------------------------------------- */
+
+.receiver-state {
+  color: var(--ink-dim);
+  font-size: 0.95rem;
+}
+
+.recovered {
+  margin-top: 1rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--safe);
+  border-radius: 0.5rem;
+  background: rgba(127, 176, 105, 0.08);
+}
+
+.recovered-title {
+  display: block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--safe);
+  margin-bottom: 0.3rem;
+}
+
+.recovered output {
+  font-size: 1.1rem;
+  letter-spacing: 0.05em;
+  overflow-wrap: anywhere;
+}
+
+/* ---- verdict ------------------------------------------------------------ */
+
+.verdict-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  align-items: center;
+  color: var(--ink-dim);
+  font-size: 0.9rem;
+  margin: 1rem 0;
+}
+
+.verdict-controls output {
+  color: var(--ink);
+  font-family: var(--mono);
+}
+
+.verdict-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+  gap: 1rem;
+}
+
+.verdict-card {
+  background: var(--paper);
+  border: 1px solid var(--panel-edge);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+}
+
+.verdict-card h3 {
+  margin: 0 0 0.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.05rem;
+}
+
+.verdict-card ol {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.verdict-card li {
+  display: grid;
+  grid-template-columns: 1.6rem 1fr;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+  color: var(--ink-dim);
+}
+
+.verdict-card li strong {
+  display: block;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.badge {
+  display: inline-grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.badge.pass {
+  background: rgba(127, 176, 105, 0.18);
+  color: var(--safe);
+}
+
+.badge.fail {
+  background: var(--ember-dim);
+  color: var(--ember);
+}
+
+.chip {
+  font-size: 0.7rem;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 1rem;
+  border: 1px solid var(--ember);
+  color: var(--ember);
+  white-space: nowrap;
+}
+
+.chip.safe {
+  border-color: var(--safe);
+  color: var(--safe);
+}
+
+.verdict-bits {
+  color: var(--ink-dim);
+  font-size: 0.8rem;
+  font-family: var(--mono);
+  margin: 0.25rem 0 0;
+}
+
+/* ---- attack ------------------------------------------------------------- */
+
+.attack-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+.attack-card {
+  background: var(--paper);
+  border: 1px solid var(--panel-edge);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  min-width: 0;
+}
+
+.attack-card h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.cipher-line {
+  margin: 0.2rem 0;
+  font-size: 0.85rem;
+  color: var(--ink-dim);
+}
+
+.cipher-line code {
+  color: var(--gold);
+  overflow-wrap: anywhere;
+  letter-spacing: 0.04em;
+}
+
+.attack-explain {
+  font-size: 0.85rem;
+  color: var(--ink-dim);
+}
+
+.candidates {
+  max-height: 16rem;
+  overflow-y: auto;
+  border: 1px solid var(--panel-edge);
+  border-radius: 0.4rem;
+  font-size: 0.8rem;
+}
+
+.candidates .cand {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr 5.5rem;
+  gap: 0.75rem;
+  padding: 0.3rem 0.6rem;
+  border-bottom: 1px solid #201d14;
+  color: var(--ink-dim);
+}
+
+.candidates .cand:last-child {
+  border-bottom: none;
+}
+
+.candidates .cand .frag {
+  letter-spacing: 0.1em;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.candidates .cand .score {
+  text-align: right;
+}
+
+.candidates .cand.leak {
+  background: var(--ember-dim);
+  color: var(--ink);
+}
+
+.candidates .cand.leak .frag,
+.candidates .cand.leak .score {
+  color: var(--ember);
+  font-weight: 700;
+}
+
+.attack-reveal {
+  margin-top: 1rem;
+  color: var(--ink-dim);
+  font-size: 0.9rem;
+}
+
+.attack-reveal summary {
+  cursor: pointer;
+  color: var(--gold);
+}
+
+.attack-reveal code {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* ---- footer ------------------------------------------------------------- */
+
+.colophon {
+  margin-top: 4rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--panel-edge);
+  color: var(--ink-dim);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.motto-line {
+  font-style: italic;
+  color: var(--gold-dim);
+  letter-spacing: 0.05em;
+}

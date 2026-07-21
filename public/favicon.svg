@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- A pad page: 5×5 one-time-pad symbols, the first seven already burned. -->
+  <rect width="64" height="64" rx="12" fill="#11100c"/>
+  <g>
+    <!-- burned (spent) cells -->
+    <rect x="8"  y="8"  width="8" height="8" rx="1.5" fill="#5c2a22"/>
+    <rect x="18" y="8"  width="8" height="8" rx="1.5" fill="#5c2a22"/>
+    <rect x="28" y="8"  width="8" height="8" rx="1.5" fill="#5c2a22"/>
+    <rect x="38" y="8"  width="8" height="8" rx="1.5" fill="#5c2a22"/>
+    <rect x="48" y="8"  width="8" height="8" rx="1.5" fill="#5c2a22"/>
+    <rect x="8"  y="18" width="8" height="8" rx="1.5" fill="#5c2a22"/>
+    <rect x="18" y="18" width="8" height="8" rx="1.5" fill="#5c2a22"/>
+    <!-- surviving cells -->
+    <rect x="28" y="18" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="38" y="18" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="48" y="18" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="8"  y="28" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="18" y="28" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="28" y="28" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="38" y="28" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="48" y="28" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="8"  y="38" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="18" y="38" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="28" y="38" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="38" y="38" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="48" y="38" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="8"  y="48" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="18" y="48" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="28" y="48" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="38" y="48" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+    <rect x="48" y="48" width="8" height="8" rx="1.5" fill="#e8b84b"/>
+  </g>
+</svg>
