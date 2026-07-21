@@ -1,0 +1,36 @@
+{
+  "name": "truepad",
+  "version": "0.1.0",
+  "description": "TruePad — a true one-time pad exhibit, the honest sibling of DeckBook",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/systemslibrarian/TruePad.git"
+  },
+  "keywords": [
+    "cryptography",
+    "education",
+    "one-time-pad",
+    "cipher",
+    "shannon"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/systemslibrarian/TruePad/issues"
+  },
+  "homepage": "https://github.com/systemslibrarian/TruePad#readme",
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vite": "^8.1.3",
+    "vite-plugin-pwa": "^1.3.0",
+    "vitest": "^4.1.9"
+  }
+}

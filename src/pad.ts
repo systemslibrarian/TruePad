@@ -1,0 +1,251 @@
+/* ============================================================================
+ * TruePad pad core
+ * ----------------------------------------------------------------------------
+ * Pure functions and one small class. No DOM, no localStorage, no CSS imports.
+ * Everything in this file can be unit-tested in a plain Node test runner.
+ *
+ * A TruePad pad is the real thing DeckBook only gestures at:
+ *
+ *   - Every pad symbol is a fresh, independent uniform draw backed by
+ *     crypto.getRandomValues() with rejection sampling. No deck, no
+ *     permutation, no mod-26 folding of a larger range. Never Math.random().
+ *   - Letter mode draws one uniform value 0..25 per symbol (log2 26 ≈ 4.700
+ *     bits each). Byte mode draws one uniform byte 0..255 (8 bits each).
+ *   - Consuming a symbol BURNS it: the value is deleted from the pad, not
+ *     flagged. No API in this class can return a burned value, so the same
+ *     offset can never encrypt a second symbol — not even within a session,
+ *     and not through serialize/deserialize either.
+ * ========================================================================= */
+
+export type PadMode = "letters" | "bytes";
+
+export type PadSymbol = { offset: number; value: number };
+
+export type PadSnapshot = {
+  label: string;
+  mode: PadMode;
+  size: number;
+  remaining: number;
+  spent: number;
+  bitsPerSymbol: number;
+  generatedBits: number;
+  spentBits: number;
+  remainingBits: number;
+};
+
+export const LETTER_RANGE = 26;
+export const BYTE_RANGE = 256;
+
+// Entropy per symbol: log2 of the symbol alphabet size.
+export const LETTER_BITS = Math.log2(LETTER_RANGE); // ≈ 4.700
+export const BYTE_BITS = 8;
+
+// Injectable random source so tests can drive the rejection sampler with a
+// known byte sequence. Production code always uses crypto.getRandomValues.
+export type RandomFill = (buffer: Uint8Array) => Uint8Array;
+
+const cryptoFill: RandomFill = (buffer) => crypto.getRandomValues(buffer);
+
+// Uniform integer in [0, maxExclusive) drawn one byte at a time. Rejection
+// sampling removes modulo bias: bytes >= limit are discarded and redrawn, so
+// every residue class is hit by exactly limit / maxExclusive byte values.
+// For maxExclusive = 26 the limit is 234 (26 * 9); for 256 nothing is ever
+// rejected.
+export function uniformInt(maxExclusive: number, randomFill: RandomFill = cryptoFill): number {
+  if (!Number.isInteger(maxExclusive) || maxExclusive <= 0 || maxExclusive > BYTE_RANGE) {
+    throw new Error("maxExclusive must be an integer between 1 and 256");
+  }
+  const limit = BYTE_RANGE - (BYTE_RANGE % maxExclusive);
+  const buffer = new Uint8Array(1);
+  while (true) {
+    randomFill(buffer);
+    if (buffer[0] < limit) {
+      return buffer[0] % maxExclusive;
+    }
+  }
+}
+
+export function bitsPerSymbol(mode: PadMode): number {
+  return mode === "letters" ? LETTER_BITS : BYTE_BITS;
+}
+
+export function symbolRange(mode: PadMode): number {
+  return mode === "letters" ? LETTER_RANGE : BYTE_RANGE;
+}
+
+// Thrown when a consume would need more symbols than the pad still holds.
+// Consumption is all-or-nothing: a refused consume burns nothing.
+export class PadExhaustedError extends Error {
+  readonly required: number;
+  readonly remaining: number;
+
+  constructor(required: number, remaining: number) {
+    super(
+      `Pad exhausted: ${required} symbols needed but only ${remaining} remain. ` +
+        "A one-time pad cannot borrow, wrap, or reuse."
+    );
+    this.name = "PadExhaustedError";
+    this.required = required;
+    this.remaining = remaining;
+  }
+}
+
+// Human-readable pad-page label, e.g. "PAD-KQZM". The label is the only pad
+// artifact allowed on the public channel; it identifies which pad page a
+// ciphertext needs without revealing any pad symbol.
+function randomLabel(randomFill: RandomFill): string {
+  let letters = "";
+  for (let i = 0; i < 4; i += 1) {
+    letters += String.fromCharCode(65 + uniformInt(LETTER_RANGE, randomFill));
+  }
+  return `PAD-${letters}`;
+}
+
+export class Pad {
+  readonly label: string;
+  readonly mode: PadMode;
+  readonly size: number;
+
+  // offset -> value for symbols not yet consumed. Burning DELETES the entry;
+  // no other field retains the value, which is what makes reuse impossible
+  // rather than merely forbidden.
+  #values: Map<number, number>;
+  #nextOffset: number;
+
+  private constructor(
+    label: string,
+    mode: PadMode,
+    values: Map<number, number>,
+    nextOffset: number,
+    size: number
+  ) {
+    this.label = label;
+    this.mode = mode;
+    this.size = size;
+    this.#values = values;
+    this.#nextOffset = nextOffset;
+  }
+
+  // Generate a fresh pad of `size` symbols, one independent uniform draw per
+  // symbol. The whole pad exists before any encryption starts — that is what
+  // lets the cipher refuse up front instead of running out mid-message.
+  static generate(size: number, mode: PadMode, options: { label?: string; randomFill?: RandomFill } = {}): Pad {
+    if (!Number.isInteger(size) || size <= 0) {
+      throw new Error("pad size must be a positive integer");
+    }
+    const randomFill = options.randomFill ?? cryptoFill;
+    const range = symbolRange(mode);
+    const values = new Map<number, number>();
+    for (let offset = 0; offset < size; offset += 1) {
+      values.set(offset, uniformInt(range, randomFill));
+    }
+    const label = options.label ?? randomLabel(randomFill);
+    return new Pad(label, mode, values, 0, size);
+  }
+
+  get remaining(): number {
+    return this.#values.size;
+  }
+
+  get spent(): number {
+    return this.size - this.#values.size;
+  }
+
+  get nextOffset(): number {
+    return this.#nextOffset;
+  }
+
+  get bitsPerSymbol(): number {
+    return bitsPerSymbol(this.mode);
+  }
+
+  get generatedBits(): number {
+    return this.size * this.bitsPerSymbol;
+  }
+
+  get spentBits(): number {
+    return this.spent * this.bitsPerSymbol;
+  }
+
+  get remainingBits(): number {
+    return this.remaining * this.bitsPerSymbol;
+  }
+
+  // Read a symbol WITHOUT consuming it — undefined once burned. Used by the
+  // UI to render surviving symbols; the cipher itself only ever consume()s.
+  valueAt(offset: number): number | undefined {
+    return this.#values.get(offset);
+  }
+
+  // Consume `count` symbols starting at the lowest surviving offset. Each
+  // returned symbol is deleted from the pad in the same step — the burn.
+  // All-or-nothing: if the pad is short, throw and burn nothing.
+  consume(count: number): PadSymbol[] {
+    if (!Number.isInteger(count) || count < 0) {
+      throw new Error("count must be a non-negative integer");
+    }
+    if (count > this.remaining) {
+      throw new PadExhaustedError(count, this.remaining);
+    }
+    const symbols: PadSymbol[] = [];
+    while (symbols.length < count) {
+      const offset = this.#nextOffset;
+      const value = this.#values.get(offset);
+      this.#nextOffset += 1;
+      if (value === undefined) {
+        continue;
+      }
+      this.#values.delete(offset);
+      symbols.push({ offset, value });
+    }
+    return symbols;
+  }
+
+  snapshot(): PadSnapshot {
+    return {
+      label: this.label,
+      mode: this.mode,
+      size: this.size,
+      remaining: this.remaining,
+      spent: this.spent,
+      bitsPerSymbol: this.bitsPerSymbol,
+      generatedBits: this.generatedBits,
+      spentBits: this.spentBits,
+      remainingBits: this.remainingBits
+    };
+  }
+
+  // Out-of-band transport form: only the SURVIVING symbols are serialized.
+  // Burned offsets are not present in any form, so a deserialized copy can
+  // no more reuse them than the original could. This string is the pad — it
+  // must travel out of band and never touch the public channel.
+  serialize(): string {
+    return JSON.stringify({
+      label: this.label,
+      mode: this.mode,
+      size: this.size,
+      nextOffset: this.#nextOffset,
+      symbols: [...this.#values.entries()]
+    });
+  }
+
+  static deserialize(data: string): Pad {
+    const parsed = JSON.parse(data) as {
+      label: string;
+      mode: PadMode;
+      size: number;
+      nextOffset: number;
+      symbols: [number, number][];
+    };
+    if (
+      typeof parsed.label !== "string" ||
+      (parsed.mode !== "letters" && parsed.mode !== "bytes") ||
+      !Number.isInteger(parsed.size) ||
+      !Number.isInteger(parsed.nextOffset) ||
+      !Array.isArray(parsed.symbols)
+    ) {
+      throw new Error("not a serialized TruePad pad");
+    }
+    return new Pad(parsed.label, parsed.mode, new Map(parsed.symbols), parsed.nextOffset, parsed.size);
+  }
+}
