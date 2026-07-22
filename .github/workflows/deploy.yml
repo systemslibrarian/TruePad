@@ -1,0 +1,60 @@
+# Build the TruePad exhibit and publish it to GitHub Pages.
+#
+# The unit suites gate the build, and the build (which includes `tsc`) gates
+# the deploy: a red test or a type error means the live demo simply does not
+# update. Deployment uses the official Pages actions with OIDC — no
+# gh-pages branch, no personal tokens.
+name: Deploy demo to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never queue more than one deploy; let an in-flight production deploy finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      # Pull requests stop here: they get the test/type-check/build gate as a
+      # status check, but only a push to master publishes.
+      - if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+        with:
+          # Turns Pages on for the repo (source: GitHub Actions) if it is not
+          # already enabled, so this workflow is the only setup step needed.
+          enablement: true
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -2,6 +2,9 @@
 
 **A true one-time pad — the honest sibling of [DeckBook](https://github.com/systemslibrarian/DeckBook).**
 
+**▶ Live demo: <https://systemslibrarian.github.io/TruePad/>** — installable PWA,
+works offline, and nothing ever leaves your browser.
+
 DeckBook's shuffled-deck keystream only *looks* like a one-time pad: 52 cards
 folded mod 26 carry ~225.6 bits of entropy where 52 independent letters need
 ~244.4, and no permutation can hand out one independent uniform symbol per
@@ -34,6 +37,39 @@ pad-page label travel; the pad goes out of band.
 | `src/attack-otp.ts` | Crib dragging: leaks on keystream reuse, ties on a true OTP; shared comparator |
 | `src/meter.ts` | Pad-remaining vs. message-length meter state and the entropy ledger |
 | `src/verdict.ts` | Shannon three-condition grader for both a TruePad pad and a DeckBook deck |
+| `src/tamper.ts` | Malleability: single-letter shifts and known-plaintext forgery — perfect secrecy is not integrity |
+
+## The exhibit (the demo)
+
+Five stations, each rendering the pure core directly:
+
+1. **Generate the pad** — the whole pad exists before any encryption; the grid
+   shows every surviving symbol and the entropy ledger keeps the books.
+2. **Encrypt — watch the pad burn** — a live meter races the message against the
+   surviving pad; burned offsets are struck out and can never come back. When
+   the pad is too short, encryption refuses before consuming anything.
+3. **Decrypt with the courier's copy** — the receiver's pad is a
+   `serialize()`/`deserialize()` copy made at generation time (the out-of-band
+   delivery); both copies burn in lockstep.
+4. **The Shannon verdict** — one grader checks the three perfect-secrecy
+   conditions against your live pad *and* a DeckBook-style shuffled deck.
+5. **The attack that tells them apart** — the same crib-drag engine runs against
+   a true-OTP ciphertext (every candidate ties: zero information) and against
+   two messages that reused one keystream (readable plaintext falls out).
+6. **Perfect secrecy is not integrity** — flip a ciphertext letter, or forge
+   `TEN → SIX` with zero key knowledge, and watch the receiver decrypt a
+   perfectly valid tampered message with no alarm. Detecting this costs extra
+   pad: secrecy and integrity are separate purchases.
+
+The page closes with **“What this exhibit is not”** — the honest list of things
+a browser demo cannot deliver: real out-of-band key delivery, physical
+destruction of spent key, an auditably trusted platform, and metadata privacy.
+
+## Deployment
+
+Every push to `master` runs the unit suites, type-checks, builds, and publishes
+`dist/` to GitHub Pages via `.github/workflows/deploy.yml`. A red test or a
+type error means the live demo simply does not update.
 
 ## Develop
 
