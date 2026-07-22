@@ -664,6 +664,95 @@ button:hover {
   overflow-wrap: anywhere;
 }
 
+/* ---- tamper station ------------------------------------------------------ */
+
+.clickable-cipher {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  vertical-align: middle;
+}
+
+.clickable-cipher button {
+  padding: 0.2rem 0.35rem;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  color: var(--gold);
+  background: #201d14;
+  border: 1px solid var(--panel-edge);
+  border-radius: 0.25rem;
+  letter-spacing: 0;
+}
+
+.clickable-cipher button.tampered-cell {
+  color: var(--ember);
+  border-color: var(--ember);
+  background: var(--ember-dim);
+}
+
+.tamper-received {
+  border-color: var(--panel-edge);
+  background: var(--paper);
+}
+
+.tamper-received.tampered {
+  border-color: var(--ember);
+  background: var(--ember-dim);
+}
+
+.tamper-received output {
+  letter-spacing: 0.15em;
+}
+
+.tamper-received mark {
+  background: var(--ember);
+  color: var(--paper);
+  border-radius: 0.15rem;
+  padding: 0 0.1em;
+  font-weight: 700;
+}
+
+.tamper-verdict {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  color: var(--ink-dim);
+}
+
+.tamper-received.tampered .tamper-verdict {
+  color: var(--ember);
+}
+
+/* ---- honesty panel ------------------------------------------------------- */
+
+.station.honest {
+  border-style: dashed;
+  background: transparent;
+}
+
+.station.honest h2 {
+  color: var(--ink-dim);
+}
+
+.honest-list {
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.75rem;
+  max-width: 52rem;
+}
+
+.honest-list li {
+  font-size: 0.9rem;
+  color: var(--ink-dim);
+  padding-left: 1.1rem;
+  border-left: 3px solid var(--gold-dim);
+}
+
+.honest-list strong {
+  color: var(--ink);
+}
+
 /* ---- footer ------------------------------------------------------------- */
 
 .colophon {

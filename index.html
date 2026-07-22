@@ -215,6 +215,75 @@
           <p>p₂ = <code id="attack-p2"></code></p>
         </details>
       </section>
+
+      <!-- ================================================================ -->
+      <section class="station" id="station-tamper" aria-labelledby="tamper-title">
+        <h2 id="tamper-title"><span class="step">6</span> Perfect secrecy is not integrity</h2>
+        <p class="lede">
+          A one-time pad is perfectly <em>malleable</em>: adding a delta to a ciphertext
+          letter adds the same delta to what the receiver decrypts, because the key drops
+          out of the difference. Below, a sender has encrypted
+          <code>PAY BOB TEN DOLLARS NOW</code>. The attacker cannot read a single letter —
+          but knows the message format, and that the amount sits at letters 7–9.
+        </p>
+        <div class="controls">
+          <button type="button" class="primary" id="tamper-forge">
+            Forge TEN → SIX (no key needed)
+          </button>
+          <button type="button" id="tamper-reset">Deliver untampered</button>
+          <button type="button" id="tamper-rebuild">New pad, same message</button>
+        </div>
+        <p class="cipher-line">
+          On the wire (click any letter to nudge it +1):
+          <span id="tamper-cipher" class="clickable-cipher"></span>
+        </p>
+        <div class="recovered tamper-received" id="tamper-received">
+          <span class="recovered-title">What the receiver decrypts</span>
+          <output id="tamper-plain"></output>
+          <p class="tamper-verdict" id="tamper-verdict" aria-live="polite"></p>
+        </div>
+        <p class="attack-explain">
+          Detecting this costs extra key: an information-theoretic MAC must spend pad
+          symbols of its own. Secrecy and integrity are separate purchases, and the
+          entropy ledger bills for each.
+        </p>
+      </section>
+
+      <!-- ================================================================ -->
+      <section class="station honest" aria-labelledby="honest-title">
+        <h2 id="honest-title">What this exhibit is not</h2>
+        <p class="lede">
+          Everything above is a correct, bias-free, structurally enforced one-time pad —
+          the strongest claim a browser demo can truthfully make. It is still an
+          <em>exhibit</em>, not a secure messaging tool:
+        </p>
+        <ul class="honest-list">
+          <li>
+            <strong>The courier is simulated.</strong> Sender and receiver pads live in the
+            same browser tab. Real one-time-pad security is mostly key logistics — the
+            physical, out-of-band delivery this page can only gesture at.
+          </li>
+          <li>
+            <strong>Burned is burned at the API level, not the physical level.</strong>
+            JavaScript cannot zeroize memory; a deleted value lingers until garbage
+            collection. The gold standard destroys the physical pad page.
+          </li>
+          <li>
+            <strong>You are trusting the delivered code and the platform CSPRNG.</strong>
+            A compromised server or browser is a compromised pad. The real gold standard
+            is an air-gapped machine — dice and paper qualify.
+          </li>
+          <li>
+            <strong>Metadata still leaks.</strong> Ciphertext length equals message length,
+            and the pad label plus burned offsets reveal traffic volume. Standard for OTP,
+            but worth knowing.
+          </li>
+          <li>
+            <strong>There is no integrity protection.</strong> Station 6 is live proof.
+            Perfect secrecy and tamper-evidence are separate properties with separate costs.
+          </li>
+        </ul>
+      </section>
     </main>
 
     <footer class="colophon">

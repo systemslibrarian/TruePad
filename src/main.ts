@@ -21,6 +21,7 @@ import {
 import { meterState, LEDGER_MOTTO } from "./meter";
 import { gradeShannon, type ShannonReport } from "./verdict";
 import { compareAttacks, encryptWithKeystream, LEAK_THRESHOLD } from "./attack-otp";
+import { diffPositions, forgeLetters, shiftCipherLetter } from "./tamper";
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -349,6 +350,74 @@ function renderAttack(): void {
   }
 }
 
+/* ---- station 6: tamper ---------------------------------------------------- */
+
+// The scenario is fixed so the "forge TEN → SIX" button can name real offsets:
+// PAYBOBTENDOLLARSNOW — the amount sits at positions 6..8.
+const TAMPER_PLAIN = normalizeAZ("PAY BOB TEN DOLLARS NOW");
+const TAMPER_FRAGMENT_AT = 6;
+
+let tamperScene: {
+  delivered: string; // serialized receiver pad — each decryption gets a pristine copy
+  baseCipher: string;
+  tamperedCipher: string;
+};
+
+function buildTamperScene(): void {
+  const pad = Pad.generate(TAMPER_PLAIN.length, "letters");
+  const delivered = pad.serialize();
+  const result = encryptLetters(TAMPER_PLAIN, pad);
+  if (!result.ok) {
+    throw new Error("unreachable: pad was generated to exact message length");
+  }
+  tamperScene = { delivered, baseCipher: result.text, tamperedCipher: result.text };
+}
+
+function renderTamper(): void {
+  const { delivered, baseCipher, tamperedCipher } = tamperScene;
+
+  const cipherBox = el("tamper-cipher");
+  cipherBox.replaceChildren();
+  for (let i = 0; i < tamperedCipher.length; i += 1) {
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.textContent = tamperedCipher[i];
+    if (tamperedCipher[i] !== baseCipher[i]) {
+      cell.classList.add("tampered-cell");
+    }
+    cell.title = `position ${i} — click to add 1 (mod 26)`;
+    cell.addEventListener("click", () => {
+      tamperScene.tamperedCipher = shiftCipherLetter(tamperScene.tamperedCipher, i, 1);
+      renderTamper();
+    });
+    cipherBox.append(cell);
+  }
+
+  const decrypted = decryptLetters(tamperedCipher, Pad.deserialize(delivered));
+  if (!decrypted.ok) {
+    throw new Error("unreachable: the copy is pristine and exactly long enough");
+  }
+  const changed = new Set(diffPositions(TAMPER_PLAIN, decrypted.text));
+  const output = el("tamper-plain");
+  output.replaceChildren();
+  for (let i = 0; i < decrypted.text.length; i += 1) {
+    if (changed.has(i)) {
+      const mark = document.createElement("mark");
+      mark.textContent = decrypted.text[i];
+      output.append(mark);
+    } else {
+      output.append(decrypted.text[i]);
+    }
+  }
+
+  el("tamper-received").classList.toggle("tampered", changed.size > 0);
+  el("tamper-verdict").textContent =
+    changed.size === 0
+      ? "Delivered intact. The receiver decrypts exactly what was sent."
+      : `${changed.size} letter${changed.size === 1 ? "" : "s"} rewritten in transit — and the ` +
+        "decryption is still perfectly valid. Nothing failed. No alarm was raised.";
+}
+
 /* ---- wiring -------------------------------------------------------------- */
 
 function renderAll(): void {
@@ -376,10 +445,26 @@ el("attack-rebuild").addEventListener("click", () => {
   buildAttackScene();
   renderAttack();
 });
+el("tamper-forge").addEventListener("click", () => {
+  // Forge from the clean wire so the button is idempotent: the attacker
+  // rewrites what the sender transmitted, not their own previous forgery.
+  tamperScene.tamperedCipher = forgeLetters(tamperScene.baseCipher, TAMPER_FRAGMENT_AT, "TEN", "SIX");
+  renderTamper();
+});
+el("tamper-reset").addEventListener("click", () => {
+  tamperScene.tamperedCipher = tamperScene.baseCipher;
+  renderTamper();
+});
+el("tamper-rebuild").addEventListener("click", () => {
+  buildTamperScene();
+  renderTamper();
+});
 
 generatePads();
 buildAttackScene();
 renderAttack();
+buildTamperScene();
+renderTamper();
 
 /* ---- PWA ----------------------------------------------------------------- */
 

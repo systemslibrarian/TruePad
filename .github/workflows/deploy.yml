@@ -9,6 +9,8 @@ name: Deploy demo to GitHub Pages
 on:
   push:
     branches: [master]
+  pull_request:
+    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -33,16 +35,21 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - uses: actions/configure-pages@v5
+      # Pull requests stop here: they get the test/type-check/build gate as a
+      # status check, but only a push to master publishes.
+      - if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
         with:
           # Turns Pages on for the repo (source: GitHub Actions) if it is not
           # already enabled, so this workflow is the only setup step needed.
           enablement: true
-      - uses: actions/upload-pages-artifact@v3
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:

@@ -37,6 +37,7 @@ pad-page label travel; the pad goes out of band.
 | `src/attack-otp.ts` | Crib dragging: leaks on keystream reuse, ties on a true OTP; shared comparator |
 | `src/meter.ts` | Pad-remaining vs. message-length meter state and the entropy ledger |
 | `src/verdict.ts` | Shannon three-condition grader for both a TruePad pad and a DeckBook deck |
+| `src/tamper.ts` | Malleability: single-letter shifts and known-plaintext forgery — perfect secrecy is not integrity |
 
 ## The exhibit (the demo)
 
@@ -55,6 +56,14 @@ Five stations, each rendering the pure core directly:
 5. **The attack that tells them apart** — the same crib-drag engine runs against
    a true-OTP ciphertext (every candidate ties: zero information) and against
    two messages that reused one keystream (readable plaintext falls out).
+6. **Perfect secrecy is not integrity** — flip a ciphertext letter, or forge
+   `TEN → SIX` with zero key knowledge, and watch the receiver decrypt a
+   perfectly valid tampered message with no alarm. Detecting this costs extra
+   pad: secrecy and integrity are separate purchases.
+
+The page closes with **“What this exhibit is not”** — the honest list of things
+a browser demo cannot deliver: real out-of-band key delivery, physical
+destruction of spent key, an auditably trusted platform, and metadata privacy.
 
 ## Deployment
 
