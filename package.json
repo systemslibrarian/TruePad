@@ -1,7 +1,7 @@
 {
   "name": "truepad",
   "version": "0.1.0",
-  "description": "TruePad \u2014 a true one-time pad exhibit, the honest sibling of DeckBook",
+  "description": "TruePad — a true one-time pad exhibit, the honest sibling of DeckBook",
   "bin": {
     "truepad-pad": "bin/truepad-pad.mjs"
   },
@@ -36,6 +36,7 @@
   },
   "homepage": "https://github.com/systemslibrarian/TruePad#readme",
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^24.13.3",
     "typescript": "^5.6.0",
     "vite": "^8.1.3",
