@@ -21,6 +21,23 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
 
+test("the full path against the built dist: generate → encrypt → decrypt → verdict shows COMBINER and SOURCE", async ({ page }) => {
+  await generate(page, "letters", 64);
+  await page.fill("#plaintext", "Meet me at noon");
+  await page.click("#encrypt");
+  await expect(page.locator("#wire")).toBeVisible();
+  await page.click("#take-wire");
+  await page.click("#decrypt");
+  await expect(page.locator("#recovered-text")).toHaveText("MEETM EATNO ON");
+  const card = page.locator("#verdict-pad");
+  await expect(card).toContainText("combiner: true one-time pad ✓");
+  await expect(card).toContainText("Combiner: unconditional");
+  await expect(card).toContainText("Source: computational — bounded by the platform DRBG state");
+  // The ledger and the receiver both moved: 12 symbols burned on each side.
+  await expect(page.locator("#pad-summary")).toContainText("52 surviving");
+  await expect(page.locator("#receiver-remaining")).toHaveText("52");
+});
+
 test("generate → encrypt → take from the wire → decrypt, then a replay is refused", async ({ page }) => {
   await generate(page, "letters", 64);
 

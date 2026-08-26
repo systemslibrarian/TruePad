@@ -72,7 +72,11 @@ payload decrypts to modified plaintext with no alarm (station 6 is the live
 proof: perfect secrecy is not integrity). A modified `startOffset` drives the
 seek, so anyone who can rewrite an envelope on the channel can make the
 receiver burn forward through its remaining pad — pad can be *destroyed* from
-the channel, never reused. There is no message authentication. If it is ever added, Wegman–Carter over
+the channel, never reused. The receiver cannot refuse this: without
+authentication a forged `startOffset` is indistinguishable from a legitimate one
+that advanced because earlier envelopes were lost, and any cap on how far a seek
+may jump would refuse exactly the recovery a dropped message needs. Refusal
+becomes possible only once the envelope is authenticated — the non-goal above. There is no message authentication. If it is ever added, Wegman–Carter over
 the envelope is the seam, and it costs additional pad.
 
 ### What is deliberately not here
