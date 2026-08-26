@@ -47,11 +47,12 @@
     <main>
       <!-- ================================================================ -->
       <section class="station" id="station-pad" aria-labelledby="pad-title">
-        <h2 id="pad-title"><span class="step">1</span> Generate the pad</h2>
+        <h2 id="pad-title"><span class="step">1</span> Generate the pad pair</h2>
         <p class="lede">
           The whole pad exists <em>before</em> any encryption starts — that is what lets the
           cipher refuse up front instead of running out mid-message. The pad travels out of
           band; only the envelope — pad page, offsets, ciphertext — ever touches the public channel.
+          Generation produces a pair, one pad per direction; this page shows the A→B half.
         </p>
         <form class="controls" id="pad-controls">
           <label>
@@ -65,7 +66,7 @@
             Pad size
             <input id="pad-size" type="number" min="8" max="512" step="1" value="64" />
           </label>
-          <button type="submit" class="primary" id="pad-generate">Generate fresh pad</button>
+          <button type="submit" class="primary" id="pad-generate">Generate a fresh pair</button>
         </form>
         <div class="pad-identity">
           <span id="pad-label" class="pad-label">—</span>
@@ -134,9 +135,10 @@
           When the pad was generated, an identical copy was “delivered out of band” to the
           receiver (via <code>serialize()</code> — burned offsets are not present in any
           form, so the copy can no more reuse them than the original could). Generation
-          actually produces a <em>pair</em> — one pad per direction, so by declared role neither
-          side encrypts with the pad the other encrypts with; this station opens the A→B half. The envelope
-          names the pad page and the offsets it used; the copy <em>seeks</em> to that offset,
+          actually produces a <em>pair</em> — one pad per direction, so by declared role
+          neither side encrypts with the pad the other encrypts with; this station opens the
+          A→B half. The envelope names the pad page and the offsets it used; the copy
+          <em>seeks</em> to that offset,
           burning everything it skips, and refuses any envelope at or below what it has
           already burned. Decrypt the same non-empty envelope twice to see a replay refused;
           encrypt twice and take only the second to see a seek. The envelope is not

@@ -267,7 +267,8 @@ describe("launcher version gate", () => {
   });
 });
 
-describe("truepad-pad end to end (real binary via the launcher)", () => {
+// Each test spawns several Node processes; under CI load the 5 s default flakes.
+describe("truepad-pad end to end (real binary via the launcher)", { timeout: 30_000 }, () => {
   function run(...argv: string[]): { code: number; stdout: string; stderr: string } {
     const child = spawnSync(process.execPath, [LAUNCHER, ...argv], { encoding: "utf8" });
     return { code: child.status ?? -1, stdout: child.stdout, stderr: child.stderr };

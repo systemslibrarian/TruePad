@@ -73,7 +73,7 @@ describe("the disclosures stay where a reader will meet them", () => {
 
   it("CLI banner: not secure messaging, without softening", () => {
     expect(cli).toContain("NOT secure messaging");
-    expect(cli).toContain("flip chosen bits undetectably");
+    expect(cli).toContain("flip chosen bits (or shift chosen letters) undetectably");
     expect(cli).not.toMatch(/no integrity checking yet/i);
   });
 });

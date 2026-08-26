@@ -1,9 +1,17 @@
 {
   "extends": "./tsconfig.cli.json",
   "compilerOptions": {
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "allowJs": true,
     "checkJs": false
   },
-  "include": ["src/core", "src/cli", "tests", "bin"]
+  "include": [
+    "src/core",
+    "src/cli",
+    "tests",
+    "bin",
+    "e2e"
+  ]
 }

@@ -71,9 +71,8 @@ payload decrypts to modified plaintext with no alarm (station 6 is the live
 proof: perfect secrecy is not integrity). A modified `startOffset` drives the
 seek, so anyone who can rewrite an envelope on the channel can make the
 receiver burn forward through its remaining pad — pad can be *destroyed* from
-the channel, never reused. Message authentication (Wegman–Carter over the
-envelope) is the extension seam; it costs additional pad and is not in this
-revision.
+the channel, never reused. There is no message authentication. If it is ever added, Wegman–Carter over
+the envelope is the seam, and it costs additional pad.
 
 ### Core modules (pure, dependency-free, unit-tested)
 
@@ -87,8 +86,9 @@ revision.
 
 ## The pad CLI: `truepad-pad` — reuse-safe pad handling, not secure messaging
 
-`src/cli/` is an operational tool that owns pad state on disk so a pad symbol
-is never used twice across process boundaries. It is **not secure messaging**:
+`src/cli/` is a tool that owns pad state on disk so that a crash, a stale copy
+of the pad file, or two processes cannot make a pad symbol serve twice (with
+the one limitation stated below). It is **not secure messaging**:
 envelopes are unauthenticated, an attacker who knows the plaintext format can
 flip chosen bits of a message undetectably, and a forged `startOffset` makes the
 receiver burn pad. The tool prints that on every start. Even with durable burn
@@ -98,7 +98,7 @@ physical source.** This repository does not recommend one-time pads for real
 traffic.
 
 ```sh
-node bin/truepad-pad.mjs gen    <dir> [--mode letters|bytes] [--size N] [--external FILE] [--label PAD-XXXX]
+node bin/truepad-pad.mjs gen    <dir> [--mode letters|bytes] [--size N | --external FILE] [--label PAD-XXXX]
 node bin/truepad-pad.mjs burn   <dir> --as A|B (TEXT | --in FILE)       # encrypt with YOUR sending pad, print an envelope
 node bin/truepad-pad.mjs open   <dir> --as A|B (ENVELOPE | --in FILE)   # decrypt with your receiving pad: seek, burn, print plaintext
 node bin/truepad-pad.mjs status <dir>
@@ -119,9 +119,12 @@ identical offsets. The role is a declaration: this guards against the accident,
 not against a party who lies about who they are.
 
 **Durable burn.** Each half holds `pad.json` (the pad) and `marks.log`
-(append-only, one fsynced line per burn recording the label's high-water mark,
-kept *separate* from the pad file on purpose); while a process holds the pair
-there is an exclusive `lock`. On every `burn` and `open` the order is: write
+(append-only; one fsynced line per init, burn or open recording the pad's
+`nextOffset` afterwards — one past the last burned offset; the highest per
+label is the mark the loader checks; kept *separate* from the pad file on
+purpose); while a process holds the pair there is an exclusive `lock`. Files
+are created owner-only. A directory with only one half (a crash in the middle
+of `gen`) is refused by every command. On every `burn` and `open` the order is: write
 the new `pad.json` and the mark record → fsync → only then print the envelope
 or plaintext. A crash in between loses pad symbols and never reuses them;
 losing pad is the correct failure direction. On load, a `pad.json` whose
