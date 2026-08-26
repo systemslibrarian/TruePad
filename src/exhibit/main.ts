@@ -236,6 +236,7 @@ function decrypt(): void {
 
 function renderReport(target: HTMLElement, title: string, report: ShannonReport): void {
   const chipClass = report.isTrueOtp ? "chip safe" : "chip";
+  const bitsLabel = report.subject === "deck" ? "deck entropy" : "pad material";
   const chipText = report.isTrueOtp ? "combiner: true one-time pad ✓" : "combiner: not a one-time pad ✗";
   const rows = report.conditions
     .map(
@@ -248,7 +249,7 @@ function renderReport(target: HTMLElement, title: string, report: ShannonReport)
     .join("");
   target.innerHTML = `
     <h3>${title} <span class="${chipClass}">${chipText}</span></h3>
-    <p class="verdict-bits">pad material ≈ ${report.availableBits.toFixed(1)} bits · message needs ≈ ${report.requiredBits.toFixed(1)} bits</p>
+    <p class="verdict-bits">${bitsLabel} ≈ ${report.availableBits.toFixed(1)} bits · message needs ≈ ${report.requiredBits.toFixed(1)} bits</p>
     <p class="verdict-bits">${report.combiner.title}<br />${report.source.title}</p>
     <ol>${rows}</ol>`;
 }

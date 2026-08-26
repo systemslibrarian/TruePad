@@ -51,8 +51,9 @@ export const BYTE_RANGE = 256;
 export const LETTER_BITS = Math.log2(LETTER_RANGE); // ≈ 4.700
 export const BYTE_BITS = 8;
 
-// Injectable random source so tests can drive the rejection sampler with a
-// known byte sequence. Production code always uses crypto.getRandomValues.
+// Injectable byte source for the rejection sampler. Pad.generate feeds it
+// crypto.getRandomValues; Pad.fromExternal feeds it the operator's bytes;
+// tests may inject a known sequence.
 export type RandomFill = (buffer: Uint8Array) => Uint8Array;
 
 const cryptoFill: RandomFill = (buffer) => crypto.getRandomValues(buffer);
@@ -183,8 +184,9 @@ export class Pad {
   // where the bytes came from; nothing here can verify it. Bytes are used
   // as-is in byte mode. In letter mode each byte is range-reduced by
   // REJECTION through the same uniformInt sampler generate() uses — bytes
-  // >= 234 are discarded, never folded mod 26 — so the pad is shorter than
-  // the material. `size` asks for exactly that many symbols and refuses if
+  // >= 234 are discarded, never folded mod 26 — so the pad may be shorter
+  // than the material (by exactly the number of bytes >= 234). `size` asks
+  // for exactly that many symbols and refuses if
   // the material cannot supply them; without it, all the material is used.
   static fromExternal(bytes: Uint8Array, mode: PadMode, options: { label?: string; size?: number } = {}): Pad {
     if (!(bytes instanceof Uint8Array)) {
