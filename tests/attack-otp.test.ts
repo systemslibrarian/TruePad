@@ -7,9 +7,9 @@ import {
   encryptWithKeystream,
   englishScore,
   LEAK_THRESHOLD
-} from "../src/attack-otp";
-import { encryptLetters, normalizeAZ } from "../src/cipher-otp";
-import { Pad } from "../src/pad";
+} from "../src/core/attack-otp";
+import { encryptLetters, normalizeAZ } from "../src/core/cipher-otp";
+import { Pad } from "../src/core/pad";
 
 // The DeckBook-style keystream used for the reuse scenario: the canonical
 // deck 0..51 folded mod 26 — deterministic, so every assertion is stable.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { LETTER_BITS, Pad } from "../src/pad";
-import { DECK_ENTROPY_BITS, gradeShannon } from "../src/verdict";
+import { LETTER_BITS, Pad } from "../src/core/pad";
+import { DECK_ENTROPY_BITS, gradeShannon } from "../src/core/verdict";
 
 describe("gradeShannon on a TruePad pad", () => {
   it("passes all three conditions for a fresh pad covering the message", () => {

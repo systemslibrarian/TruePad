@@ -8,7 +8,7 @@
  * ========================================================================= */
 
 import "./style.css";
-import { Pad, uniformInt, LETTER_RANGE, type PadMode } from "./pad";
+import { Pad, uniformInt, LETTER_RANGE, type PadMode } from "../core/pad";
 import {
   decryptBytes,
   decryptLetters,
@@ -17,10 +17,10 @@ import {
   groupedFive,
   normalizeAZ,
   type OtpRefusal
-} from "./cipher-otp";
-import { meterState, LEDGER_MOTTO } from "./meter";
-import { gradeShannon, type ShannonReport } from "./verdict";
-import { compareAttacks, encryptWithKeystream, LEAK_THRESHOLD } from "./attack-otp";
+} from "../core/cipher-otp";
+import { meterState, LEDGER_MOTTO } from "../core/meter";
+import { gradeShannon, type ShannonReport } from "../core/verdict";
+import { compareAttacks, encryptWithKeystream, LEAK_THRESHOLD } from "../core/attack-otp";
 import { diffPositions, forgeLetters, shiftCipherLetter } from "./tamper";
 
 function el<T extends HTMLElement>(id: string): T {
