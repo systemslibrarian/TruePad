@@ -28,6 +28,8 @@
  * Every refusal is a first-class result (ok: false), never an exception,
  * and every refusal happens before a single symbol is burned:
  *
+ *   direction-mismatch the pad does not carry traffic the way the caller's
+ *                     declared role needs (see below)
  *   mode-mismatch     the pad is the wrong alphabet for this operation
  *   label-mismatch    the envelope names a different pad page
  *   envelope-invalid  offsets are not non-negative integers, or `consumed`
@@ -38,6 +40,15 @@
  *   pad-exhausted     the window (skip + message) runs past the pad
  *
  * There is no wraparound, no truncation, no borrowing — ever.
+ *
+ * Direction. Every pad names its sending role ("A->B" or "B->A") and every
+ * call declares the caller's role. encrypt* refuses unless the caller is the
+ * pad's sender; decrypt* refuses unless the caller is the pad's receiver.
+ * This is what stops two peers who each hold a copy of one pad from both
+ * encrypting with it and burning identical offsets (a two-time pad): each
+ * party sends with one half of the PAIR and opens with the other. The role
+ * is a declaration, so this guards against the accident, not against a
+ * caller who lies about who they are.
  *
  * The envelope is NOT authenticated, and that cuts two ways:
  *   - a modified payload decrypts to modified plaintext with no alarm
@@ -52,7 +63,7 @@
  *     module.
  * ========================================================================= */
 
-import { Pad, type PadMode } from "./pad.ts";
+import { oppositeDirection, Pad, receiverOf, senderOf, type PadMode, type Party } from "./pad.ts";
 
 // Strip everything that is not an A-Z letter and uppercase the rest.
 export function normalizeAZ(text: string): string {
@@ -86,6 +97,7 @@ export type Envelope<P extends string | Uint8Array = string | Uint8Array> = {
 
 export type OtpRefusalReason =
   | "pad-exhausted"
+  | "direction-mismatch"
   | "mode-mismatch"
   | "label-mismatch"
   | "envelope-invalid"
@@ -141,6 +153,21 @@ function refuseSeekExhausted(skipped: number, consumed: number, remaining: numbe
   };
 }
 
+function refuseDirection(pad: Pad, role: Party, op: "encrypt" | "decrypt", required: number): OtpRefusal {
+  const sender = senderOf(pad.direction);
+  const receiver = receiverOf(pad.direction);
+  const other = oppositeDirection(pad.direction);
+  const message =
+    op === "encrypt"
+      ? `Direction refused. ${pad.label} is the ${pad.direction} pad: ${sender} sends with it, and you declared ${role}. ` +
+        `If both peers encrypted with this pad they would burn the same offsets and produce a two-time pad. ` +
+        `${role} sends with the ${other} pad. Nothing was burned.`
+      : `Direction refused. ${pad.label} is the ${pad.direction} pad: ${receiver} opens envelopes with it, and you ` +
+        `declared ${role}. ${sender} sends with this pad; opening with it would burn offsets ${sender} still needs ` +
+        `for its own envelopes. ${role} opens envelopes with the ${other} pad. Nothing was burned.`;
+  return { ok: false, reason: "direction-mismatch", required, remaining: pad.remaining, message };
+}
+
 function refuseModeMismatch(expected: PadMode, pad: Pad, required: number): OtpRefusal {
   return {
     ok: false,
@@ -187,7 +214,16 @@ function refuseReuse(envelope: Envelope, pad: Pad): OtpRefusal {
 
 // Every check that must pass before decrypt* touches the pad, in the order
 // they fire. Returns the refusal, or null when the window is safe to burn.
-function preflightDecrypt(envelope: Envelope, pad: Pad, mode: PadMode, payloadLength: number): OtpRefusal | null {
+function preflightDecrypt(
+  envelope: Envelope,
+  pad: Pad,
+  role: Party,
+  mode: PadMode,
+  payloadLength: number
+): OtpRefusal | null {
+  if (receiverOf(pad.direction) !== role) {
+    return refuseDirection(pad, role, "decrypt", payloadLength);
+  }
   if (pad.mode !== mode) {
     return refuseModeMismatch(mode, pad, payloadLength);
   }
@@ -224,8 +260,11 @@ function preflightDecrypt(envelope: Envelope, pad: Pad, mode: PadMode, payloadLe
 
 // Letter mode encrypt: cipher[i] = ( plain[i] + pad[i] ) mod 26.
 // Consumes (burns) exactly normalized.length symbols — or none at all.
-export function encryptLetters(plaintext: string, pad: Pad): EncryptTextResult {
+export function encryptLetters(plaintext: string, pad: Pad, role: Party): EncryptTextResult {
   const normalized = normalizeAZ(plaintext);
+  if (senderOf(pad.direction) !== role) {
+    return refuseDirection(pad, role, "encrypt", normalized.length);
+  }
   if (pad.mode !== "letters") {
     return refuseModeMismatch("letters", pad, normalized.length);
   }
@@ -250,9 +289,9 @@ export function encryptLetters(plaintext: string, pad: Pad): EncryptTextResult {
 // Letter mode decrypt: plain[i] = ( cipher[i] - pad[i] + 26 ) mod 26.
 // Seeks the receiver's pad to envelope.startOffset (destroying anything
 // skipped), then burns the envelope's window from the receiver's own copy.
-export function decryptLetters(envelope: Envelope<string>, pad: Pad): DecryptTextResult {
+export function decryptLetters(envelope: Envelope<string>, pad: Pad, role: Party): DecryptTextResult {
   const normalized = normalizeAZ(envelope.payload);
-  const refusal = preflightDecrypt(envelope, pad, "letters", normalized.length);
+  const refusal = preflightDecrypt(envelope, pad, role, "letters", normalized.length);
   if (refusal) {
     return refusal;
   }
@@ -272,7 +311,10 @@ export function decryptLetters(envelope: Envelope<string>, pad: Pad): DecryptTex
 /* ---- byte mode ----------------------------------------------------------- */
 
 // Byte mode: XOR with one fresh pad byte per plaintext byte.
-export function encryptBytes(plain: Uint8Array, pad: Pad): EncryptBytesResult {
+export function encryptBytes(plain: Uint8Array, pad: Pad, role: Party): EncryptBytesResult {
+  if (senderOf(pad.direction) !== role) {
+    return refuseDirection(pad, role, "encrypt", plain.length);
+  }
   if (pad.mode !== "bytes") {
     return refuseModeMismatch("bytes", pad, plain.length);
   }
@@ -291,8 +333,8 @@ export function encryptBytes(plain: Uint8Array, pad: Pad): EncryptBytesResult {
 // XOR is an involution, but decrypt is NOT the same call as encrypt any
 // more: encrypt burns from the sender's pointer, decrypt seeks to the
 // envelope's offset. Kept separate so call sites read honestly.
-export function decryptBytes(envelope: Envelope<Uint8Array>, pad: Pad): DecryptBytesResult {
-  const refusal = preflightDecrypt(envelope, pad, "bytes", envelope.payload.length);
+export function decryptBytes(envelope: Envelope<Uint8Array>, pad: Pad, role: Party): DecryptBytesResult {
+  const refusal = preflightDecrypt(envelope, pad, role, "bytes", envelope.payload.length);
   if (refusal) {
     return refusal;
   }

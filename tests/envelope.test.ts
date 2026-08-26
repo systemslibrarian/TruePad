@@ -95,7 +95,7 @@ describe("Pad.consumeAt — seek by burning forward", () => {
 describe("encrypt emits an envelope; decrypt seeks to it", () => {
   it("letters: the envelope carries label, startOffset, consumed and the ciphertext payload", () => {
     const [sender, receiver] = courierPair(40);
-    const result = encryptLetters("Attack at dawn", sender);
+    const result = encryptLetters("Attack at dawn", sender, "A");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const { envelope } = result;
@@ -106,7 +106,7 @@ describe("encrypt emits an envelope; decrypt seeks to it", () => {
     // Nothing in the envelope is a pad symbol: only the four wire fields.
     expect(Object.keys(envelope).sort()).toEqual(["consumed", "label", "payload", "startOffset"]);
 
-    const opened = decryptLetters(envelope, receiver);
+    const opened = decryptLetters(envelope, receiver, "B");
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;
     expect(opened.text).toBe("ATTACKATDAWN");
@@ -118,8 +118,8 @@ describe("encrypt emits an envelope; decrypt seeks to it", () => {
   it("bytes: XOR round-trips through an envelope", () => {
     const [sender, receiver] = courierPair(16, "bytes");
     const plain = new Uint8Array([0, 255, 17, 128]);
-    const envelope = okEnvelope(encryptBytes(plain, sender));
-    const opened = decryptBytes(envelope, receiver);
+    const envelope = okEnvelope(encryptBytes(plain, sender, "A"));
+    const opened = decryptBytes(envelope, receiver, "B");
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;
     expect([...opened.bytes]).toEqual([...plain]);
@@ -129,12 +129,12 @@ describe("encrypt emits an envelope; decrypt seeks to it", () => {
 describe("T3 — replay: the same envelope cannot be decrypted twice", () => {
   it("letters: second decrypt is refused as reuse, before any burn", () => {
     const [sender, receiver] = courierPair(30);
-    const envelope = okEnvelope(encryptLetters("MEETMEATNOON", sender));
-    const first = decryptLetters(envelope, receiver);
+    const envelope = okEnvelope(encryptLetters("MEETMEATNOON", sender, "A"));
+    const first = decryptLetters(envelope, receiver, "B");
     expect(first.ok).toBe(true);
     const remainingAfterFirst = receiver.remaining;
 
-    const replay = decryptLetters(envelope, receiver);
+    const replay = decryptLetters(envelope, receiver, "B");
     expect(replay.ok).toBe(false);
     if (replay.ok) return;
     expect(replay.reason).toBe("reuse-refused");
@@ -146,27 +146,27 @@ describe("T3 — replay: the same envelope cannot be decrypted twice", () => {
 
   it("bytes: replay is refused the same way", () => {
     const [sender, receiver] = courierPair(16, "bytes");
-    const envelope = okEnvelope(encryptBytes(new Uint8Array([1, 2, 3]), sender));
-    expect(decryptBytes(envelope, receiver).ok).toBe(true);
-    const replay = decryptBytes(envelope, receiver);
+    const envelope = okEnvelope(encryptBytes(new Uint8Array([1, 2, 3]), sender, "A"));
+    expect(decryptBytes(envelope, receiver, "B").ok).toBe(true);
+    const replay = decryptBytes(envelope, receiver, "B");
     expect(!replay.ok && replay.reason === "reuse-refused").toBe(true);
     expect(receiver.nextOffset).toBe(3);
   });
 
   it("a replay that is ALSO too long is still reported as reuse — the graver refusal wins", () => {
     const [sender, receiver] = courierPair(8);
-    const envelope = okEnvelope(encryptLetters("ABCDEFG", sender));
-    expect(decryptLetters(envelope, receiver).ok).toBe(true);
-    const replay = decryptLetters(envelope, receiver);
+    const envelope = okEnvelope(encryptLetters("ABCDEFG", sender, "A"));
+    expect(decryptLetters(envelope, receiver, "B").ok).toBe(true);
+    const replay = decryptLetters(envelope, receiver, "B");
     expect(!replay.ok && replay.reason === "reuse-refused").toBe(true);
   });
 
   it("an envelope that overlaps the high-water mark by one symbol is refused", () => {
     const [sender, receiver] = courierPair(30);
-    const first = okEnvelope(encryptLetters("HELLO", sender)); // offsets 0..4
-    expect(decryptLetters(first, receiver).ok).toBe(true);
+    const first = okEnvelope(encryptLetters("HELLO", sender, "A")); // offsets 0..4
+    expect(decryptLetters(first, receiver, "B").ok).toBe(true);
     const overlapping: Envelope<string> = { ...first, startOffset: 4, consumed: 3, payload: "XYZ" };
-    const result = decryptLetters(overlapping, receiver);
+    const result = decryptLetters(overlapping, receiver, "B");
     expect(!result.ok && result.reason === "reuse-refused").toBe(true);
     expect(receiver.nextOffset).toBe(5);
   });
@@ -175,17 +175,17 @@ describe("T3 — replay: the same envelope cannot be decrypted twice", () => {
 describe("T4 — seek: drop message 2 of 3, decrypt 1 and 3", () => {
   it("message 3 decrypts correctly and the skipped offsets are unrecoverable", () => {
     const [sender, receiver] = courierPair(60);
-    const e1 = okEnvelope(encryptLetters("FIRSTMESSAGE", sender)); // 0..11
-    const e2 = okEnvelope(encryptLetters("SECONDONELOST", sender)); // 12..24
-    const e3 = okEnvelope(encryptLetters("THIRDARRIVES", sender)); // 25..36
+    const e1 = okEnvelope(encryptLetters("FIRSTMESSAGE", sender, "A")); // 0..11
+    const e2 = okEnvelope(encryptLetters("SECONDONELOST", sender, "A")); // 12..24
+    const e3 = okEnvelope(encryptLetters("THIRDARRIVES", sender, "A")); // 25..36
     expect(e2.startOffset).toBe(12);
     expect(e3.startOffset).toBe(25);
 
-    const one = decryptLetters(e1, receiver);
+    const one = decryptLetters(e1, receiver, "B");
     expect(one.ok && one.text === "FIRSTMESSAGE").toBe(true);
 
     // Message 2 never arrives. Message 3 seeks past it.
-    const three = decryptLetters(e3, receiver);
+    const three = decryptLetters(e3, receiver, "B");
     expect(three.ok).toBe(true);
     if (!three.ok) return;
     expect(three.text).toBe("THIRDARRIVES");
@@ -202,16 +202,16 @@ describe("T4 — seek: drop message 2 of 3, decrypt 1 and 3", () => {
       expect(serialized).not.toContain(`[${offset},`);
     }
     // ...and a late arrival of message 2 is refused as reuse, not decrypted.
-    const late = decryptLetters(e2, receiver);
+    const late = decryptLetters(e2, receiver, "B");
     expect(!late.ok && late.reason === "reuse-refused").toBe(true);
     expect(receiver.nextOffset).toBe(37);
   });
 
   it("bytes: seeking works the same way", () => {
     const [sender, receiver] = courierPair(32, "bytes");
-    okEnvelope(encryptBytes(new Uint8Array(10), sender));
-    const e2 = okEnvelope(encryptBytes(new Uint8Array([7, 8, 9]), sender));
-    const opened = decryptBytes(e2, receiver);
+    okEnvelope(encryptBytes(new Uint8Array(10), sender, "A"));
+    const e2 = okEnvelope(encryptBytes(new Uint8Array([7, 8, 9]), sender, "A"));
+    const opened = decryptBytes(e2, receiver, "B");
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;
     expect([...opened.bytes]).toEqual([7, 8, 9]);
@@ -224,7 +224,7 @@ describe("T4 — seek: drop message 2 of 3, decrypt 1 and 3", () => {
   it("a seek that would run past the end of the pad is refused and burns nothing — not even the skip", () => {
     const [, receiver] = courierPair(20);
     const tooFar: Envelope<string> = { label: receiver.label, startOffset: 15, consumed: 10, payload: "ABCDEFGHIJ" };
-    const result = decryptLetters(tooFar, receiver);
+    const result = decryptLetters(tooFar, receiver, "B");
     expect(!result.ok && result.reason === "pad-exhausted").toBe(true);
     expect(receiver.nextOffset).toBe(0);
     expect(receiver.remaining).toBe(20);
@@ -235,26 +235,26 @@ describe("envelope validation happens before any burn", () => {
   it("refuses an envelope addressed to a different pad page", () => {
     const [sender] = courierPair(20);
     const [, stranger] = courierPair(20);
-    const envelope = okEnvelope(encryptLetters("HELLO", sender));
-    const result = decryptLetters(envelope, stranger);
+    const envelope = okEnvelope(encryptLetters("HELLO", sender, "A"));
+    const result = decryptLetters(envelope, stranger, "B");
     expect(!result.ok && result.reason === "label-mismatch").toBe(true);
     expect(stranger.remaining).toBe(20);
   });
 
   it("refuses an envelope whose consumed count disagrees with its payload", () => {
     const [sender, receiver] = courierPair(20);
-    const envelope = okEnvelope(encryptLetters("HELLO", sender));
+    const envelope = okEnvelope(encryptLetters("HELLO", sender, "A"));
     const lying: Envelope<string> = { ...envelope, consumed: 4 };
-    const result = decryptLetters(lying, receiver);
+    const result = decryptLetters(lying, receiver, "B");
     expect(!result.ok && result.reason === "envelope-invalid").toBe(true);
     expect(receiver.remaining).toBe(20);
   });
 
   it("refuses a negative or fractional startOffset", () => {
     const [sender, receiver] = courierPair(20);
-    const envelope = okEnvelope(encryptLetters("HELLO", sender));
+    const envelope = okEnvelope(encryptLetters("HELLO", sender, "A"));
     for (const startOffset of [-1, 1.5]) {
-      const result = decryptLetters({ ...envelope, startOffset }, receiver);
+      const result = decryptLetters({ ...envelope, startOffset }, receiver, "B");
       expect(!result.ok && result.reason === "envelope-invalid").toBe(true);
     }
     expect(receiver.remaining).toBe(20);
@@ -263,8 +263,8 @@ describe("envelope validation happens before any burn", () => {
   it("refuses a mode mismatch before looking at offsets", () => {
     const [sender] = courierPair(20);
     const bytesPad = Pad.generate(20, "bytes", { label: sender.label });
-    const envelope = okEnvelope(encryptLetters("HELLO", sender));
-    const result = decryptLetters(envelope, bytesPad);
+    const envelope = okEnvelope(encryptLetters("HELLO", sender, "A"));
+    const result = decryptLetters(envelope, bytesPad, "B");
     expect(!result.ok && result.reason === "mode-mismatch").toBe(true);
   });
 });
@@ -323,11 +323,11 @@ describe("every typed refusal leaves the pad untouched", () => {
   // guard has something to guard and the pointer is not at zero.
   function receiverWithHistory(mode: "letters" | "bytes") {
     const [sender, receiver] = courierPair(20, mode);
-    const first = mode === "letters" ? encryptLetters("HELLO", sender) : encryptBytes(new Uint8Array(5), sender);
+    const first = mode === "letters" ? encryptLetters("HELLO", sender, "A") : encryptBytes(new Uint8Array(5), sender, "A");
     if (!first.ok) throw new Error("setup");
     const opened = mode === "letters"
-      ? decryptLetters(first.envelope as Envelope<string>, receiver)
-      : decryptBytes(first.envelope as Envelope<Uint8Array>, receiver);
+      ? decryptLetters(first.envelope as Envelope<string>, receiver, "B")
+      : decryptBytes(first.envelope as Envelope<Uint8Array>, receiver, "B");
     if (!opened.ok) throw new Error("setup");
     expect(receiver.nextOffset).toBe(5);
     return { sender, receiver, first: first.envelope };
@@ -339,8 +339,8 @@ describe("every typed refusal leaves the pad untouched", () => {
   for (const mode of ["letters", "bytes"] as const) {
     const decrypt = (envelope: Envelope, pad: Pad) =>
       mode === "letters"
-        ? decryptLetters(envelope as Envelope<string>, pad)
-        : decryptBytes(envelope as Envelope<Uint8Array>, pad);
+        ? decryptLetters(envelope as Envelope<string>, pad, "B")
+        : decryptBytes(envelope as Envelope<Uint8Array>, pad, "B");
 
     describe(`${mode} mode, decrypt path`, () => {
       it("reuse-refused (replay of an opened envelope)", () => {
@@ -383,6 +383,16 @@ describe("every typed refusal leaves the pad untouched", () => {
         }
       });
 
+      it("direction-mismatch (the sender opening with its own outgoing pad)", () => {
+        const { receiver } = receiverWithHistory(mode);
+        const r = expectUntouched(receiver, () =>
+          mode === "letters"
+            ? decryptLetters({ label: receiver.label, startOffset: 5, consumed: 3, payload: "AAA" }, receiver, "A")
+            : decryptBytes({ label: receiver.label, startOffset: 5, consumed: 3, payload: new Uint8Array(3) }, receiver, "A")
+        );
+        expect(!r.ok && r.reason).toBe("direction-mismatch");
+      });
+
       it("mode-mismatch", () => {
         const { receiver } = receiverWithHistory(mode);
         const otherMode = mode === "letters" ? "bytes" : "letters";
@@ -406,7 +416,7 @@ describe("every typed refusal leaves the pad untouched", () => {
 
     describe(`${mode} mode, encrypt path`, () => {
       const encrypt = (n: number, pad: Pad) =>
-        mode === "letters" ? encryptLetters("A".repeat(n), pad) : encryptBytes(new Uint8Array(n), pad);
+        mode === "letters" ? encryptLetters("A".repeat(n), pad, "A") : encryptBytes(new Uint8Array(n), pad, "A");
 
       it("pad-exhausted", () => {
         const { sender } = receiverWithHistory(mode); // sender also sits at 5
@@ -420,6 +430,14 @@ describe("every typed refusal leaves the pad untouched", () => {
         const r = expectUntouched(wrongPad, () => encrypt(3, wrongPad));
         expect(!r.ok && r.reason).toBe("mode-mismatch");
       });
+
+      it("direction-mismatch (the receiver encrypting with the peer's sending pad)", () => {
+        const { sender } = receiverWithHistory(mode);
+        const r = expectUntouched(sender, () =>
+          mode === "letters" ? encryptLetters("AAA", sender, "B") : encryptBytes(new Uint8Array(3), sender, "B")
+        );
+        expect(!r.ok && r.reason).toBe("direction-mismatch");
+      });
     });
   }
 });
@@ -427,7 +445,7 @@ describe("every typed refusal leaves the pad untouched", () => {
 describe("what the unauthenticated envelope allows — stated, tested, not hidden", () => {
   it("decrypt-side exhaustion names the skip separately from the message", () => {
     const [, receiver] = courierPair(20);
-    const r = decryptLetters({ label: receiver.label, startOffset: 15, consumed: 10, payload: "ABCDEFGHIJ" }, receiver);
+    const r = decryptLetters({ label: receiver.label, startOffset: 15, consumed: 10, payload: "ABCDEFGHIJ" }, receiver, "B");
     expect(!r.ok && r.reason).toBe("pad-exhausted");
     if (r.ok) return;
     expect(r.required).toBe(25);
@@ -439,28 +457,28 @@ describe("what the unauthenticated envelope allows — stated, tested, not hidde
   it("DOCUMENTED: a forged startOffset makes the receiver burn forward — pad destroyed, never reused", () => {
     const [, receiver] = courierPair(50);
     // The cheapest wipe an on-channel attacker can send: empty payload, startOffset == size.
-    const wipe = decryptLetters({ label: receiver.label, startOffset: 50, consumed: 0, payload: "" }, receiver);
+    const wipe = decryptLetters({ label: receiver.label, startOffset: 50, consumed: 0, payload: "" }, receiver, "B");
     expect(wipe.ok).toBe(true);
     if (!wipe.ok) return;
     expect(wipe.skipped).toBe(50);
     expect(receiver.remaining).toBe(0);
     // ...but nothing became reusable: every offset is now at or below the mark.
     expect(receiver.highWaterMark).toBe(49);
-    const anything = decryptLetters({ label: receiver.label, startOffset: 10, consumed: 1, payload: "A" }, receiver);
+    const anything = decryptLetters({ label: receiver.label, startOffset: 10, consumed: 1, payload: "A" }, receiver, "B");
     expect(!anything.ok && anything.reason).toBe("reuse-refused");
     // One past the end is refused outright and burns nothing.
     const [, fresh] = courierPair(50);
-    const past = decryptLetters({ label: fresh.label, startOffset: 51, consumed: 0, payload: "" }, fresh);
+    const past = decryptLetters({ label: fresh.label, startOffset: 51, consumed: 0, payload: "" }, fresh, "B");
     expect(!past.ok && past.reason).toBe("pad-exhausted");
     expect(fresh.remaining).toBe(50);
   });
 
   it("an empty envelope carries nothing and can be opened repeatedly without moving the mark", () => {
     const [sender, receiver] = courierPair(10);
-    const empty = okEnvelope(encryptLetters("", sender));
+    const empty = okEnvelope(encryptLetters("", sender, "A"));
     expect(empty.consumed).toBe(0);
-    expect(decryptLetters(empty, receiver).ok).toBe(true);
-    expect(decryptLetters(empty, receiver).ok).toBe(true);
+    expect(decryptLetters(empty, receiver, "B").ok).toBe(true);
+    expect(decryptLetters(empty, receiver, "B").ok).toBe(true);
     expect(receiver.remaining).toBe(10);
   });
 });

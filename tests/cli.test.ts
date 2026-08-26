@@ -7,7 +7,7 @@ import { encryptLetters } from "../src/core/cipher-otp";
 import { Pad } from "../src/core/pad";
 import { acquireLock, LOCK_FILE } from "../src/cli/lock";
 import { initStore, loadPad, MARKS_FILE, PAD_FILE, persistBurn, readMarks } from "../src/cli/store";
-import { parseArgs } from "../src/cli/truepad-pad";
+import { directionFor, parseArgs } from "../src/cli/truepad-pad";
 import { lacksTypeStripping, MIN_BY_MAJOR, MIN_NODE, tooOld, versionError } from "../bin/node-version.mjs";
 
 /* ============================================================================
@@ -40,7 +40,7 @@ describe("T1 — crash-reuse is refused by the high-water mark", () => {
     const loaded = loadPad(padDir());
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
-    const result = encryptLetters("ATTACKATDAWN", loaded.pad);
+    const result = encryptLetters("ATTACKATDAWN", loaded.pad, "A");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     persistBurn(padDir(), loaded.pad, { op: "burn", startOffset: 0, consumed: 12, skipped: 0 });
@@ -139,7 +139,7 @@ describe("order of operations: persist, fsync, then emit", () => {
     initStore(padDir(), Pad.generate(30, "letters", { label: "PAD-EMIT" }));
     const loaded = loadPad(padDir());
     if (!loaded.ok) throw new Error("load");
-    const result = encryptLetters("HELLOWORLD", loaded.pad);
+    const result = encryptLetters("HELLOWORLD", loaded.pad, "A");
     if (!result.ok) throw new Error("encrypt");
     persistBurn(padDir(), loaded.pad, { op: "burn", startOffset: 0, consumed: 10, skipped: 0 });
     // Simulated crash before emit: the envelope is dropped on the floor.
@@ -165,19 +165,20 @@ describe("order of operations: persist, fsync, then emit", () => {
     const a = join(dir, "a");
     const gen = spawnSync(process.execPath, [LAUNCHER, "gen", a, "--size", "20", "--label", "PAD-NOWR"], { encoding: "utf8" });
     expect(gen.status).toBe(0);
-    const marksBefore = readFileSync(join(a, MARKS_FILE), "utf8");
-    chmodSync(join(a, MARKS_FILE), 0o400);
+    const half = join(a, "a-to-b"); // A burns the A->B half
+    const marksBefore = readFileSync(join(half, MARKS_FILE), "utf8");
+    chmodSync(join(half, MARKS_FILE), 0o400);
     try {
-      const burn = spawnSync(process.execPath, [LAUNCHER, "burn", a, "HELLO"], { encoding: "utf8" });
+      const burn = spawnSync(process.execPath, [LAUNCHER, "burn", a, "--as", "A", "HELLO"], { encoding: "utf8" });
       expect(burn.status).toBe(1);
       expect(burn.stdout).toBe("");
       expect(burn.stderr).toMatch(/EACCES|permission denied/i);
     } finally {
-      chmodSync(join(a, MARKS_FILE), 0o600);
+      chmodSync(join(half, MARKS_FILE), 0o600);
     }
-    expect(readFileSync(join(a, MARKS_FILE), "utf8")).toBe(marksBefore);
+    expect(readFileSync(join(half, MARKS_FILE), "utf8")).toBe(marksBefore);
     // pad.json was rewritten first (step 1 of the order): the five symbols are gone, not reused.
-    expect(JSON.parse(readFileSync(join(a, PAD_FILE), "utf8")).nextOffset).toBe(5);
+    expect(JSON.parse(readFileSync(join(half, PAD_FILE), "utf8")).nextOffset).toBe(5);
     expect(existsSync(join(a, LOCK_FILE))).toBe(false);
   });
 
@@ -272,62 +273,117 @@ describe("truepad-pad end to end (real binary via the launcher)", () => {
     return { code: child.status ?? -1, stdout: child.stdout, stderr: child.stderr };
   }
 
-  it("gen -> courier copy -> burn -> open round-trips; replay exits 2; the banner names the limitation", () => {
+  it("gen -> courier copy -> burn/open both ways; replay exits 2; the banner names the limitation", () => {
     const a = join(dir, "a");
     const b = join(dir, "b");
     const gen = run("gen", a, "--size", "40", "--label", "PAD-CLIT");
     expect(gen.code).toBe(0);
     expect(gen.stderr).toContain("NOT secure messaging");
     expect(gen.stderr).toContain("flip chosen bits");
-    expect(JSON.parse(gen.stdout)).toMatchObject({ label: "PAD-CLIT", source: "csprng", nextOffset: 0, remaining: 40 });
+    const genOut = JSON.parse(gen.stdout);
+    expect(genOut["A->B"]).toMatchObject({ label: "PAD-CLIT-AB", direction: "A->B", source: "csprng", nextOffset: 0, remaining: 40 });
+    expect(genOut["B->A"]).toMatchObject({ label: "PAD-CLIT-BA", direction: "B->A" });
+    expect(existsSync(join(a, "a-to-b", PAD_FILE)) && existsSync(join(a, "b-to-a", PAD_FILE))).toBe(true);
 
-    // Out-of-band delivery, modelled as a directory copy before any burn.
+    // Out-of-band delivery, modelled as a whole-directory copy before any burn.
     cpSync(a, b, { recursive: true });
 
-    const burn = run("burn", a, "ATTACK AT DAWN");
-    expect(burn.code).toBe(0);
-    const envelope = JSON.parse(burn.stdout.trim());
-    expect(envelope).toMatchObject({ label: "PAD-CLIT", startOffset: 0, consumed: 12 });
-    expect(JSON.parse(run("status", a).stdout)).toMatchObject({ nextOffset: 12, highWaterMark: 11, recordedNextOffset: 12 });
+    // T2 in CLI form: both peers burn before either opens — different halves, no overlap.
+    const fromA = run("burn", a, "--as", "A", "ATTACK AT DAWN");
+    const fromB = run("burn", b, "--as", "B", "MEET ME AT NOON");
+    expect(fromA.code).toBe(0);
+    expect(fromB.code).toBe(0);
+    expect(JSON.parse(fromA.stdout)).toMatchObject({ label: "PAD-CLIT-AB", startOffset: 0, consumed: 12 });
+    expect(JSON.parse(fromB.stdout)).toMatchObject({ label: "PAD-CLIT-BA", startOffset: 0, consumed: 12 });
+    expect(JSON.parse(run("status", a).stdout)["A->B"]).toMatchObject({ nextOffset: 12, highWaterMark: 11, recordedNextOffset: 12 });
 
-    const open = run("open", b, burn.stdout.trim());
-    expect(open.code).toBe(0);
-    expect(open.stdout.trim()).toBe("ATTACKATDAWN");
+    const bOpens = run("open", b, "--as", "B", fromA.stdout.trim());
+    const aOpens = run("open", a, "--as", "A", fromB.stdout.trim());
+    expect(bOpens.code).toBe(0);
+    expect(aOpens.code).toBe(0);
+    expect(bOpens.stdout.trim()).toBe("ATTACKATDAWN");
+    expect(aOpens.stdout.trim()).toBe("MEETMEATNOON");
 
-    const replay = run("open", b, burn.stdout.trim());
+    // The wrong role: A trying to open A's own envelope picks b-to-a, whose label does not match.
+    const wrongRole = run("open", a, "--as", "A", fromA.stdout.trim());
+    expect(wrongRole.code).toBe(2);
+    expect(wrongRole.stderr).toContain("addressed to pad page PAD-CLIT-AB");
+
+    const replay = run("open", b, "--as", "B", fromA.stdout.trim());
     expect(replay.code).toBe(2);
     expect(replay.stderr).toContain("Reuse refused");
-    expect(JSON.parse(run("status", b).stdout)).toMatchObject({ nextOffset: 12 });
+    expect(JSON.parse(run("status", b).stdout)["A->B"]).toMatchObject({ nextOffset: 12 });
     // No lock left behind by any of the above.
     expect(existsSync(join(a, LOCK_FILE))).toBe(false);
     expect(existsSync(join(b, LOCK_FILE))).toBe(false);
+  });
+
+  it("a swapped subdirectory is refused by the core direction check, not burned", () => {
+    const a = join(dir, "a");
+    expect(run("gen", a, "--size", "10").code).toBe(0);
+    // Operator error: b-to-a's pad copied over a-to-b's.
+    cpSync(join(a, "b-to-a", PAD_FILE), join(a, "a-to-b", PAD_FILE));
+    const r = run("burn", a, "--as", "A", "HELLO");
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("Direction refused");
+    expect(JSON.parse(readFileSync(join(a, "a-to-b", PAD_FILE), "utf8")).nextOffset).toBe(0);
+  });
+
+  it("a half-pair (gen interrupted between halves) is refused by burn, open and status", () => {
+    const a = join(dir, "a");
+    expect(run("gen", a, "--size", "10").code).toBe(0);
+    rmSync(join(a, "b-to-a"), { recursive: true, force: true });
+    for (const argv of [["burn", a, "--as", "A", "HELLO"], ["open", a, "--as", "B", "{}"], ["status", a]]) {
+      const r = run(...argv);
+      expect(r.code).toBe(2);
+      expect(r.stderr).toContain("half-pair");
+      expect(r.stderr).toContain("do not use the surviving half");
+    }
+    expect(JSON.parse(readFileSync(join(a, "a-to-b", PAD_FILE), "utf8")).nextOffset).toBe(0);
+    expect(existsSync(join(a, LOCK_FILE))).toBe(false);
+  });
+
+  it("--as is required and directionFor maps roles to halves", () => {
+    expect(directionFor("A", "burn")).toBe("A->B");
+    expect(directionFor("A", "open")).toBe("B->A");
+    expect(directionFor("B", "burn")).toBe("B->A");
+    expect(directionFor("B", "open")).toBe("A->B");
+    const a = join(dir, "a");
+    expect(run("gen", a, "--size", "10").code).toBe(0);
+    const r = run("burn", a, "HELLO");
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("--as A or --as B is required");
   });
 
   it("refuses to burn while another process holds the pad", () => {
     const a = join(dir, "a");
     expect(run("gen", a, "--size", "10").code).toBe(0);
     writeFileSync(join(a, LOCK_FILE), "pid 1 since test");
-    const burn = run("burn", a, "HELLO");
+    const burn = run("burn", a, "--as", "A", "HELLO");
     expect(burn.code).toBe(2);
     expect(burn.stderr).toContain("locked");
-    expect(JSON.parse(readFileSync(join(a, PAD_FILE), "utf8")).nextOffset).toBe(0);
+    expect(JSON.parse(readFileSync(join(a, "a-to-b", PAD_FILE), "utf8")).nextOffset).toBe(0);
   });
 
   it("gen --external tags the pad external and reduces letters by rejection", () => {
     const material = join(dir, "material.bin");
-    // 233 accepted, 234/255 rejected, then 0..9 accepted: 11 letters from 13 bytes.
-    writeFileSync(material, Uint8Array.from([233, 234, 255, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]));
+    // 14 bytes split 7/7: A->B gets [233,234,255,0,1,2,3] -> 5 letters (234, 255 rejected);
+    // B->A gets [4..10] -> 7 letters.
+    writeFileSync(material, Uint8Array.from([233, 234, 255, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
     const a = join(dir, "ext");
     const gen = run("gen", a, "--external", material, "--mode", "letters");
     expect(gen.code).toBe(0);
     expect(gen.stderr).toContain("did not verify");
-    expect(JSON.parse(gen.stdout)).toMatchObject({ source: "external", size: 11 });
+    expect(gen.stderr).toContain("split at the midpoint");
+    const out = JSON.parse(gen.stdout);
+    expect(out["A->B"]).toMatchObject({ source: "external", size: 5, direction: "A->B" });
+    expect(out["B->A"]).toMatchObject({ source: "external", size: 7, direction: "B->A" });
   });
 
   it("usage and I/O errors exit 1; a missing pad directory is named", () => {
     expect(run().code).toBe(1);
     expect(run("burn").code).toBe(1);
-    const missing = run("open", join(dir, "nope"), "{}");
+    const missing = run("open", join(dir, "nope"), "--as", "A", "{}");
     expect(missing.code).toBe(1);
     expect(missing.stderr).toContain("no such pad directory");
   });

@@ -46,11 +46,20 @@ receiver burn pad. The tool prints that on every start. There is no message auth
 the envelope is the seam, and it costs additional pad.
 
 ```sh
-node bin/truepad-pad.mjs gen    <dir> [--mode letters|bytes] [--size N] [--external FILE] [--label PAD-XXXX]
-node bin/truepad-pad.mjs burn   <dir> (TEXT | --in FILE)       # encrypt: burn pad symbols, print an envelope
-node bin/truepad-pad.mjs open   <dir> (ENVELOPE | --in FILE)   # decrypt: seek to the envelope's offset, burn, print plaintext
+node bin/truepad-pad.mjs gen    <dir> [--mode letters|bytes] [--size N | --external FILE] [--label PAD-XXXX]
+node bin/truepad-pad.mjs burn   <dir> --as A|B (TEXT | --in FILE)       # encrypt with YOUR sending pad, print an envelope
+node bin/truepad-pad.mjs open   <dir> --as A|B (ENVELOPE | --in FILE)   # decrypt with your receiving pad: seek, burn, print plaintext
 node bin/truepad-pad.mjs status <dir>
 ```
+
+**Direction.** `gen` produces the *pair*: `<dir>/a-to-b/` and `<dir>/b-to-a/`,
+each its own store. The courier copies the whole directory to the peer, so
+each party holds both halves and `--as` names which party you are: A burns
+`a-to-b` and opens `b-to-a`; B the reverse. Every pad records its direction and
+the core refuses a pad whose direction does not fit the declared role, which is
+what stops two peers who share one pad from both encrypting with it and burning
+identical offsets. The role is a declaration: this guards against the accident,
+not against a party who lies about who they are.
 
 The verbs name what happens to the *pad*. Exit codes: `0` ok, `2` refused
 (nothing burned), `1` usage or I/O error. Requires Node ≥ 22.18 (it runs the
@@ -73,8 +82,9 @@ loading a stale copy of `pad.json`. It does not defend against an operator
 restoring the whole directory from a backup, which regresses the pad and the
 mark together.
 
-**External material.** `gen --external FILE` builds a pad from bytes you
-supply (for example from a hardware RNG) and tags it `external`. Letter mode
+**External material.** `gen --external FILE` builds the pair from bytes you
+supply (for example from a hardware RNG), split at the byte midpoint — first
+half A→B, second half B→A — and tags both `external`. Letter mode
 range-reduces by rejection, never modulo. The tool records your assertion of
 provenance; it cannot verify where the bytes came from and does not claim to.
 

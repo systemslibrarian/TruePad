@@ -29,12 +29,27 @@ export type PadMode = "letters" | "bytes";
 // this code cannot verify physical provenance and never claims to.
 export type PadSource = "csprng" | "external";
 
+// The two parties, and which way a pad carries traffic. A pad is burned by
+// its sender to encrypt and by its receiver to decrypt; the cipher refuses
+// the other way round, and refuses both encrypting, against the caller's
+// DECLARED role (it cannot tell who is really calling). Two-way traffic
+// needs the PAIR.
+export type Party = "A" | "B";
+export type PadDirection = "A->B" | "B->A";
+
+export const senderOf = (direction: PadDirection): Party => (direction === "A->B" ? "A" : "B");
+export const receiverOf = (direction: PadDirection): Party => (direction === "A->B" ? "B" : "A");
+export const oppositeDirection = (direction: PadDirection): PadDirection => (direction === "A->B" ? "B->A" : "A->B");
+
+export type PadPair = { "A->B": Pad; "B->A": Pad };
+
 export type PadSymbol = { offset: number; value: number };
 
 export type PadSnapshot = {
   label: string;
   mode: PadMode;
   source: PadSource;
+  direction: PadDirection;
   size: number;
   remaining: number;
   spent: number;
@@ -138,6 +153,7 @@ export class Pad {
   readonly label: string;
   readonly mode: PadMode;
   readonly source: PadSource;
+  readonly direction: PadDirection;
   readonly size: number;
 
   // offset -> value for symbols not yet consumed. Burning DELETES the entry;
@@ -152,11 +168,13 @@ export class Pad {
     values: Map<number, number>,
     nextOffset: number,
     size: number,
-    source: PadSource
+    source: PadSource,
+    direction: PadDirection
   ) {
     this.label = label;
     this.mode = mode;
     this.source = source;
+    this.direction = direction;
     this.size = size;
     this.#values = values;
     this.#nextOffset = nextOffset;
@@ -165,7 +183,12 @@ export class Pad {
   // Generate a fresh pad of `size` symbols, one independent uniform draw per
   // symbol. The whole pad exists before any encryption starts — that is what
   // lets the cipher refuse up front instead of running out mid-message.
-  static generate(size: number, mode: PadMode, options: { label?: string; randomFill?: RandomFill } = {}): Pad {
+  // A lone pad is the A->B half by default; two-way traffic uses generatePair.
+  static generate(
+    size: number,
+    mode: PadMode,
+    options: { label?: string; randomFill?: RandomFill; direction?: PadDirection } = {}
+  ): Pad {
     if (!Number.isInteger(size) || size <= 0) {
       throw new Error("pad size must be a positive integer");
     }
@@ -176,7 +199,35 @@ export class Pad {
       values.set(offset, uniformInt(range, randomFill));
     }
     const label = options.label ?? randomLabel(randomFill);
-    return new Pad(label, mode, values, 0, size, "csprng");
+    return new Pad(label, mode, values, 0, size, "csprng", options.direction ?? "A->B");
+  }
+
+  // Generation produces the pair: two independent pads, one per direction,
+  // labelled <stem>-AB and <stem>-BA. Each party keeps both — sends with one,
+  // opens with the other — so, by declared role, neither encrypts with the
+  // pad the peer encrypts with.
+  static generatePair(size: number, mode: PadMode, options: { label?: string; randomFill?: RandomFill } = {}): PadPair {
+    const randomFill = options.randomFill ?? cryptoFill;
+    const stem = options.label ?? randomLabel(randomFill);
+    return {
+      "A->B": Pad.generate(size, mode, { label: `${stem}-AB`, randomFill, direction: "A->B" }),
+      "B->A": Pad.generate(size, mode, { label: `${stem}-BA`, randomFill, direction: "B->A" })
+    };
+  }
+
+  // The pair from operator-supplied material: the first half of the bytes
+  // becomes A->B, the second half B->A. Stated so the operator knows how
+  // their material was divided.
+  static pairFromExternal(bytes: Uint8Array, mode: PadMode, options: { label?: string } = {}): PadPair {
+    if (!(bytes instanceof Uint8Array) || bytes.length < 2) {
+      throw new Error("external pad material for a pair needs at least two bytes");
+    }
+    const stem = options.label ?? randomLabel(cryptoFill);
+    const half = Math.floor(bytes.length / 2);
+    return {
+      "A->B": Pad.fromExternal(bytes.subarray(0, half), mode, { label: `${stem}-AB`, direction: "A->B" }),
+      "B->A": Pad.fromExternal(bytes.subarray(half), mode, { label: `${stem}-BA`, direction: "B->A" })
+    };
   }
 
   // Operator-supplied pad material — e.g. a file produced from a hardware
@@ -188,7 +239,11 @@ export class Pad {
   // than the material (by exactly the number of bytes >= 234). `size` asks
   // for exactly that many symbols and refuses if
   // the material cannot supply them; without it, all the material is used.
-  static fromExternal(bytes: Uint8Array, mode: PadMode, options: { label?: string; size?: number } = {}): Pad {
+  static fromExternal(
+    bytes: Uint8Array,
+    mode: PadMode,
+    options: { label?: string; size?: number; direction?: PadDirection } = {}
+  ): Pad {
     if (!(bytes instanceof Uint8Array)) {
       throw new Error("external pad material must be a Uint8Array");
     }
@@ -232,7 +287,7 @@ export class Pad {
       );
     }
     const label = options.label ?? randomLabel(cryptoFill);
-    return new Pad(label, mode, values, 0, values.size, "external");
+    return new Pad(label, mode, values, 0, values.size, "external", options.direction ?? "A->B");
   }
 
   get remaining(): number {
@@ -334,6 +389,7 @@ export class Pad {
       label: this.label,
       mode: this.mode,
       source: this.source,
+      direction: this.direction,
       size: this.size,
       remaining: this.remaining,
       spent: this.spent,
@@ -353,6 +409,7 @@ export class Pad {
       label: this.label,
       mode: this.mode,
       source: this.source,
+      direction: this.direction,
       size: this.size,
       nextOffset: this.#nextOffset,
       symbols: [...this.#values.entries()]
@@ -364,6 +421,7 @@ export class Pad {
       label: string;
       mode: PadMode;
       source: PadSource;
+      direction: PadDirection;
       size: number;
       nextOffset: number;
       symbols: [number, number][];
@@ -381,6 +439,9 @@ export class Pad {
     // rather than defaulted to either value.
     if (parsed.source !== "csprng" && parsed.source !== "external") {
       throw new Error("not a serialized TruePad pad: missing or unknown source (expected csprng or external)");
+    }
+    if (parsed.direction !== "A->B" && parsed.direction !== "B->A") {
+      throw new Error("not a serialized TruePad pad: missing or unknown direction (expected A->B or B->A)");
     }
     if (parsed.size < 0 || parsed.nextOffset < 0 || parsed.nextOffset > parsed.size) {
       throw new Error("not a serialized TruePad pad: nextOffset outside [0, size]");
@@ -417,6 +478,6 @@ export class Pad {
           `needs ${parsed.size - parsed.nextOffset}; the burn invariant requires a contiguous survivor set`
       );
     }
-    return new Pad(parsed.label, parsed.mode, values, parsed.nextOffset, parsed.size, parsed.source);
+    return new Pad(parsed.label, parsed.mode, values, parsed.nextOffset, parsed.size, parsed.source, parsed.direction);
   }
 }

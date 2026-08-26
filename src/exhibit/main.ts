@@ -8,7 +8,7 @@
  * ========================================================================= */
 
 import "./style.css";
-import { Pad, uniformInt, LETTER_RANGE, type PadMode } from "../core/pad.ts";
+import { Pad, uniformInt, LETTER_RANGE, type PadMode, type PadPair, type Party } from "../core/pad.ts";
 import {
   decodeEnvelope,
   decryptBytes,
@@ -39,10 +39,17 @@ const fmtBits = (bits: number): string =>
 
 /* ---- exhibit state ------------------------------------------------------ */
 
+// Two parties, each holding BOTH halves of the pair: A sends with A->B and
+// opens with B->A; B the reverse. The exhibit drives the A->B half (station
+// 2 is A sending, station 3 is B opening); B's pads are the "courier copy",
+// deserialize(serialize()) at generation time modelling the out-of-band
+// delivery. From then on the copies stay in sync only because each side
+// burns the offsets the envelopes name — exactly like paper.
+type PartyState = { role: Party; pads: PadPair };
+let partyA: PartyState;
+let partyB: PartyState;
+// The pads the exhibit shows: A's sending pad and B's copy of it.
 let senderPad: Pad;
-// The "courier copy": deserialize(serialize()) at generation time models the
-// out-of-band delivery. From then on the two pads only stay in sync because
-// both sides burn the same offsets in the same order — exactly like paper.
 let receiverPad: Pad;
 // The last envelope put on the wire, in wire (text) form.
 let lastWireEnvelope = "";
@@ -101,8 +108,14 @@ function generatePads(): void {
   const mode = padModeSelect.value as PadMode;
   const size = Math.min(512, Math.max(8, Number(padSizeInput.value) || 64));
   padSizeInput.value = String(size);
-  senderPad = Pad.generate(size, mode);
-  receiverPad = Pad.deserialize(senderPad.serialize());
+  const pair = Pad.generatePair(size, mode);
+  partyA = { role: "A", pads: pair };
+  partyB = {
+    role: "B",
+    pads: { "A->B": Pad.deserialize(pair["A->B"].serialize()), "B->A": Pad.deserialize(pair["B->A"].serialize()) }
+  };
+  senderPad = partyA.pads["A->B"];
+  receiverPad = partyB.pads["A->B"];
   lastWireEnvelope = "";
   el("wire").hidden = true;
   el("refusal").hidden = true;
@@ -162,8 +175,8 @@ function encrypt(): void {
   el("refusal").hidden = true;
   const result =
     senderPad.mode === "letters"
-      ? encryptLetters(plaintextInput.value, senderPad)
-      : encryptBytes(new TextEncoder().encode(plaintextInput.value), senderPad);
+      ? encryptLetters(plaintextInput.value, senderPad, partyA.role)
+      : encryptBytes(new TextEncoder().encode(plaintextInput.value), senderPad, partyA.role);
   if (!result.ok) {
     showRefusal(el("refusal"), result);
     renderAll();
@@ -206,7 +219,7 @@ function decrypt(): void {
       showBadEnvelope();
       return;
     }
-    const result = decryptLetters(envelope, receiverPad);
+    const result = decryptLetters(envelope, receiverPad, partyB.role);
     if (!result.ok) {
       showRefusal(el("receive-refusal"), result);
       renderAll();
@@ -219,7 +232,7 @@ function decrypt(): void {
       showBadEnvelope();
       return;
     }
-    const result = decryptBytes(envelope, receiverPad);
+    const result = decryptBytes(envelope, receiverPad, partyB.role);
     if (!result.ok) {
       showRefusal(el("receive-refusal"), result);
       renderAll();
@@ -298,7 +311,7 @@ function buildAttackScene(): void {
   );
   // The honest target: a real Pad, burned once, then discarded.
   const otpPad = Pad.generate(n1.length, "letters");
-  const otpResult = encryptLetters(n1, otpPad);
+  const otpResult = encryptLetters(n1, otpPad, "A");
   if (!otpResult.ok) {
     throw new Error("unreachable: pad was generated to exact message length");
   }
@@ -375,7 +388,7 @@ let tamperScene: {
 function buildTamperScene(): void {
   const pad = Pad.generate(TAMPER_PLAIN.length, "letters");
   const delivered = pad.serialize();
-  const result = encryptLetters(TAMPER_PLAIN, pad);
+  const result = encryptLetters(TAMPER_PLAIN, pad, "A");
   if (!result.ok) {
     throw new Error("unreachable: pad was generated to exact message length");
   }
@@ -403,7 +416,7 @@ function renderTamper(): void {
     cipherBox.append(cell);
   }
 
-  const decrypted = decryptLetters({ ...envelope, payload: tamperedCipher }, Pad.deserialize(delivered));
+  const decrypted = decryptLetters({ ...envelope, payload: tamperedCipher }, Pad.deserialize(delivered), "B");
   if (!decrypted.ok) {
     throw new Error("unreachable: the copy is pristine and exactly long enough");
   }

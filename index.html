@@ -133,7 +133,9 @@
         <p class="lede">
           When the pad was generated, an identical copy was “delivered out of band” to the
           receiver (via <code>serialize()</code> — burned offsets are not present in any
-          form, so the copy can no more reuse them than the original could). The envelope
+          form, so the copy can no more reuse them than the original could). Generation
+          actually produces a <em>pair</em> — one pad per direction, so by declared role neither
+          side encrypts with the pad the other encrypts with; this station opens the A→B half. The envelope
           names the pad page and the offsets it used; the copy <em>seeks</em> to that offset,
           burning everything it skips, and refuses any envelope at or below what it has
           already burned. Decrypt the same non-empty envelope twice to see a replay refused;
