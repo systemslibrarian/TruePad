@@ -80,7 +80,7 @@ const describeViolations = (bad: Import[]): string =>
 describe("layering: import direction is one-way into src/core", () => {
   it("the scanner actually sees imports (sanity check on the regex)", () => {
     const core = importsOf("core");
-    expect(core.some((i) => i.file === "core/cipher-otp.ts" && i.specifier === "./pad")).toBe(true);
+    expect(core.some((i) => i.file === "core/cipher-otp.ts" && i.specifier === "./pad.ts")).toBe(true);
     const exhibit = importsOf("exhibit");
     expect(exhibit.some((i) => i.file === "exhibit/main.ts" && i.target === "core")).toBe(true);
     // Dynamic import() and side-effect imports are caught too.
@@ -101,6 +101,8 @@ describe("layering: import direction is one-way into src/core", () => {
   it("src/cli never imports src/exhibit", () => {
     const bad = importsOf("cli").filter((i) => i.target === "exhibit");
     expect(describeViolations(bad)).toBe("");
+    // And the scanner really sees the cli layer (it did not exist when this test was written).
+    expect(importsOf("cli").some((i) => i.target === "core")).toBe(true);
   });
 
   it("no layer imports from outside src/", () => {

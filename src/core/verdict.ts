@@ -42,7 +42,7 @@
  * is not graded: the combiner fails before provenance matters.
  * ========================================================================= */
 
-import { LETTER_BITS, Pad, type PadSource } from "./pad";
+import { LETTER_BITS, Pad, type PadSource } from "./pad.ts";
 
 export const DECK_CARDS = 52;
 export const DECK_LETTER_CAPACITY = 52;

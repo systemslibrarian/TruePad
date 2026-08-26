@@ -52,7 +52,7 @@
  *     module.
  * ========================================================================= */
 
-import { Pad, type PadMode } from "./pad";
+import { Pad, type PadMode } from "./pad.ts";
 
 // Strip everything that is not an A-Z letter and uppercase the rest.
 export function normalizeAZ(text: string): string {
