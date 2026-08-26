@@ -87,10 +87,10 @@ be zeroed, so the page keeps its pads in memory and says so.
 
 | Module | Purpose |
 | --- | --- |
-| `src/core/pad.ts` | Rejection-sampled or external pad material tagged with its source and direction; irreversible consume/burn; seek by burn-forward; high-water mark; entropy ledger |
+| `src/core/pad.ts` | Rejection-sampled or external pad material tagged with its source and direction; irreversible consume/burn; seek by burn-forward; high-water mark; pad-material ledger |
 | `src/core/cipher-otp.ts` | Envelope in/out; letter-mode (add-mod-26) and byte-mode (XOR) encrypt/decrypt with role, label, shape, reuse and exhaustion checks — every refusal typed and before any burn |
 | `src/core/attack-otp.ts` | Crib dragging: leaks on keystream reuse, ties on a true OTP; shared comparator |
-| `src/core/meter.ts` | Pad-remaining vs. message-length meter state and the entropy ledger |
+| `src/core/meter.ts` | Pad-remaining vs. message-length meter state and the pad-material ledger (symbols × bits per symbol — material, not entropy) |
 | `src/core/verdict.ts` | Shannon three-condition grader, split into COMBINER and SOURCE lines, for a pad and for a DeckBook deck |
 
 ## The pad CLI: `truepad-pad` — reuse-safe pad handling, not secure messaging
