@@ -34,7 +34,7 @@ describe("crib drag against a true OTP (single ciphertext)", () => {
     expect(encrypted.ok).toBe(true);
     if (!encrypted.ok) return;
 
-    const candidates = dragCribSingleOtp(encrypted.text, "PACKAGE");
+    const candidates = dragCribSingleOtp(encrypted.envelope.payload, "PACKAGE");
     const expectedPositions = normalizeAZ("THEPACKAGEARRIVESTONIGHT").length - "PACKAGE".length + 1;
     expect(candidates).toHaveLength(expectedPositions);
     for (const candidate of candidates) {
@@ -48,7 +48,7 @@ describe("crib drag against a true OTP (single ciphertext)", () => {
     const pad = Pad.generate(30, "letters");
     const encrypted = encryptLetters("MEETATMIDNIGHT", pad);
     if (!encrypted.ok) throw new Error("unexpected refusal");
-    const candidates = dragCribSingleOtp(encrypted.text, "MEETATMIDNIGHT");
+    const candidates = dragCribSingleOtp(encrypted.envelope.payload, "MEETATMIDNIGHT");
     expect(candidates).toHaveLength(1);
     expect(candidates[0].consistent).toBe(true);
     expect(candidates[0].score).toBe(0);
@@ -81,7 +81,7 @@ describe("compareAttacks — the same attack, both targets, side by side", () =>
     if (!otpEncrypted.ok) throw new Error("unexpected refusal");
 
     const comparison = compareAttacks({
-      otpCiphertext: otpEncrypted.text,
+      otpCiphertext: otpEncrypted.envelope.payload,
       reusedCiphertexts: [
         encryptWithKeystream(P1, DECK_KEYSTREAM),
         encryptWithKeystream(P2, DECK_KEYSTREAM)

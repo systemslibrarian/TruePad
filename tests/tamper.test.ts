@@ -12,10 +12,11 @@ function letterScene(plaintext: string) {
   const encrypted = encryptLetters(plaintext, sender);
   if (!encrypted.ok) throw new Error("pad was generated to exact message length");
   return {
-    ciphertext: encrypted.text,
+    ciphertext: encrypted.envelope.payload,
     decrypt(ciphertext: string): string {
       const copy = Pad.deserialize(delivered);
-      const result = decryptLetters(ciphertext, copy);
+      // A tampered payload rides in the sender's own envelope: same page, same offsets.
+      const result = decryptLetters({ ...encrypted.envelope, payload: ciphertext }, copy);
       if (!result.ok) throw new Error("copy is pristine and exactly long enough");
       return result.text;
     }
@@ -83,12 +84,12 @@ describe("forgeBytes", () => {
     if (!encrypted.ok) throw new Error("pad was generated to exact message length");
 
     const forged = forgeBytes(
-      encrypted.bytes,
+      encrypted.envelope.payload,
       8,
       new TextEncoder().encode("$10"),
       new TextEncoder().encode("$99")
     );
-    const result = decryptBytes(forged, Pad.deserialize(delivered));
+    const result = decryptBytes({ ...encrypted.envelope, payload: forged }, Pad.deserialize(delivered));
     if (!result.ok) throw new Error("copy is pristine and exactly long enough");
     expect(new TextDecoder().decode(result.bytes)).toBe("PAY BOB $99");
   });

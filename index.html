@@ -115,13 +115,14 @@
         <div class="wire" id="wire" hidden>
           <h3>On the public channel</h3>
           <p class="wire-note">
-            This card is everything an eavesdropper sees. The pad itself never touches
-            this channel.
+            This card is the envelope — everything an eavesdropper sees. The pad itself never
+            touches this channel.
           </p>
           <dl>
             <div><dt>Pad page</dt><dd id="wire-label"></dd></div>
             <div><dt>Offsets burned</dt><dd id="wire-offsets"></dd></div>
             <div class="wire-cipher"><dt>Ciphertext</dt><dd id="wire-ciphertext"></dd></div>
+            <div class="wire-cipher"><dt>Wire form</dt><dd id="wire-envelope"></dd></div>
           </dl>
         </div>
       </section>
@@ -132,16 +133,21 @@
         <p class="lede">
           When the pad was generated, an identical copy was “delivered out of band” to the
           receiver (via <code>serialize()</code> — burned offsets are not present in any
-          form, so the copy can no more reuse them than the original could). Both pads burn
-          in lockstep: decrypt messages in the order they were sent.
+          form, so the copy can no more reuse them than the original could). The envelope
+          names the pad page and the offsets it used; the copy <em>seeks</em> to that offset,
+          burning everything it skips, and refuses any envelope at or below what it has
+          already burned. Decrypt the same non-empty envelope twice to see a replay refused;
+          encrypt twice and take only the second to see a seek. The envelope is not
+          authenticated: edit its <code>startOffset</code> upward and the copy will burn that
+          far forward — pad can be destroyed from the channel, never reused.
         </p>
         <p class="receiver-state">
           Courier copy of <span id="receiver-label" class="pad-label">—</span> —
           <span id="receiver-remaining">0</span> symbols remaining
         </p>
         <label class="field">
-          Ciphertext
-          <textarea id="ciphertext-in" rows="2" spellcheck="false" placeholder="Paste ciphertext…"></textarea>
+          Envelope from the wire
+          <textarea id="ciphertext-in" rows="2" spellcheck="false" placeholder="Paste the envelope from the wire…"></textarea>
         </label>
         <div class="controls">
           <button type="button" id="take-wire">Take latest from the wire</button>

@@ -90,6 +90,24 @@ export class PadExhaustedError extends Error {
   }
 }
 
+// Thrown when a seek names an offset at or below the high-water mark — the
+// highest offset this pad has ever burned. Every offset up to the mark is
+// gone, so honouring the request would mean reuse. Nothing is burned.
+export class PadReuseError extends Error {
+  readonly offset: number;
+  readonly highWaterMark: number;
+
+  constructor(offset: number, highWaterMark: number) {
+    super(
+      `Reuse refused: offset ${offset} is at or below the high-water mark ${highWaterMark}. ` +
+        "Every offset up to the mark has already been burned; a one-time pad never revisits one."
+    );
+    this.name = "PadReuseError";
+    this.offset = offset;
+    this.highWaterMark = highWaterMark;
+  }
+}
+
 // Human-readable pad-page label, e.g. "PAD-KQZM". The label is the only pad
 // artifact allowed on the public channel; it identifies which pad page a
 // ciphertext needs without revealing any pad symbol.
@@ -201,6 +219,42 @@ export class Pad {
     return symbols;
   }
 
+  // The highest offset ever burned: -1 for a pristine pad. Every offset at
+  // or below it is gone. Invariant maintained by consume/consumeAt and
+  // checked by deserialize: the surviving symbols are exactly
+  // [nextOffset, size), so highWaterMark is always nextOffset - 1.
+  get highWaterMark(): number {
+    return this.#nextOffset - 1;
+  }
+
+  // Seek-and-consume: return the symbols at [offset, offset + count) and
+  // burn EVERYTHING from the current pointer through offset + count - 1.
+  // Skipped offsets are destroyed, not left recoverable — a message that
+  // never arrives has its pad symbols burned as surely as one that does.
+  // Refuses (PadReuseError) any offset at or below the high-water mark;
+  // that check runs before any burn. All-or-nothing: if the window runs
+  // past the pad, throw and burn nothing — not even the skip.
+  consumeAt(offset: number, count: number): PadSymbol[] {
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new Error("offset must be a non-negative integer");
+    }
+    if (!Number.isInteger(count) || count < 0) {
+      throw new Error("count must be a non-negative integer");
+    }
+    if (offset <= this.highWaterMark) {
+      throw new PadReuseError(offset, this.highWaterMark);
+    }
+    const required = offset + count - this.#nextOffset; // skip + window
+    if (required > this.remaining) {
+      throw new PadExhaustedError(required, this.remaining);
+    }
+    while (this.#nextOffset < offset) {
+      this.#values.delete(this.#nextOffset);
+      this.#nextOffset += 1;
+    }
+    return this.consume(count);
+  }
+
   snapshot(): PadSnapshot {
     return {
       label: this.label,
@@ -246,6 +300,41 @@ export class Pad {
     ) {
       throw new Error("not a serialized TruePad pad");
     }
-    return new Pad(parsed.label, parsed.mode, new Map(parsed.symbols), parsed.nextOffset, parsed.size);
+    if (parsed.size < 0 || parsed.nextOffset < 0 || parsed.nextOffset > parsed.size) {
+      throw new Error("not a serialized TruePad pad: nextOffset outside [0, size]");
+    }
+    // Enforce the burn invariant on the way in: every surviving symbol sits
+    // at or above nextOffset, below size, appears once, and is in range for
+    // the mode. A symbol below nextOffset would be counted by `remaining`
+    // yet unreachable by consume(), which would otherwise loop forever.
+    const range = symbolRange(parsed.mode);
+    const values = new Map<number, number>();
+    for (const entry of parsed.symbols) {
+      if (!Array.isArray(entry) || entry.length !== 2) {
+        throw new Error("not a serialized TruePad pad: malformed symbol");
+      }
+      const [offset, value] = entry;
+      if (
+        !Number.isInteger(offset) ||
+        offset < parsed.nextOffset ||
+        offset >= parsed.size ||
+        !Number.isInteger(value) ||
+        value < 0 ||
+        value >= range ||
+        values.has(offset)
+      ) {
+        throw new Error(`not a serialized TruePad pad: symbol at offset ${offset} violates the burn invariant`);
+      }
+      values.set(offset, value);
+    }
+    // Unique + in [nextOffset, size) + this count means EXACTLY [nextOffset, size):
+    // a pad with holes would make consumeAt return the wrong offsets.
+    if (values.size !== parsed.size - parsed.nextOffset) {
+      throw new Error(
+        `not a serialized TruePad pad: ${values.size} surviving symbols but [${parsed.nextOffset}, ${parsed.size}) ` +
+          `needs ${parsed.size - parsed.nextOffset}; the burn invariant requires a contiguous survivor set`
+      );
+    }
+    return new Pad(parsed.label, parsed.mode, values, parsed.nextOffset, parsed.size);
   }
 }

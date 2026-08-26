@@ -206,3 +206,44 @@ describe("deterministic generation with an injected fill", () => {
     }
   });
 });
+
+describe("deserialize enforces the burn invariant", () => {
+  const base = { label: "PAD-TEST", mode: "letters", size: 4, nextOffset: 2 };
+
+  it("accepts a well-formed pad and resumes at nextOffset", () => {
+    const pad = Pad.deserialize(JSON.stringify({ ...base, symbols: [[2, 5], [3, 7]] }));
+    expect(pad.remaining).toBe(2);
+    expect(pad.highWaterMark).toBe(1);
+  });
+
+  it("rejects a symbol below nextOffset — it would be counted but unreachable", () => {
+    // Before this check, such a pad made consume() spin forever: `remaining`
+    // said 1 but the pointer could never reach offset 0.
+    expect(() => Pad.deserialize(JSON.stringify({ ...base, symbols: [[0, 1]] }))).toThrow(/burn invariant/);
+  });
+
+  it("rejects offsets at or past size, duplicates, out-of-range values, and nextOffset outside [0, size]", () => {
+    expect(() => Pad.deserialize(JSON.stringify({ ...base, symbols: [[4, 1]] }))).toThrow(/burn invariant/);
+    expect(() => Pad.deserialize(JSON.stringify({ ...base, symbols: [[2, 1], [2, 3]] }))).toThrow(/burn invariant/);
+    expect(() => Pad.deserialize(JSON.stringify({ ...base, symbols: [[2, 26]] }))).toThrow(/burn invariant/);
+    expect(() => Pad.deserialize(JSON.stringify({ ...base, mode: "bytes", symbols: [[2, 256]] }))).toThrow(/burn invariant/);
+    expect(() => Pad.deserialize(JSON.stringify({ ...base, nextOffset: 5, symbols: [] }))).toThrow(/nextOffset/);
+    expect(() => Pad.deserialize(JSON.stringify({ ...base, nextOffset: -1, symbols: [] }))).toThrow(/nextOffset/);
+  });
+});
+
+describe("deserialize requires the survivor set to be exactly [nextOffset, size)", () => {
+  it("rejects a pad with holes — consumeAt would otherwise hand back the wrong offsets", () => {
+    const holes = { label: "PAD-HOLE", mode: "letters", size: 10, nextOffset: 2, symbols: [[5, 1], [6, 2], [7, 3], [8, 4], [9, 5]] };
+    expect(() => Pad.deserialize(JSON.stringify(holes))).toThrow(/contiguous/);
+    const gap = { label: "PAD-HOLE", mode: "letters", size: 10, nextOffset: 0, symbols: [[0, 1], [1, 2], [2, 3], [8, 4], [9, 5]] };
+    expect(() => Pad.deserialize(JSON.stringify(gap))).toThrow(/contiguous/);
+  });
+
+  it("accepts the full set and an empty tail", () => {
+    const full = { label: "PAD-FULL", mode: "bytes", size: 3, nextOffset: 1, symbols: [[1, 200], [2, 7]] };
+    expect(Pad.deserialize(JSON.stringify(full)).remaining).toBe(2);
+    const drained = { label: "PAD-DONE", mode: "bytes", size: 3, nextOffset: 3, symbols: [] };
+    expect(Pad.deserialize(JSON.stringify(drained)).remaining).toBe(0);
+  });
+});
