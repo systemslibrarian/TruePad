@@ -17,9 +17,10 @@
  *   - Letter mode draws one uniform value 0..25 per symbol (log2 26 ≈ 4.700
  *     bits each). Byte mode draws one uniform byte 0..255 (8 bits each).
  *   - Consuming a symbol BURNS it: the value is deleted from the pad, not
- *     flagged. No API in this class can return a burned value, so the same
- *     offset can never encrypt a second symbol — not even within a session,
- *     and not through serialize/deserialize either.
+ *     flagged. No API on this instance can return a burned value, and
+ *     serialize() never carries one — but an OLDER serialization still
+ *     does. Durability across crashes and copies is the CLI store's job
+ *     (a high-water mark kept apart from the pad file), not this class's.
  * ========================================================================= */
 
 export type PadMode = "letters" | "bytes";
@@ -157,8 +158,8 @@ export class Pad {
   readonly size: number;
 
   // offset -> value for symbols not yet consumed. Burning DELETES the entry;
-  // no other field retains the value, which is what makes reuse impossible
-  // rather than merely forbidden.
+  // no other field retains the value, which is what makes reuse through
+  // this instance impossible rather than merely forbidden.
   #values: Map<number, number>;
   #nextOffset: number;
 

@@ -35,11 +35,11 @@
         </li>
         <li>
           <strong>2 · Independent uniform symbols</strong>
-          <span>Every pad symbol is a fresh draw from <code>crypto.getRandomValues()</code> with rejection sampling. Never <code>Math.random()</code>.</span>
+          <span>Every pad symbol is one draw, range-reduced by rejection sampling — never <code>Math.random()</code>. The draws come from <code>crypto.getRandomValues()</code>, a deterministic generator, so this condition holds computationally; station 4 grades that separately.</span>
         </li>
         <li>
           <strong>3 · Used exactly once</strong>
-          <span>Consuming a symbol <em>deletes</em> it. No API can return a burned value — reuse is impossible, not merely forbidden.</span>
+          <span>Consuming a symbol <em>deletes</em> it from this page's pad, and the receiver refuses anything at or below its high-water mark. Across crashes and copies that job needs a durable mark — the repo's CLI keeps one; this in-memory exhibit does not.</span>
         </li>
       </ul>
     </header>
@@ -51,7 +51,7 @@
         <p class="lede">
           The whole pad exists <em>before</em> any encryption starts — that is what lets the
           cipher refuse up front instead of running out mid-message. The pad travels out of
-          band; only ciphertext and a pad-page label ever touch the public channel.
+          band; only the envelope — pad page, offsets, ciphertext — ever touches the public channel.
         </p>
         <form class="controls" id="pad-controls">
           <label>
@@ -73,9 +73,9 @@
         </div>
         <div id="pad-grid" class="pad-grid" aria-label="Pad symbols; burned symbols are struck out"></div>
         <dl class="ledger" id="ledger" aria-label="Entropy ledger">
-          <div><dt>Generated</dt><dd id="ledger-generated">—</dd></div>
-          <div><dt>Spent</dt><dd id="ledger-spent">—</dd></div>
-          <div><dt>Remaining</dt><dd id="ledger-remaining">—</dd></div>
+          <div><dt>Material generated</dt><dd id="ledger-generated">—</dd></div>
+          <div><dt>Material spent</dt><dd id="ledger-spent">—</dd></div>
+          <div><dt>Material remaining</dt><dd id="ledger-remaining">—</dd></div>
           <div class="motto"><dt>Ledger rule</dt><dd id="ledger-motto">—</dd></div>
         </dl>
       </section>
@@ -121,7 +121,7 @@
           <dl>
             <div><dt>Pad page</dt><dd id="wire-label"></dd></div>
             <div><dt>Offsets burned</dt><dd id="wire-offsets"></dd></div>
-            <div class="wire-cipher"><dt>Ciphertext</dt><dd id="wire-ciphertext"></dd></div>
+            <div class="wire-cipher"><dt>Ciphertext (payload only)</dt><dd id="wire-ciphertext"></dd></div>
             <div class="wire-cipher"><dt>Wire form</dt><dd id="wire-envelope"></dd></div>
           </dl>
         </div>
@@ -265,9 +265,9 @@
       <section class="station honest" aria-labelledby="honest-title">
         <h2 id="honest-title">What this exhibit is not</h2>
         <p class="lede">
-          Everything above is a correct, bias-free, structurally enforced one-time pad —
-          the strongest claim a browser demo can truthfully make. It is still an
-          <em>exhibit</em>, not a secure messaging tool:
+          Everything above is a correct, bias-free, structurally enforced one-time-pad
+          <em>combiner</em> over a computational source — the strongest claim a browser demo
+          can truthfully make. It is still an <em>exhibit</em>, not a secure messaging tool:
         </p>
         <ul class="honest-list">
           <li>
@@ -282,8 +282,18 @@
           </li>
           <li>
             <strong>You are trusting the delivered code and the platform CSPRNG.</strong>
-            A compromised server or browser is a compromised pad. The real gold standard
-            is an air-gapped machine — dice and paper qualify.
+            A compromised server or browser is a compromised pad. And a CSPRNG is a
+            deterministic generator: the whole pad is bounded by its state entropy, so the
+            "independent uniform" condition holds computationally, not information-theoretically.
+            Station 4 says so on every verdict. The real gold standard is an air-gapped
+            machine — dice and paper qualify.
+          </li>
+          <li>
+            <strong>Nothing here persists, on purpose.</strong> The pad lives in this tab's
+            memory and dies with it. Real pads need a durable burn and a high-water mark
+            that survives crashes — the repository's CLI does that on disk; a browser must
+            not (IndexedDB syncs, profiles get backed up, JavaScript strings cannot be
+            zeroed).
           </li>
           <li>
             <strong>Metadata still leaks.</strong> Ciphertext length equals message length,
@@ -291,7 +301,10 @@
             but worth knowing.
           </li>
           <li>
-            <strong>There is no integrity protection.</strong> Station 6 is live proof.
+            <strong>The envelope is unauthenticated.</strong> Station 6 is live proof that a
+            payload can be rewritten without alarm; a rewritten <code>startOffset</code> makes
+            the receiver burn forward through its pad — destroyed, never reused. Authenticating
+            the envelope (Wegman–Carter) is the extension seam and costs additional pad.
             Perfect secrecy and tamper-evidence are separate properties with separate costs.
           </li>
         </ul>

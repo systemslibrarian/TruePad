@@ -11,7 +11,7 @@ import type { PadSnapshot } from "./pad.ts";
 export type MeterStatus = "ready" | "low" | "exhausted";
 
 // The lock message. This exact copy is the thing the exhibit is remembered
-// by — the UI and the e2e suite both assert against this constant.
+// by — the UI renders it and e2e/exhibit.spec.ts asserts the page shows it.
 export const EXHAUSTED_MESSAGE =
   "Pad exhausted. A one-time pad cannot borrow, wrap, or reuse. " +
   "Generate more randomness — and physically deliver it — before you can send this.";

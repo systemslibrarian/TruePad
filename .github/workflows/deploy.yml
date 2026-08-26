@@ -1,7 +1,7 @@
 # Build the TruePad exhibit and publish it to GitHub Pages.
 #
-# The unit suites gate the build, and the build (which includes `tsc`) gates
-# the deploy: a red test or a type error means the live demo simply does not
+# The unit suites gate the build, the build (which type-checks both the
+# browser and the CLI configs) and the Playwright e2e suite gate the deploy: a red test or a type error means the live demo simply does not
 # update. Deployment uses the official Pages actions with OIDC — no
 # gh-pages branch, no personal tokens.
 name: Deploy demo to GitHub Pages
@@ -39,6 +39,10 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      # The e2e suite drives the real exhibit in Chromium against the dev
+      # server (playwright.config.ts). It gates the deploy like the unit suites.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
       # Pull requests stop here: they get the test/type-check/build gate as a
       # status check, but only a push to master publishes.
       - if: github.event_name != 'pull_request'

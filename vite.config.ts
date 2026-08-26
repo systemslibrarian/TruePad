@@ -31,8 +31,9 @@ export default defineConfig({
     })
   ],
   test: {
-    // Unit tests live in tests/. The e2e/ Playwright specs are run separately
-    // via `npm run test:e2e` and must not be collected by Vitest.
+    // Unit tests live in tests/. The Playwright specs in e2e/ (see
+    // playwright.config.ts) run separately via `npm run test:e2e` and must
+    // not be collected by Vitest.
     include: ["tests/**/*.test.ts"]
   }
 });

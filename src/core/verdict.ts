@@ -33,7 +33,7 @@
  *
  * A pad that passes all three conditions with a computational source is the
  * honest common case, and the exhibit says so rather than rounding it up to
- * "information-theoretically secure".
+ * an information-theoretic claim the source cannot support.
  *
  * A deck fails condition 1 on entropy arithmetic — log2(52!) ≈ 225.6 bits
  * available vs. 52 × log2(26) ≈ 244.4 bits needed for 52 letters — and
@@ -187,7 +187,8 @@ function gradePad(pad: Pad, messageLength: number): ShannonReport {
       pass: true,
       detail:
         "Consumed offsets are deleted from the pad in memory, not flagged, and the high-water mark refuses any " +
-        "envelope at or below it. Within one process no API can return a burned symbol."
+        "envelope at or below it. Within one process no API can return a burned symbol; across crashes and copies " +
+        "that needs the durable mark the CLI keeps, which this in-memory exhibit does not."
     }
   ];
 
