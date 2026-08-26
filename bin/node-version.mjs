@@ -33,6 +33,23 @@ export function tooOld(version) {
   return below(parts, MIN_BY_MAJOR[major]);
 }
 
+// The gate proper: ask the runtime whether it strips types. Node >= 22.10
+// exposes process.features.typescript ("strip" | "transform" | false); on
+// older runtimes the property is absent and the version tuple decides.
+// A `--no-experimental-strip-types` run therefore refuses too. Pass null
+// as `features` to model a runtime without the flag.
+/**
+ * @param {{ typescript?: unknown } | null | undefined} features
+ * @param {string} version
+ * @returns {boolean}
+ */
+export function lacksTypeStripping(features = process.features, version = process.versions.node) {
+  if (features && typeof features === "object" && "typescript" in features) {
+    return !features.typescript;
+  }
+  return tooOld(version);
+}
+
 export function versionError(version) {
   return (
     `truepad-pad needs Node ${MIN_NODE.join(".")} or newer on the 22 line, 23.6.0 or newer on the 23 line, or ` +

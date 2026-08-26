@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,7 +8,7 @@ import { Pad } from "../src/core/pad";
 import { acquireLock, LOCK_FILE } from "../src/cli/lock";
 import { initStore, loadPad, MARKS_FILE, PAD_FILE, persistBurn, readMarks } from "../src/cli/store";
 import { parseArgs } from "../src/cli/truepad-pad";
-import { MIN_BY_MAJOR, MIN_NODE, tooOld, versionError } from "../bin/node-version.mjs";
+import { lacksTypeStripping, MIN_BY_MAJOR, MIN_NODE, tooOld, versionError } from "../bin/node-version.mjs";
 
 /* ============================================================================
  * Lane 2 — durable burn.
@@ -152,6 +152,35 @@ describe("order of operations: persist, fsync, then emit", () => {
     expect(existsSync(join(padDir(), `${PAD_FILE}.tmp`))).toBe(false);
   });
 
+  it("the REAL burn prints nothing when persistence fails — emit-before-persist would print the envelope", () => {
+    // The Lane 2 review showed a reorder-only mutation (emit, then persist)
+    // passed every other test: nothing observed stdout relative to the disk.
+    // Force the mark append to fail through the real binary (marks.log
+    // read-only; the lock and the pad rewrite still work) and assert stdout
+    // is empty. Under the correct order the pad rewrite has already landed
+    // when the append fails: those symbols are lost, never reused.
+    if (typeof process.getuid === "function" && process.getuid() === 0) {
+      return; // root ignores file modes; the check below cannot bite
+    }
+    const a = join(dir, "a");
+    const gen = spawnSync(process.execPath, [LAUNCHER, "gen", a, "--size", "20", "--label", "PAD-NOWR"], { encoding: "utf8" });
+    expect(gen.status).toBe(0);
+    const marksBefore = readFileSync(join(a, MARKS_FILE), "utf8");
+    chmodSync(join(a, MARKS_FILE), 0o400);
+    try {
+      const burn = spawnSync(process.execPath, [LAUNCHER, "burn", a, "HELLO"], { encoding: "utf8" });
+      expect(burn.status).toBe(1);
+      expect(burn.stdout).toBe("");
+      expect(burn.stderr).toMatch(/EACCES|permission denied/i);
+    } finally {
+      chmodSync(join(a, MARKS_FILE), 0o600);
+    }
+    expect(readFileSync(join(a, MARKS_FILE), "utf8")).toBe(marksBefore);
+    // pad.json was rewritten first (step 1 of the order): the five symbols are gone, not reused.
+    expect(JSON.parse(readFileSync(join(a, PAD_FILE), "utf8")).nextOffset).toBe(5);
+    expect(existsSync(join(a, LOCK_FILE))).toBe(false);
+  });
+
   it("initStore never overwrites an existing pad directory", () => {
     initStore(padDir(), Pad.generate(5, "letters"));
     expect(() => initStore(padDir(), Pad.generate(5, "letters"))).toThrow(/never overwritten/);
@@ -205,6 +234,22 @@ describe("launcher version gate", () => {
     expect(versionError("18.0.0")).toContain("22.18.0");
     expect(versionError("18.0.0")).toContain("23.6.0");
     expect(versionError("18.0.0")).toContain("Nothing was run");
+  });
+
+  it("gates on the runtime's own capability flag, falling back to the version only where the flag is absent", () => {
+    expect(lacksTypeStripping({ typescript: "strip" }, "0.0.0")).toBe(false);
+    expect(lacksTypeStripping({ typescript: "transform" }, "0.0.0")).toBe(false);
+    expect(lacksTypeStripping({ typescript: false }, "99.0.0")).toBe(true); // --no-experimental-strip-types
+    expect(lacksTypeStripping({}, "22.9.0")).toBe(true); // pre-22.10: no flag, old version
+    expect(lacksTypeStripping({}, "24.14.0")).toBe(false);
+    expect(lacksTypeStripping(null, "20.0.0")).toBe(true); // no features object at all
+    // This process really strips types (the suite imports .ts through Node in child processes).
+    expect(lacksTypeStripping()).toBe(false);
+    // The real launcher refuses when stripping is turned off, before importing anything.
+    const off = spawnSync(process.execPath, ["--no-experimental-strip-types", LAUNCHER, "status", "/nonexistent"], { encoding: "utf8" });
+    expect(off.status).toBe(1);
+    expect(off.stderr).toContain("Nothing was run");
+    expect(off.stdout).toBe("");
   });
 
   it("the launcher has no top-level await, so the version message can print on any ESM-capable Node", () => {

@@ -4,9 +4,9 @@
 // it with a syntax error or "Unknown file extension .ts" before any of our
 // code ran. This file parses everywhere an ES module parses (no top-level
 // await), checks the runtime, and only then imports the real entry point.
-import { tooOld, versionError } from "./node-version.mjs";
+import { lacksTypeStripping, versionError } from "./node-version.mjs";
 
-if (tooOld(process.versions.node)) {
+if (lacksTypeStripping()) {
   process.stderr.write(`${versionError(process.versions.node)}\n`);
   process.exit(1);
 }
