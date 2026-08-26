@@ -9,14 +9,14 @@ import { diffPositions, forgeBytes, forgeLetters, shiftCipherLetter } from "../s
 function letterScene(plaintext: string) {
   const sender = Pad.generate(normalizeAZ(plaintext).length, "letters");
   const delivered = sender.serialize();
-  const encrypted = encryptLetters(plaintext, sender);
+  const encrypted = encryptLetters(plaintext, sender, "A");
   if (!encrypted.ok) throw new Error("pad was generated to exact message length");
   return {
     ciphertext: encrypted.envelope.payload,
     decrypt(ciphertext: string): string {
       const copy = Pad.deserialize(delivered);
       // A tampered payload rides in the sender's own envelope: same page, same offsets.
-      const result = decryptLetters({ ...encrypted.envelope, payload: ciphertext }, copy);
+      const result = decryptLetters({ ...encrypted.envelope, payload: ciphertext }, copy, "B");
       if (!result.ok) throw new Error("copy is pristine and exactly long enough");
       return result.text;
     }
@@ -80,7 +80,7 @@ describe("forgeBytes", () => {
     const plain = new TextEncoder().encode("PAY BOB $10");
     const sender = Pad.generate(plain.length, "bytes");
     const delivered = sender.serialize();
-    const encrypted = encryptBytes(plain, sender);
+    const encrypted = encryptBytes(plain, sender, "A");
     if (!encrypted.ok) throw new Error("pad was generated to exact message length");
 
     const forged = forgeBytes(
@@ -89,7 +89,7 @@ describe("forgeBytes", () => {
       new TextEncoder().encode("$10"),
       new TextEncoder().encode("$99")
     );
-    const result = decryptBytes({ ...encrypted.envelope, payload: forged }, Pad.deserialize(delivered));
+    const result = decryptBytes({ ...encrypted.envelope, payload: forged }, Pad.deserialize(delivered), "B");
     if (!result.ok) throw new Error("copy is pristine and exactly long enough");
     expect(new TextDecoder().decode(result.bytes)).toBe("PAY BOB $99");
   });

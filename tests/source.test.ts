@@ -98,7 +98,7 @@ describe("Pad.fromExternal — operator-supplied material", () => {
   it("an external pad encrypts and burns exactly like a generated one", () => {
     const pad = Pad.fromExternal(material(200), "letters");
     const before = pad.remaining;
-    const result = encryptLetters("HELLO", pad);
+    const result = encryptLetters("HELLO", pad, "A");
     expect(result.ok).toBe(true);
     expect(pad.remaining).toBe(before - 5);
     expect(pad.highWaterMark).toBe(4);

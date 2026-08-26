@@ -208,7 +208,7 @@ describe("deterministic generation with an injected fill", () => {
 });
 
 describe("deserialize enforces the burn invariant", () => {
-  const base = { label: "PAD-TEST", mode: "letters", source: "csprng", size: 4, nextOffset: 2 };
+  const base = { label: "PAD-TEST", mode: "letters", source: "csprng", direction: "A->B", size: 4, nextOffset: 2 };
 
   it("accepts a well-formed pad and resumes at nextOffset", () => {
     const pad = Pad.deserialize(JSON.stringify({ ...base, symbols: [[2, 5], [3, 7]] }));
@@ -234,16 +234,16 @@ describe("deserialize enforces the burn invariant", () => {
 
 describe("deserialize requires the survivor set to be exactly [nextOffset, size)", () => {
   it("rejects a pad with holes — consumeAt would otherwise hand back the wrong offsets", () => {
-    const holes = { label: "PAD-HOLE", mode: "letters", source: "csprng", size: 10, nextOffset: 2, symbols: [[5, 1], [6, 2], [7, 3], [8, 4], [9, 5]] };
+    const holes = { label: "PAD-HOLE", mode: "letters", source: "csprng", direction: "A->B", size: 10, nextOffset: 2, symbols: [[5, 1], [6, 2], [7, 3], [8, 4], [9, 5]] };
     expect(() => Pad.deserialize(JSON.stringify(holes))).toThrow(/contiguous/);
-    const gap = { label: "PAD-HOLE", mode: "letters", source: "csprng", size: 10, nextOffset: 0, symbols: [[0, 1], [1, 2], [2, 3], [8, 4], [9, 5]] };
+    const gap = { label: "PAD-HOLE", mode: "letters", source: "csprng", direction: "A->B", size: 10, nextOffset: 0, symbols: [[0, 1], [1, 2], [2, 3], [8, 4], [9, 5]] };
     expect(() => Pad.deserialize(JSON.stringify(gap))).toThrow(/contiguous/);
   });
 
   it("accepts the full set and an empty tail", () => {
-    const full = { label: "PAD-FULL", mode: "bytes", source: "csprng", size: 3, nextOffset: 1, symbols: [[1, 200], [2, 7]] };
+    const full = { label: "PAD-FULL", mode: "bytes", source: "csprng", direction: "A->B", size: 3, nextOffset: 1, symbols: [[1, 200], [2, 7]] };
     expect(Pad.deserialize(JSON.stringify(full)).remaining).toBe(2);
-    const drained = { label: "PAD-DONE", mode: "bytes", source: "csprng", size: 3, nextOffset: 3, symbols: [] };
+    const drained = { label: "PAD-DONE", mode: "bytes", source: "csprng", direction: "B->A", size: 3, nextOffset: 3, symbols: [] };
     expect(Pad.deserialize(JSON.stringify(drained)).remaining).toBe(0);
   });
 });

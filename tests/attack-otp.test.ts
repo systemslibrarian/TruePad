@@ -30,7 +30,7 @@ describe("englishScore", () => {
 describe("crib drag against a true OTP (single ciphertext)", () => {
   it("finds every alignment equally consistent — zero information", () => {
     const pad = Pad.generate(64, "letters");
-    const encrypted = encryptLetters("THEPACKAGEARRIVESTONIGHT", pad);
+    const encrypted = encryptLetters("THEPACKAGEARRIVESTONIGHT", pad, "A");
     expect(encrypted.ok).toBe(true);
     if (!encrypted.ok) return;
 
@@ -46,7 +46,7 @@ describe("crib drag against a true OTP (single ciphertext)", () => {
 
   it("stays uninformative even when the crib IS the whole plaintext", () => {
     const pad = Pad.generate(30, "letters");
-    const encrypted = encryptLetters("MEETATMIDNIGHT", pad);
+    const encrypted = encryptLetters("MEETATMIDNIGHT", pad, "A");
     if (!encrypted.ok) throw new Error("unexpected refusal");
     const candidates = dragCribSingleOtp(encrypted.envelope.payload, "MEETATMIDNIGHT");
     expect(candidates).toHaveLength(1);
@@ -77,7 +77,7 @@ describe("crib drag against a reused keystream (DeckBook's sin)", () => {
 describe("compareAttacks — the same attack, both targets, side by side", () => {
   it("reports leak on reuse and no leak on the OTP", () => {
     const pad = Pad.generate(64, "letters");
-    const otpEncrypted = encryptLetters(P1, pad);
+    const otpEncrypted = encryptLetters(P1, pad, "A");
     if (!otpEncrypted.ok) throw new Error("unexpected refusal");
 
     const comparison = compareAttacks({
