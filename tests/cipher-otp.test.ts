@@ -45,10 +45,10 @@ describe("letter mode", () => {
     const result = encryptLetters("ABC", pad);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.text).toBe("ACE");
-      expect(result.startOffset).toBe(0);
-      expect(result.consumed).toBe(3);
-      expect(result.padLabel).toBe("PAD-TEST");
+      expect(result.envelope.payload).toBe("ACE");
+      expect(result.envelope.startOffset).toBe(0);
+      expect(result.envelope.consumed).toBe(3);
+      expect(result.envelope.label).toBe("PAD-TEST");
     }
   });
 
@@ -58,11 +58,11 @@ describe("letter mode", () => {
     const encrypted = encryptLetters("Attack at dawn, bring the LANTERNS!", sender);
     expect(encrypted.ok).toBe(true);
     if (!encrypted.ok) return;
-    const decrypted = decryptLetters(encrypted.text, receiver);
+    const decrypted = decryptLetters(encrypted.envelope, receiver);
     expect(decrypted.ok).toBe(true);
     if (!decrypted.ok) return;
     expect(decrypted.text).toBe(normalizeAZ("Attack at dawn, bring the LANTERNS!"));
-    expect(decrypted.startOffset).toBe(encrypted.startOffset);
+    expect(decrypted.startOffset).toBe(encrypted.envelope.startOffset);
   });
 
   it("burns disjoint offsets across consecutive messages", () => {
@@ -72,10 +72,10 @@ describe("letter mode", () => {
     const second = encryptLetters("BRINGTHEBOOK", sender);
     expect(first.ok && second.ok).toBe(true);
     if (!first.ok || !second.ok) return;
-    expect(second.startOffset).toBe(first.startOffset + first.consumed);
+    expect(second.envelope.startOffset).toBe(first.envelope.startOffset + first.envelope.consumed);
     // Receiver replays the same sequence and stays in sync.
-    const firstPlain = decryptLetters(first.text, receiver);
-    const secondPlain = decryptLetters(second.text, receiver);
+    const firstPlain = decryptLetters(first.envelope, receiver);
+    const secondPlain = decryptLetters(second.envelope, receiver);
     expect(firstPlain.ok && firstPlain.text === "MEETMEATNOON").toBe(true);
     expect(secondPlain.ok && secondPlain.text === "BRINGTHEBOOK").toBe(true);
   });
@@ -103,7 +103,7 @@ describe("letter mode", () => {
   it("decrypt refuses on a device whose pad copy is exhausted", () => {
     const pad = Pad.generate(4, "letters");
     pad.consume(4);
-    const result = decryptLetters("XYZZY", pad);
+    const result = decryptLetters({ label: pad.label, startOffset: 4, consumed: 5, payload: "XYZZY" }, pad);
     expect(!result.ok && result.reason === "pad-exhausted").toBe(true);
   });
 });
@@ -116,7 +116,7 @@ describe("byte mode", () => {
     const encrypted = encryptBytes(plain, sender);
     expect(encrypted.ok).toBe(true);
     if (!encrypted.ok) return;
-    const decrypted = decryptBytes(encrypted.bytes, receiver);
+    const decrypted = decryptBytes(encrypted.envelope, receiver);
     expect(decrypted.ok).toBe(true);
     if (!decrypted.ok) return;
     expect([...decrypted.bytes]).toEqual([...plain]);
@@ -145,7 +145,7 @@ describe("no keystream reuse at the cipher level", () => {
     if (!first.ok || !second.ok) return;
     // Keystream 0,1,2,... is strictly increasing, so identical plaintext
     // cannot produce identical ciphertext — fresh symbols were burned.
-    expect(second.text).not.toBe(first.text);
-    expect(second.startOffset).toBe(first.consumed);
+    expect(second.envelope.payload).not.toBe(first.envelope.payload);
+    expect(second.envelope.startOffset).toBe(first.envelope.consumed);
   });
 });

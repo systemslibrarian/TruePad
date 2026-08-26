@@ -206,3 +206,28 @@ describe("deterministic generation with an injected fill", () => {
     }
   });
 });
+
+describe("deserialize enforces the burn invariant", () => {
+  const base = { label: "PAD-TEST", mode: "letters", size: 4, nextOffset: 2 };
+
+  it("accepts a well-formed pad and resumes at nextOffset", () => {
+    const pad = Pad.deserialize(JSON.stringify({ ...base, symbols: [[2, 5], [3, 7]] }));
+    expect(pad.remaining).toBe(2);
+    expect(pad.highWaterMark).toBe(1);
+  });
+
+  it("rejects a symbol below nextOffset — it would be counted but unreachable", () => {
+    // Before this check, such a pad made consume() spin forever: `remaining`
+    // said 1 but the pointer could never reach offset 0.
+    expect(() => Pad.deserialize(JSON.stringify({ ...base, symbols: [[0, 1]] }))).toThrow(/burn invariant/);
+  });
+
+  it("rejects offsets at or past size, duplicates, out-of-range values, and nextOffset outside [0, size]", () => {
+    expect(() => Pad.deserialize(JSON.stringify({ ...base, symbols: [[4, 1]] }))).toThrow(/burn invariant/);
+    expect(() => Pad.deserialize(JSON.stringify({ ...base, symbols: [[2, 1], [2, 3]] }))).toThrow(/burn invariant/);
+    expect(() => Pad.deserialize(JSON.stringify({ ...base, symbols: [[2, 26]] }))).toThrow(/burn invariant/);
+    expect(() => Pad.deserialize(JSON.stringify({ ...base, mode: "bytes", symbols: [[2, 256]] }))).toThrow(/burn invariant/);
+    expect(() => Pad.deserialize(JSON.stringify({ ...base, nextOffset: 5, symbols: [] }))).toThrow(/nextOffset/);
+    expect(() => Pad.deserialize(JSON.stringify({ ...base, nextOffset: -1, symbols: [] }))).toThrow(/nextOffset/);
+  });
+});

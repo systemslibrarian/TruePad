@@ -10,12 +10,15 @@
 import "./style.css";
 import { Pad, uniformInt, LETTER_RANGE, type PadMode } from "../core/pad";
 import {
+  decodeEnvelope,
   decryptBytes,
   decryptLetters,
+  encodeEnvelope,
   encryptBytes,
   encryptLetters,
   groupedFive,
   normalizeAZ,
+  type Envelope,
   type OtpRefusal
 } from "../core/cipher-otp";
 import { meterState, LEDGER_MOTTO } from "../core/meter";
@@ -40,8 +43,9 @@ let senderPad: Pad;
 // The "courier copy": deserialize(serialize()) at generation time models the
 // out-of-band delivery. From then on the two pads only stay in sync because
 // both sides burn the same offsets in the same order — exactly like paper.
+// The last envelope put on the wire, in wire (text) form.
 let receiverPad: Pad;
-let lastWireCiphertext = "";
+let lastWireEnvelope = "";
 
 /* ---- station 1: pad ----------------------------------------------------- */
 
@@ -99,7 +103,7 @@ function generatePads(): void {
   padSizeInput.value = String(size);
   senderPad = Pad.generate(size, mode);
   receiverPad = Pad.deserialize(senderPad.serialize());
-  lastWireCiphertext = "";
+  lastWireEnvelope = "";
   el("wire").hidden = true;
   el("refusal").hidden = true;
   el("receive-refusal").hidden = true;
@@ -154,18 +158,6 @@ function toHexGroups(bytes: Uint8Array): string {
     .join(" ");
 }
 
-function fromHex(text: string): Uint8Array | null {
-  const cleaned = text.replace(/[^0-9a-fA-F]/g, "");
-  if (cleaned.length === 0 || cleaned.length % 2 !== 0) {
-    return null;
-  }
-  const bytes = new Uint8Array(cleaned.length / 2);
-  for (let i = 0; i < bytes.length; i += 1) {
-    bytes[i] = parseInt(cleaned.slice(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
-}
-
 function encrypt(): void {
   el("refusal").hidden = true;
   const result =
@@ -177,15 +169,17 @@ function encrypt(): void {
     renderAll();
     return;
   }
-  lastWireCiphertext = "text" in result ? groupedFive(result.text) : toHexGroups(result.bytes);
-  el("wire-label").textContent = result.padLabel;
+  const { envelope } = result;
+  lastWireEnvelope = encodeEnvelope(envelope);
+  el("wire-label").textContent = envelope.label;
   el("wire-offsets").textContent =
-    result.consumed === 0
+    envelope.consumed === 0
       ? "none (empty message)"
-      : `${result.startOffset} – ${result.startOffset + result.consumed - 1} (${result.consumed} symbols, gone forever)`;
-  el("wire-ciphertext").textContent = lastWireCiphertext || "(empty)";
+      : `${envelope.startOffset} – ${envelope.startOffset + envelope.consumed - 1} (${envelope.consumed} symbols, gone forever)`;
+  el("wire-ciphertext").textContent =
+    (typeof envelope.payload === "string" ? groupedFive(envelope.payload) : toHexGroups(envelope.payload)) || "(empty)";
   el("wire").hidden = false;
-  renderPadGrid({ start: result.startOffset, count: result.consumed });
+  renderPadGrid({ start: envelope.startOffset, count: envelope.consumed });
   renderAll();
 }
 
@@ -193,12 +187,25 @@ function encrypt(): void {
 
 const ciphertextInput = el<HTMLTextAreaElement>("ciphertext-in");
 
+function showBadEnvelope(): void {
+  const wall = el("receive-refusal");
+  wall.textContent =
+    "Not a wire envelope. Take one from the wire above — it carries the pad page, the offsets and the " +
+    (receiverPad.mode === "letters" ? "A–Z payload." : "hex payload.");
+  wall.hidden = false;
+}
+
 function decrypt(): void {
   el("receive-refusal").hidden = true;
   el("recovered").hidden = true;
   let recovered: string;
   if (receiverPad.mode === "letters") {
-    const result = decryptLetters(ciphertextInput.value, receiverPad);
+    const envelope = decodeEnvelope(ciphertextInput.value, "letters");
+    if (envelope === null) {
+      showBadEnvelope();
+      return;
+    }
+    const result = decryptLetters(envelope, receiverPad);
     if (!result.ok) {
       showRefusal(el("receive-refusal"), result);
       renderAll();
@@ -206,14 +213,12 @@ function decrypt(): void {
     }
     recovered = groupedFive(result.text);
   } else {
-    const bytes = fromHex(ciphertextInput.value);
-    if (bytes === null) {
-      const wall = el("receive-refusal");
-      wall.textContent = "Byte-mode ciphertext must be hex pairs, e.g. “3F A0 07”.";
-      wall.hidden = false;
+    const envelope = decodeEnvelope(ciphertextInput.value, "bytes");
+    if (envelope === null) {
+      showBadEnvelope();
       return;
     }
-    const result = decryptBytes(bytes, receiverPad);
+    const result = decryptBytes(envelope, receiverPad);
     if (!result.ok) {
       showRefusal(el("receive-refusal"), result);
       renderAll();
@@ -297,7 +302,7 @@ function buildAttackScene(): void {
   attackScene = {
     p1: n1,
     p2: n2,
-    otpCiphertext: otpResult.text,
+    otpCiphertext: otpResult.envelope.payload,
     reused: [encryptWithKeystream(n1, sharedKeystream), encryptWithKeystream(n2, sharedKeystream)]
   };
 }
@@ -359,6 +364,7 @@ const TAMPER_FRAGMENT_AT = 6;
 
 let tamperScene: {
   delivered: string; // serialized receiver pad — each decryption gets a pristine copy
+  envelope: Envelope<string>; // what the sender put on the wire; the attacker rewrites its payload
   baseCipher: string;
   tamperedCipher: string;
 };
@@ -370,11 +376,12 @@ function buildTamperScene(): void {
   if (!result.ok) {
     throw new Error("unreachable: pad was generated to exact message length");
   }
-  tamperScene = { delivered, baseCipher: result.text, tamperedCipher: result.text };
+  const { envelope } = result;
+  tamperScene = { delivered, envelope, baseCipher: envelope.payload, tamperedCipher: envelope.payload };
 }
 
 function renderTamper(): void {
-  const { delivered, baseCipher, tamperedCipher } = tamperScene;
+  const { delivered, envelope, baseCipher, tamperedCipher } = tamperScene;
 
   const cipherBox = el("tamper-cipher");
   cipherBox.replaceChildren();
@@ -393,7 +400,7 @@ function renderTamper(): void {
     cipherBox.append(cell);
   }
 
-  const decrypted = decryptLetters(tamperedCipher, Pad.deserialize(delivered));
+  const decrypted = decryptLetters({ ...envelope, payload: tamperedCipher }, Pad.deserialize(delivered));
   if (!decrypted.ok) {
     throw new Error("unreachable: the copy is pristine and exactly long enough");
   }
@@ -436,7 +443,7 @@ plaintextInput.addEventListener("input", () => {
 });
 el("encrypt").addEventListener("click", encrypt);
 el("take-wire").addEventListener("click", () => {
-  ciphertextInput.value = lastWireCiphertext;
+  ciphertextInput.value = lastWireEnvelope;
 });
 el("decrypt").addEventListener("click", decrypt);
 el<HTMLSelectElement>("deck-uses").addEventListener("change", renderVerdict);
