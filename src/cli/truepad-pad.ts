@@ -14,7 +14,7 @@
  * not secure messaging (see BANNER).
  * ========================================================================= */
 
-import { readFileSync, writeSync } from "node:fs";
+import { mkdirSync, readFileSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -31,7 +31,8 @@ import { initStore, loadPad, persistBurn } from "./store.ts";
 
 export const BANNER =
   "truepad-pad: reuse-safe pad handling. NOT secure messaging — envelopes are unauthenticated: an attacker who\n" +
-  "knows the plaintext format can flip chosen bits undetectably, and a forged startOffset burns the receiver's pad.";
+  "knows the plaintext format can flip chosen bits (or shift chosen letters) undetectably, and a forged startOffset\n" +
+  "burns the receiver's pad.";
 
 export const USAGE = `usage:
   truepad-pad gen    <dir> [--mode letters|bytes] [--size N] [--external FILE] [--label PAD-XXXX]
@@ -119,7 +120,9 @@ function statusOf(pad: Pad, mark: number): Record<string, unknown> {
     remaining: pad.remaining,
     nextOffset: pad.nextOffset,
     highWaterMark: pad.highWaterMark,
-    recordedMark: mark
+    // The highest nextOffset marks.log holds for this label (one past the mark
+    // it implies); -1 when no record exists.
+    recordedNextOffset: mark
   };
 }
 
@@ -146,7 +149,18 @@ export function gen(args: Args): void {
     pad = Pad.generate(size ?? 4096, mode, { label });
     err("source: crypto.getRandomValues() — a DRBG. The pad is bounded by the generator's state entropy.");
   }
-  initStore(dir, pad);
+  // Hold the directory lock while initialising so two gens cannot race the
+  // exists check or share a temp file.
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const lock = acquireLock(dir);
+  if (!lock.ok) {
+    throw new Refused(lock.message);
+  }
+  try {
+    initStore(dir, pad);
+  } finally {
+    lock.release();
+  }
   out(JSON.stringify(statusOf(pad, pad.nextOffset)));
 }
 

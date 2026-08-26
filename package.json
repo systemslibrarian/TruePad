@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.cli.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.cli.json && tsc -p tsconfig.tests.json",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "test": "vitest run",

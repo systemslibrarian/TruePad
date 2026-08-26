@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,7 +8,7 @@ import { Pad } from "../src/core/pad";
 import { acquireLock, LOCK_FILE } from "../src/cli/lock";
 import { initStore, loadPad, MARKS_FILE, PAD_FILE, persistBurn, readMarks } from "../src/cli/store";
 import { parseArgs } from "../src/cli/truepad-pad";
-import { MIN_NODE, tooOld, versionError } from "../bin/node-version.mjs";
+import { MIN_BY_MAJOR, MIN_NODE, tooOld, versionError } from "../bin/node-version.mjs";
 
 /* ============================================================================
  * Lane 2 — durable burn.
@@ -80,11 +80,40 @@ describe("T1 — crash-reuse is refused by the high-water mark", () => {
     expect(marks instanceof Map && marks.get("PAD-MONO")).toBe(10);
   });
 
-  it("a corrupt marks.log refuses the load rather than being ignored", () => {
+  it("a corrupt marks.log refuses the load rather than being ignored; a torn LAST line gets recovery guidance", () => {
     initStore(padDir(), Pad.generate(20, "bytes", { label: "PAD-CRPT" }));
-    writeFileSync(join(padDir(), MARKS_FILE), "not json\n");
-    const result = loadPad(padDir());
-    expect(!result.ok && result.reason).toBe("corrupt-marks");
+    const good = readFileSync(join(padDir(), MARKS_FILE), "utf8");
+    // Torn tail: the crash signature. Refused, and the message says what to do.
+    writeFileSync(join(padDir(), MARKS_FILE), good + '{"label":"PAD-CRPT","nextOff');
+    const torn = loadPad(padDir());
+    expect(!torn.ok && torn.reason).toBe("corrupt-marks");
+    if (!torn.ok) {
+      expect(torn.message).toContain("ends in a malformed line");
+      expect(torn.message).toContain("Remove only that last line");
+    }
+    // Garbage in the middle is not a crash signature and says so.
+    writeFileSync(join(padDir(), MARKS_FILE), "not json\n" + good);
+    const middle = loadPad(padDir());
+    expect(!middle.ok && middle.reason).toBe("corrupt-marks");
+    if (!middle.ok) expect(middle.message).toContain("in the middle of the file");
+  });
+
+  it("pad.json, marks.log and the lock are created owner-only (0600) in a 0700 directory", () => {
+    initStore(padDir(), Pad.generate(5, "letters"));
+    expect(statSync(join(padDir(), PAD_FILE)).mode & 0o777).toBe(0o600);
+    expect(statSync(join(padDir(), MARKS_FILE)).mode & 0o777).toBe(0o600);
+    expect(statSync(padDir()).mode & 0o777).toBe(0o700);
+    const lock = acquireLock(padDir());
+    if (lock.ok) {
+      expect(statSync(join(padDir(), LOCK_FILE)).mode & 0o777).toBe(0o600);
+      lock.release();
+    }
+    // A rewrite keeps the mode.
+    const loaded = loadPad(padDir());
+    if (!loaded.ok) throw new Error("load");
+    loaded.pad.consume(1);
+    persistBurn(padDir(), loaded.pad, { op: "burn", startOffset: 0, consumed: 1, skipped: 0 });
+    expect(statSync(join(padDir(), PAD_FILE)).mode & 0o777).toBe(0o600);
   });
 
   it("DOCUMENTED LIMITATION: restoring pad.json AND marks.log together is not detected", () => {
@@ -158,16 +187,30 @@ describe("exclusive lockfile", () => {
 });
 
 describe("launcher version gate", () => {
-  it("compares against the documented minimum", () => {
+  it("compares against the documented minimum, per major line", () => {
     expect(MIN_NODE).toEqual([22, 18, 0]);
+    expect(MIN_BY_MAJOR).toEqual({ 22: [22, 18, 0], 23: [23, 6, 0] });
     expect(tooOld("20.19.0")).toBe(true);
     expect(tooOld("22.17.9")).toBe(true);
     expect(tooOld("22.18.0")).toBe(false);
+    expect(tooOld("22.99.0")).toBe(false);
+    // 23.0–23.5 run TypeScript only behind a flag: too old, even though > 22.18.
+    expect(tooOld("23.0.0")).toBe(true);
+    expect(tooOld("23.5.9")).toBe(true);
     expect(tooOld("23.6.0")).toBe(false);
+    expect(tooOld("24.0.0")).toBe(false);
     expect(tooOld("24.14.0")).toBe(false);
     expect(tooOld("v22.18.0")).toBe(false);
+    expect(tooOld("22.18.0-nightly20250101")).toBe(false);
     expect(versionError("18.0.0")).toContain("22.18.0");
+    expect(versionError("18.0.0")).toContain("23.6.0");
     expect(versionError("18.0.0")).toContain("Nothing was run");
+  });
+
+  it("the launcher has no top-level await, so the version message can print on any ESM-capable Node", () => {
+    const launcher = readFileSync(LAUNCHER, "utf8");
+    expect(launcher).not.toMatch(/^\s*const .*= await /m);
+    expect(launcher).not.toMatch(/^await /m);
   });
 
   it("parseArgs separates positionals from --flag value pairs", () => {
@@ -200,7 +243,7 @@ describe("truepad-pad end to end (real binary via the launcher)", () => {
     expect(burn.code).toBe(0);
     const envelope = JSON.parse(burn.stdout.trim());
     expect(envelope).toMatchObject({ label: "PAD-CLIT", startOffset: 0, consumed: 12 });
-    expect(JSON.parse(run("status", a).stdout)).toMatchObject({ nextOffset: 12, recordedMark: 12 });
+    expect(JSON.parse(run("status", a).stdout)).toMatchObject({ nextOffset: 12, highWaterMark: 11, recordedNextOffset: 12 });
 
     const open = run("open", b, burn.stdout.trim());
     expect(open.code).toBe(0);

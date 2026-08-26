@@ -37,13 +37,13 @@ pad-page label travel; the pad goes out of band.
 
 ## The pad CLI: `truepad-pad` — reuse-safe pad handling, not secure messaging
 
-`src/cli/` is an operational tool that owns pad state on disk so a pad symbol
-is never used twice across process boundaries. It is **not secure messaging**:
+`src/cli/` is a tool that owns pad state on disk so that a crash, a stale copy
+of the pad file, or two processes cannot make a pad symbol serve twice (with
+the one limitation stated below). It is **not secure messaging**:
 envelopes are unauthenticated, an attacker who knows the plaintext format can
 flip chosen bits of a message undetectably, and a forged `startOffset` makes the
-receiver burn pad. The tool prints that on every start. Message authentication
-(Wegman–Carter over the envelope, which costs additional pad) is the extension
-seam and is deliberately not in this revision.
+receiver burn pad. The tool prints that on every start. There is no message authentication. If it is ever added, Wegman–Carter over
+the envelope is the seam, and it costs additional pad.
 
 ```sh
 node bin/truepad-pad.mjs gen    <dir> [--mode letters|bytes] [--size N] [--external FILE] [--label PAD-XXXX]
@@ -58,9 +58,11 @@ TypeScript sources under Node's built-in type stripping; the launcher checks
 the version before importing anything).
 
 **Durable burn.** A pad directory holds `pad.json` (the pad), `marks.log`
-(append-only, one fsynced line per burn recording the label's high-water mark,
-kept *separate* from the pad file on purpose) and, while a process holds the
-pad, an exclusive `lock`. On every `burn` and `open` the order is: write the
+(append-only; one fsynced line per init, burn or open recording the pad's
+`nextOffset` afterwards — one past the last burned offset; the highest per
+label is the mark the loader checks; kept *separate* from the pad file on
+purpose) and, while a process holds the pad, an exclusive `lock`. Files are
+created owner-only. On every `burn` and `open` the order is: write the
 new `pad.json` and the mark record → fsync → only then print the envelope or
 plaintext. A crash in between loses pad symbols and never reuses them; losing
 pad is the correct failure direction. On load, a `pad.json` whose `nextOffset`

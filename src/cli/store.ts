@@ -5,14 +5,17 @@
  * per pad:
  *
  *   <dir>/pad.json    the pad (Pad.serialize()). Rewritten atomically:
- *                     write pad.json.tmp, fsync, rename over pad.json,
- *                     fsync the directory.
- *   <dir>/marks.log   append-only, fsynced. One JSON line per burn carrying
- *                     the label and the pad's nextOffset AFTER the burn. The
- *                     highest nextOffset per label is that label's recorded
- *                     high-water mark. Kept separate from pad.json on
- *                     purpose: restoring an old pad.json alone regresses the
- *                     pad but not the mark, and loadPad refuses the mismatch.
+ *                     write pad.json.tmp.<pid> in full (short writes are
+ *                     detected), fsync, rename over pad.json, fsync the
+ *                     directory. Created 0600.
+ *   <dir>/marks.log   append-only, fsynced, 0600. One JSON line per init,
+ *                     burn or open, recording the pad's nextOffset AFTER the
+ *                     operation — one past the core's highWaterMark (the last
+ *                     burned offset). The highest nextOffset per label is
+ *                     that label's recorded mark. Kept separate from pad.json
+ *                     on purpose: restoring an old pad.json alone regresses
+ *                     the pad but not the mark, and loadPad refuses the
+ *                     mismatch.
  *   <dir>/lock        exclusive lockfile (O_CREAT|O_EXCL), see lock.ts.
  *
  * Order of operations on every burn, non-negotiable:
@@ -23,11 +26,12 @@
  * Losing pad is the correct failure direction.
  *
  * Limitation, stated rather than papered over: this defends against crashes
- * and accidental reuse of a stale pad.json. It does not defend against an
- * operator restoring the whole directory from a backup, which regresses the
- * pad and the mark together. Tested on Linux (ext4 under a container
- * overlay) only. fsync on a directory handle is POSIX behaviour; where a
- * directory cannot be opened it is skipped, and the file fsyncs still run.
+ * and against loading a stale copy of pad.json. It does not defend against
+ * an operator restoring the whole directory from a backup, which regresses
+ * the pad and the mark together. Tested on Linux ext4 only (the test suite
+ * writes under os.tmpdir()). fsync on a directory handle is POSIX behaviour;
+ * where a directory cannot be opened it is skipped, and the file fsyncs
+ * still run.
  * ========================================================================= */
 
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from "node:fs";
@@ -37,9 +41,13 @@ import { Pad } from "../core/pad.ts";
 export const PAD_FILE = "pad.json";
 export const MARKS_FILE = "marks.log";
 
+// Pad material and its history are the operator's secret: owner-only.
+const FILE_MODE = 0o600;
+const DIR_MODE = 0o700;
+
 export type MarkRecord = {
   label: string;
-  // The pad's nextOffset after the burn: every offset below it is gone.
+  // The pad's nextOffset after the operation: every offset below it is gone.
   nextOffset: number;
   startOffset: number;
   consumed: number;
@@ -54,6 +62,7 @@ export type LoadRefusal = {
   message: string;
 };
 
+// `mark` is the highest recorded nextOffset for the pad's label (-1 if none).
 export type LoadResult = { ok: true; pad: Pad; mark: number } | LoadRefusal;
 
 /* ---- durability primitives ----------------------------------------------- */
@@ -72,12 +81,28 @@ function fsyncDir(dir: string): void {
   }
 }
 
-// Write `data` to <dir>/<name> atomically: temp file, fsync, rename, fsync dir.
+// write(2) may write fewer bytes than asked (disk full, RLIMIT_FSIZE); Node's
+// writeSync does not loop. Loop until every byte is down, or throw before
+// anything is renamed into place.
+function writeAll(fd: number, data: string): void {
+  const bytes = Buffer.from(data, "utf8");
+  let offset = 0;
+  while (offset < bytes.length) {
+    const written = writeSync(fd, bytes, offset, bytes.length - offset);
+    if (written <= 0) {
+      throw new Error(`short write: ${offset} of ${bytes.length} bytes`);
+    }
+    offset += written;
+  }
+}
+
+// Write `data` to <dir>/<name> atomically: per-process temp file (full write
+// verified), fsync, rename, fsync dir.
 function writeFileDurably(dir: string, name: string, data: string): void {
-  const tmp = join(dir, `${name}.tmp`);
-  const fd = openSync(tmp, "w");
+  const tmp = join(dir, `${name}.tmp.${process.pid}`);
+  const fd = openSync(tmp, "w", FILE_MODE);
   try {
-    writeSync(fd, data);
+    writeAll(fd, data);
     fsyncSync(fd);
   } finally {
     closeSync(fd);
@@ -87,9 +112,9 @@ function writeFileDurably(dir: string, name: string, data: string): void {
 }
 
 function appendLineDurably(dir: string, name: string, line: string): void {
-  const fd = openSync(join(dir, name), "a");
+  const fd = openSync(join(dir, name), "a", FILE_MODE);
   try {
-    writeSync(fd, `${line}\n`);
+    writeAll(fd, `${line}\n`);
     fsyncSync(fd);
   } finally {
     closeSync(fd);
@@ -108,15 +133,30 @@ export function readMarks(dir: string): Map<string, number> | LoadRefusal {
     return marks;
   }
   const lines = readFileSync(path, "utf8").split("\n").filter((line) => line.length > 0);
-  for (const line of lines) {
-    let record: Partial<MarkRecord>;
+  for (const [index, line] of lines.entries()) {
+    let record: Partial<MarkRecord> | null = null;
     try {
       record = JSON.parse(line) as Partial<MarkRecord>;
     } catch {
-      return { ok: false, reason: "corrupt-marks", message: `${MARKS_FILE} holds a line that is not JSON: ${line}` };
+      /* fall through to the malformed-line refusal */
     }
-    if (typeof record.label !== "string" || !Number.isInteger(record.nextOffset) || (record.nextOffset as number) < 0) {
-      return { ok: false, reason: "corrupt-marks", message: `${MARKS_FILE} holds a malformed record: ${line}` };
+    if (
+      record === null ||
+      typeof record.label !== "string" ||
+      !Number.isInteger(record.nextOffset) ||
+      (record.nextOffset as number) < 0
+    ) {
+      const isLast = index === lines.length - 1;
+      return {
+        ok: false,
+        reason: "corrupt-marks",
+        message: isLast
+          ? `${MARKS_FILE} ends in a malformed line — the expected signature of a crash between an append and its ` +
+            `fsync. Every earlier record is intact. Remove only that last line and retry; the pad is still checked ` +
+            `against the surviving records. Refusing until then. Bad line: ${line}`
+          : `${MARKS_FILE} holds a malformed record in the middle of the file (line ${index + 1}), which is not a ` +
+            `crash signature. Refusing; inspect the file by hand. Bad line: ${line}`
+      };
     }
     marks.set(record.label, Math.max(marks.get(record.label) ?? -1, record.nextOffset as number));
   }
@@ -127,8 +167,10 @@ export function readMarks(dir: string): Map<string, number> | LoadRefusal {
 
 // Create <dir> and put a fresh pad in it. Refuses to overwrite an existing
 // pad: a pad directory is written once and burned forward, never replaced.
+// The caller holds the directory lock (see truepad-pad.ts gen) so two gens
+// cannot race the exists check.
 export function initStore(dir: string, pad: Pad): void {
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true, mode: DIR_MODE });
   if (existsSync(join(dir, PAD_FILE))) {
     throw new Error(`${join(dir, PAD_FILE)} already exists; a pad directory is never overwritten`);
   }
