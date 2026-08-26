@@ -9,8 +9,10 @@ name: Deploy demo to GitHub Pages
 on:
   push:
     branches: [master]
+  # Every pull request, whatever its base: the lanes of a stacked revision
+  # target each other, and each must carry the test/type-check/build gate.
+  # Only a push to master deploys (see the `if:` guards below).
   pull_request:
-    branches: [master]
   workflow_dispatch:
 
 permissions:
