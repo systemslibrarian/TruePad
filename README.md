@@ -29,11 +29,11 @@ pad-page label travel; the pad goes out of band.
 
 | Module | Purpose |
 | --- | --- |
-| `src/pad.ts` | Rejection-sampled pad generation, irreversible consume/burn, entropy ledger |
-| `src/cipher-otp.ts` | Letter-mode (add-mod-26) and byte-mode (XOR) encrypt/decrypt; refuses when short |
-| `src/attack-otp.ts` | Crib dragging: leaks on keystream reuse, ties on a true OTP; shared comparator |
-| `src/meter.ts` | Pad-remaining vs. message-length meter state and the entropy ledger |
-| `src/verdict.ts` | Shannon three-condition grader for both a TruePad pad and a DeckBook deck |
+| `src/core/pad.ts` | Rejection-sampled pad generation, irreversible consume/burn, entropy ledger |
+| `src/core/cipher-otp.ts` | Letter-mode (add-mod-26) and byte-mode (XOR) encrypt/decrypt; refuses when short |
+| `src/core/attack-otp.ts` | Crib dragging: leaks on keystream reuse, ties on a true OTP; shared comparator |
+| `src/core/meter.ts` | Pad-remaining vs. message-length meter state and the entropy ledger |
+| `src/core/verdict.ts` | Shannon three-condition grader for both a TruePad pad and a DeckBook deck |
 
 ## Develop
 

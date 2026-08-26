@@ -4,8 +4,8 @@ import {
   LEDGER_MOTTO,
   entropyLedger,
   meterState
-} from "../src/meter";
-import { LETTER_BITS, Pad } from "../src/pad";
+} from "../src/core/meter";
+import { LETTER_BITS, Pad } from "../src/core/pad";
 
 describe("meterState", () => {
   it("is ready when the message fits comfortably", () => {

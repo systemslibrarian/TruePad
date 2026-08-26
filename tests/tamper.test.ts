@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { decryptBytes, decryptLetters, encryptBytes, encryptLetters, normalizeAZ } from "../src/cipher-otp";
-import { Pad } from "../src/pad";
-import { diffPositions, forgeBytes, forgeLetters, shiftCipherLetter } from "../src/tamper";
+import { decryptBytes, decryptLetters, encryptBytes, encryptLetters, normalizeAZ } from "../src/core/cipher-otp";
+import { Pad } from "../src/core/pad";
+import { diffPositions, forgeBytes, forgeLetters, shiftCipherLetter } from "../src/exhibit/tamper";
 
 // Encrypt `plaintext` with a fresh pad and return the ciphertext plus a
 // factory for pristine receiver copies (each decryption needs its own copy,

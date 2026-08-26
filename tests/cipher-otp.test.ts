@@ -8,8 +8,8 @@ import {
   lettersToNumbers,
   normalizeAZ,
   numbersToLetters
-} from "../src/cipher-otp";
-import { Pad, type RandomFill } from "../src/pad";
+} from "../src/core/cipher-otp";
+import { Pad, type RandomFill } from "../src/core/pad";
 
 // Fill that yields the byte sequence 0, 1, 2, ... — all below the rejection
 // limit of 234, so a letters pad becomes the keystream 0, 1, 2, ...

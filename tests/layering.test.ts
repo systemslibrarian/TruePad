@@ -1,0 +1,110 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+/* ============================================================================
+ * Layering invariant
+ * ----------------------------------------------------------------------------
+ * src/core/    pure: may import only from src/core. No node: builtins, no
+ *              DOM-only packages, nothing from exhibit or cli.
+ * src/exhibit/ the browser build: may import core. May NOT import cli, and
+ *              may NOT import node: builtins (they would break the bundle).
+ * src/cli/     the operational tool: may import core. May NOT import exhibit.
+ *
+ * Import direction is one-way into core. This test runs under `npm test`,
+ * which gates the build in .github/workflows/deploy.yml, so a violation is
+ * a red CI check, not a code-review convention.
+ * ========================================================================= */
+
+const SRC = resolve(__dirname, "..", "src");
+const LAYERS = ["core", "exhibit", "cli"] as const;
+type Layer = (typeof LAYERS)[number];
+
+// Every static or dynamic import specifier in a TS source file:
+//   import x from "spec"; import "spec"; export * from "spec"; import("spec")
+const SPECIFIER =
+  /(?:\bimport\s*(?:[^"'()]*?\bfrom\s*)?|\bexport\s+[^"']*?\bfrom\s*|\bimport\s*\(\s*)["']([^"']+)["']/g;
+
+function walk(dir: string): string[] {
+  let files: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) {
+      files = files.concat(walk(full));
+    } else if (/\.(ts|tsx|js|mjs)$/.test(entry)) {
+      files.push(full);
+    }
+  }
+  return files;
+}
+
+function layerOf(file: string): Layer | null {
+  const rel = relative(SRC, file).split(/[\\/]/)[0];
+  return (LAYERS as readonly string[]).includes(rel) ? (rel as Layer) : null;
+}
+
+type Import = { file: string; specifier: string; target: Layer | "node" | "package" | "outside" };
+
+function classify(file: string, specifier: string): Import["target"] {
+  if (specifier.startsWith("node:")) return "node";
+  if (specifier.startsWith(".") || specifier.startsWith("/")) {
+    const resolved = resolve(dirname(file), specifier);
+    return layerOf(resolved) ?? "outside";
+  }
+  return "package";
+}
+
+function importsOf(layer: Layer): Import[] {
+  const dir = join(SRC, layer);
+  let files: string[];
+  try {
+    files = walk(dir);
+  } catch {
+    return []; // layer directory does not exist (yet)
+  }
+  const found: Import[] = [];
+  for (const file of files) {
+    const source = readFileSync(file, "utf8");
+    for (const match of source.matchAll(SPECIFIER)) {
+      found.push({ file: relative(SRC, file), specifier: match[1], target: classify(file, specifier(match)) });
+    }
+  }
+  return found;
+}
+
+const specifier = (match: RegExpMatchArray): string => match[1];
+
+const describeViolations = (bad: Import[]): string =>
+  bad.map((i) => `${i.file} imports "${i.specifier}" (${i.target})`).join("\n");
+
+describe("layering: import direction is one-way into src/core", () => {
+  it("the scanner actually sees imports (sanity check on the regex)", () => {
+    const core = importsOf("core");
+    expect(core.some((i) => i.file === "core/cipher-otp.ts" && i.specifier === "./pad")).toBe(true);
+    const exhibit = importsOf("exhibit");
+    expect(exhibit.some((i) => i.file === "exhibit/main.ts" && i.target === "core")).toBe(true);
+    // Dynamic import() and side-effect imports are caught too.
+    expect(exhibit.some((i) => i.specifier === "virtual:pwa-register")).toBe(true);
+    expect(exhibit.some((i) => i.specifier === "./style.css")).toBe(true);
+  });
+
+  it("src/core imports nothing outside src/core — no node: builtins, no packages", () => {
+    const bad = importsOf("core").filter((i) => i.target !== "core");
+    expect(describeViolations(bad)).toBe("");
+  });
+
+  it("src/exhibit never imports src/cli or node: builtins", () => {
+    const bad = importsOf("exhibit").filter((i) => i.target === "cli" || i.target === "node");
+    expect(describeViolations(bad)).toBe("");
+  });
+
+  it("src/cli never imports src/exhibit", () => {
+    const bad = importsOf("cli").filter((i) => i.target === "exhibit");
+    expect(describeViolations(bad)).toBe("");
+  });
+
+  it("no layer imports from outside src/", () => {
+    const bad = LAYERS.flatMap((layer) => importsOf(layer)).filter((i) => i.target === "outside");
+    expect(describeViolations(bad)).toBe("");
+  });
+});

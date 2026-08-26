@@ -8,7 +8,7 @@ import {
   PadExhaustedError,
   type RandomFill,
   uniformInt
-} from "../src/pad";
+} from "../src/core/pad";
 
 // Deterministic fill that replays a scripted byte sequence, so the rejection
 // sampler can be tested against known inputs.
