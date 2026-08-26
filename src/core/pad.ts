@@ -327,6 +327,14 @@ export class Pad {
       }
       values.set(offset, value);
     }
+    // Unique + in [nextOffset, size) + this count means EXACTLY [nextOffset, size):
+    // a pad with holes would make consumeAt return the wrong offsets.
+    if (values.size !== parsed.size - parsed.nextOffset) {
+      throw new Error(
+        `not a serialized TruePad pad: ${values.size} surviving symbols but [${parsed.nextOffset}, ${parsed.size}) ` +
+          `needs ${parsed.size - parsed.nextOffset}; the burn invariant requires a contiguous survivor set`
+      );
+    }
     return new Pad(parsed.label, parsed.mode, values, parsed.nextOffset, parsed.size);
   }
 }

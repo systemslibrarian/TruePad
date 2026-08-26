@@ -43,8 +43,8 @@ let senderPad: Pad;
 // The "courier copy": deserialize(serialize()) at generation time models the
 // out-of-band delivery. From then on the two pads only stay in sync because
 // both sides burn the same offsets in the same order — exactly like paper.
-// The last envelope put on the wire, in wire (text) form.
 let receiverPad: Pad;
+// The last envelope put on the wire, in wire (text) form.
 let lastWireEnvelope = "";
 
 /* ---- station 1: pad ----------------------------------------------------- */
@@ -178,6 +178,7 @@ function encrypt(): void {
       : `${envelope.startOffset} – ${envelope.startOffset + envelope.consumed - 1} (${envelope.consumed} symbols, gone forever)`;
   el("wire-ciphertext").textContent =
     (typeof envelope.payload === "string" ? groupedFive(envelope.payload) : toHexGroups(envelope.payload)) || "(empty)";
+  el("wire-envelope").textContent = lastWireEnvelope;
   el("wire").hidden = false;
   renderPadGrid({ start: envelope.startOffset, count: envelope.consumed });
   renderAll();

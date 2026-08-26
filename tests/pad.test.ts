@@ -231,3 +231,19 @@ describe("deserialize enforces the burn invariant", () => {
     expect(() => Pad.deserialize(JSON.stringify({ ...base, nextOffset: -1, symbols: [] }))).toThrow(/nextOffset/);
   });
 });
+
+describe("deserialize requires the survivor set to be exactly [nextOffset, size)", () => {
+  it("rejects a pad with holes — consumeAt would otherwise hand back the wrong offsets", () => {
+    const holes = { label: "PAD-HOLE", mode: "letters", size: 10, nextOffset: 2, symbols: [[5, 1], [6, 2], [7, 3], [8, 4], [9, 5]] };
+    expect(() => Pad.deserialize(JSON.stringify(holes))).toThrow(/contiguous/);
+    const gap = { label: "PAD-HOLE", mode: "letters", size: 10, nextOffset: 0, symbols: [[0, 1], [1, 2], [2, 3], [8, 4], [9, 5]] };
+    expect(() => Pad.deserialize(JSON.stringify(gap))).toThrow(/contiguous/);
+  });
+
+  it("accepts the full set and an empty tail", () => {
+    const full = { label: "PAD-FULL", mode: "bytes", size: 3, nextOffset: 1, symbols: [[1, 200], [2, 7]] };
+    expect(Pad.deserialize(JSON.stringify(full)).remaining).toBe(2);
+    const drained = { label: "PAD-DONE", mode: "bytes", size: 3, nextOffset: 3, symbols: [] };
+    expect(Pad.deserialize(JSON.stringify(drained)).remaining).toBe(0);
+  });
+});

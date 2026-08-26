@@ -37,8 +37,19 @@
  *                     arrival, and an overlapping window all land here.
  *   pad-exhausted     the window (skip + message) runs past the pad
  *
- * There is no wraparound, no truncation, no borrowing — ever. The envelope
- * is NOT authenticated: nothing here detects a modified payload.
+ * There is no wraparound, no truncation, no borrowing — ever.
+ *
+ * The envelope is NOT authenticated, and that cuts two ways:
+ *   - a modified payload decrypts to modified plaintext with no alarm
+ *     (perfect secrecy is not integrity — see the tamper module);
+ *   - a modified startOffset drives the seek. Anyone who can rewrite an
+ *     envelope on the channel can make the receiver burn forward through as
+ *     much of its remaining pad as they like — an empty payload with
+ *     startOffset == size wipes it — and the result is ok: true. That is the
+ *     price of burn-forward without a MAC: pad can be DESTROYED from the
+ *     channel, never reused. Authenticating the envelope (Wegman–Carter,
+ *     which costs additional pad) is the extension seam, not part of this
+ *     module.
  * ========================================================================= */
 
 import { Pad, type PadMode } from "./pad";
@@ -114,6 +125,22 @@ function refusePadExhausted(required: number, remaining: number): OtpRefusal {
   };
 }
 
+// Decrypt-side exhaustion counts the seek: say so, instead of calling the
+// skip part of "the message".
+function refuseSeekExhausted(skipped: number, consumed: number, remaining: number): OtpRefusal {
+  const required = skipped + consumed;
+  return {
+    ok: false,
+    reason: "pad-exhausted",
+    required,
+    remaining,
+    message:
+      `Pad exhausted. Opening this envelope needs ${required} symbols (${skipped} skipped to reach its offset + ` +
+      `${consumed} for the message) but only ${remaining} remain in this copy. A one-time pad cannot borrow, ` +
+      "wrap, or reuse. Nothing was burned."
+  };
+}
+
 function refuseModeMismatch(expected: PadMode, pad: Pad, required: number): OtpRefusal {
   return {
     ok: false,
@@ -151,9 +178,10 @@ function refuseReuse(envelope: Envelope, pad: Pad): OtpRefusal {
     required: envelope.consumed,
     remaining: pad.remaining,
     message:
-      `Reuse refused. This envelope starts at offset ${envelope.startOffset}, but ${pad.label} has ` +
-      `already burned every offset up to its high-water mark ${pad.highWaterMark}. A replayed, ` +
-      "late, or overlapping envelope cannot be opened — those symbols are gone. Nothing was burned."
+      `Reuse refused. This envelope starts at offset ${envelope.startOffset}, but this copy of ${pad.label} ` +
+      `has already burned every offset up to its high-water mark ${pad.highWaterMark}. A replayed, ` +
+      "late, or overlapping envelope cannot be opened with this copy — those symbols are gone from it. " +
+      "Nothing was burned."
   };
 }
 
@@ -185,9 +213,9 @@ function preflightDecrypt(envelope: Envelope, pad: Pad, mode: PadMode, payloadLe
     return refuseReuse(envelope, pad);
   }
   // The seek burns skip + message symbols; all of them must exist.
-  const required = envelope.startOffset + envelope.consumed - pad.nextOffset;
-  if (required > pad.remaining) {
-    return refusePadExhausted(required, pad.remaining);
+  const skipped = envelope.startOffset - pad.nextOffset;
+  if (skipped + envelope.consumed > pad.remaining) {
+    return refuseSeekExhausted(skipped, envelope.consumed, pad.remaining);
   }
   return null;
 }
@@ -280,8 +308,8 @@ export function decryptBytes(envelope: Envelope<Uint8Array>, pad: Pad): DecryptB
 /* ---- wire encoding ------------------------------------------------------- */
 
 // Text form of an envelope for the public channel: JSON with the four wire
-// fields. Byte payloads travel as uppercase hex. Shared by the exhibit and
-// the CLI so both put the same thing on the wire.
+// fields. Byte payloads travel as uppercase hex. Every caller that puts an
+// envelope on a channel goes through here so they all agree on the form.
 export function encodeEnvelope(envelope: Envelope): string {
   const payload =
     typeof envelope.payload === "string"

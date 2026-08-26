@@ -299,3 +299,168 @@ describe("wire encoding round-trips both payload kinds", () => {
     expect(decodeEnvelope('{"label":"PAD-ABCD","startOffset":0,"consumed":2,"payload":"A"}', "letters")).toBeNull();
   });
 });
+
+/* ----------------------------------------------------------------------------
+ * "It refused" and "it burned nothing" are separate claims; only the second
+ * is the safety property. Every typed refusal, in both modes, on both the
+ * encrypt and decrypt paths, must leave remaining, nextOffset, highWaterMark
+ * AND the full serialized pad byte-for-byte unchanged.
+ * ------------------------------------------------------------------------- */
+
+function expectUntouched<T extends { ok: boolean }>(pad: Pad, act: () => T): T {
+  const before = { remaining: pad.remaining, nextOffset: pad.nextOffset, hwm: pad.highWaterMark, bytes: pad.serialize() };
+  const result = act();
+  expect(result.ok).toBe(false);
+  expect(pad.remaining).toBe(before.remaining);
+  expect(pad.nextOffset).toBe(before.nextOffset);
+  expect(pad.highWaterMark).toBe(before.hwm);
+  expect(pad.serialize()).toBe(before.bytes);
+  return result;
+}
+
+describe("every typed refusal leaves the pad untouched", () => {
+  // A receiver with history: five symbols already burned, so the reuse
+  // guard has something to guard and the pointer is not at zero.
+  function receiverWithHistory(mode: "letters" | "bytes") {
+    const [sender, receiver] = courierPair(20, mode);
+    const first = mode === "letters" ? encryptLetters("HELLO", sender) : encryptBytes(new Uint8Array(5), sender);
+    if (!first.ok) throw new Error("setup");
+    const opened = mode === "letters"
+      ? decryptLetters(first.envelope as Envelope<string>, receiver)
+      : decryptBytes(first.envelope as Envelope<Uint8Array>, receiver);
+    if (!opened.ok) throw new Error("setup");
+    expect(receiver.nextOffset).toBe(5);
+    return { sender, receiver, first: first.envelope };
+  }
+
+  const payloadOf = (mode: "letters" | "bytes", n: number): string | Uint8Array =>
+    mode === "letters" ? "A".repeat(n) : new Uint8Array(n);
+
+  for (const mode of ["letters", "bytes"] as const) {
+    const decrypt = (envelope: Envelope, pad: Pad) =>
+      mode === "letters"
+        ? decryptLetters(envelope as Envelope<string>, pad)
+        : decryptBytes(envelope as Envelope<Uint8Array>, pad);
+
+    describe(`${mode} mode, decrypt path`, () => {
+      it("reuse-refused (replay of an opened envelope)", () => {
+        const { receiver, first } = receiverWithHistory(mode);
+        const r = expectUntouched(receiver, () => decrypt(first, receiver));
+        expect(!r.ok && r.reason).toBe("reuse-refused");
+      });
+
+      it("reuse-refused (window overlapping the high-water mark by one)", () => {
+        const { receiver } = receiverWithHistory(mode);
+        const r = expectUntouched(receiver, () =>
+          decrypt({ label: receiver.label, startOffset: 4, consumed: 3, payload: payloadOf(mode, 3) }, receiver)
+        );
+        expect(!r.ok && r.reason).toBe("reuse-refused");
+      });
+
+      it("label-mismatch", () => {
+        const { receiver } = receiverWithHistory(mode);
+        const r = expectUntouched(receiver, () =>
+          decrypt({ label: "PAD-ELSE", startOffset: 5, consumed: 3, payload: payloadOf(mode, 3) }, receiver)
+        );
+        expect(!r.ok && r.reason).toBe("label-mismatch");
+      });
+
+      it("envelope-invalid (consumed disagrees with payload)", () => {
+        const { receiver } = receiverWithHistory(mode);
+        const r = expectUntouched(receiver, () =>
+          decrypt({ label: receiver.label, startOffset: 5, consumed: 2, payload: payloadOf(mode, 3) }, receiver)
+        );
+        expect(!r.ok && r.reason).toBe("envelope-invalid");
+      });
+
+      it("envelope-invalid (negative / fractional startOffset)", () => {
+        const { receiver } = receiverWithHistory(mode);
+        for (const startOffset of [-1, 5.5]) {
+          const r = expectUntouched(receiver, () =>
+            decrypt({ label: receiver.label, startOffset, consumed: 3, payload: payloadOf(mode, 3) }, receiver)
+          );
+          expect(!r.ok && r.reason).toBe("envelope-invalid");
+        }
+      });
+
+      it("mode-mismatch", () => {
+        const { receiver } = receiverWithHistory(mode);
+        const otherMode = mode === "letters" ? "bytes" : "letters";
+        const wrongPad = Pad.generate(20, otherMode, { label: receiver.label });
+        wrongPad.consume(5);
+        const r = expectUntouched(wrongPad, () =>
+          decrypt({ label: receiver.label, startOffset: 5, consumed: 3, payload: payloadOf(mode, 3) }, wrongPad)
+        );
+        expect(!r.ok && r.reason).toBe("mode-mismatch");
+      });
+
+      it("pad-exhausted (window runs past the pad — the skip is not burned either)", () => {
+        const { receiver } = receiverWithHistory(mode);
+        // 15 remain at offsets 5..19; a window at 10 of length 11 ends at 20.
+        const r = expectUntouched(receiver, () =>
+          decrypt({ label: receiver.label, startOffset: 10, consumed: 11, payload: payloadOf(mode, 11) }, receiver)
+        );
+        expect(!r.ok && r.reason).toBe("pad-exhausted");
+      });
+    });
+
+    describe(`${mode} mode, encrypt path`, () => {
+      const encrypt = (n: number, pad: Pad) =>
+        mode === "letters" ? encryptLetters("A".repeat(n), pad) : encryptBytes(new Uint8Array(n), pad);
+
+      it("pad-exhausted", () => {
+        const { sender } = receiverWithHistory(mode); // sender also sits at 5
+        const r = expectUntouched(sender, () => encrypt(16, sender));
+        expect(!r.ok && r.reason).toBe("pad-exhausted");
+      });
+
+      it("mode-mismatch", () => {
+        const wrongPad = Pad.generate(20, mode === "letters" ? "bytes" : "letters");
+        wrongPad.consume(5);
+        const r = expectUntouched(wrongPad, () => encrypt(3, wrongPad));
+        expect(!r.ok && r.reason).toBe("mode-mismatch");
+      });
+    });
+  }
+});
+
+describe("what the unauthenticated envelope allows — stated, tested, not hidden", () => {
+  it("decrypt-side exhaustion names the skip separately from the message", () => {
+    const [, receiver] = courierPair(20);
+    const r = decryptLetters({ label: receiver.label, startOffset: 15, consumed: 10, payload: "ABCDEFGHIJ" }, receiver);
+    expect(!r.ok && r.reason).toBe("pad-exhausted");
+    if (r.ok) return;
+    expect(r.required).toBe(25);
+    expect(r.message).toContain("15 skipped");
+    expect(r.message).toContain("10 for the message");
+    expect(r.message).not.toMatch(/message needs 25/);
+  });
+
+  it("DOCUMENTED: a forged startOffset makes the receiver burn forward — pad destroyed, never reused", () => {
+    const [, receiver] = courierPair(50);
+    // The cheapest wipe an on-channel attacker can send: empty payload, startOffset == size.
+    const wipe = decryptLetters({ label: receiver.label, startOffset: 50, consumed: 0, payload: "" }, receiver);
+    expect(wipe.ok).toBe(true);
+    if (!wipe.ok) return;
+    expect(wipe.skipped).toBe(50);
+    expect(receiver.remaining).toBe(0);
+    // ...but nothing became reusable: every offset is now at or below the mark.
+    expect(receiver.highWaterMark).toBe(49);
+    const anything = decryptLetters({ label: receiver.label, startOffset: 10, consumed: 1, payload: "A" }, receiver);
+    expect(!anything.ok && anything.reason).toBe("reuse-refused");
+    // One past the end is refused outright and burns nothing.
+    const [, fresh] = courierPair(50);
+    const past = decryptLetters({ label: fresh.label, startOffset: 51, consumed: 0, payload: "" }, fresh);
+    expect(!past.ok && past.reason).toBe("pad-exhausted");
+    expect(fresh.remaining).toBe(50);
+  });
+
+  it("an empty envelope carries nothing and can be opened repeatedly without moving the mark", () => {
+    const [sender, receiver] = courierPair(10);
+    const empty = okEnvelope(encryptLetters("", sender));
+    expect(empty.consumed).toBe(0);
+    expect(decryptLetters(empty, receiver).ok).toBe(true);
+    expect(decryptLetters(empty, receiver).ok).toBe(true);
+    expect(receiver.remaining).toBe(10);
+  });
+});

@@ -122,6 +122,7 @@
             <div><dt>Pad page</dt><dd id="wire-label"></dd></div>
             <div><dt>Offsets burned</dt><dd id="wire-offsets"></dd></div>
             <div class="wire-cipher"><dt>Ciphertext</dt><dd id="wire-ciphertext"></dd></div>
+            <div class="wire-cipher"><dt>Wire form</dt><dd id="wire-envelope"></dd></div>
           </dl>
         </div>
       </section>
@@ -135,8 +136,10 @@
           form, so the copy can no more reuse them than the original could). The envelope
           names the pad page and the offsets it used; the copy <em>seeks</em> to that offset,
           burning everything it skips, and refuses any envelope at or below what it has
-          already burned. Decrypt the same envelope twice to see a replay refused; encrypt
-          twice and take only the second to see a seek.
+          already burned. Decrypt the same non-empty envelope twice to see a replay refused;
+          encrypt twice and take only the second to see a seek. The envelope is not
+          authenticated: edit its <code>startOffset</code> upward and the copy will burn that
+          far forward — pad can be destroyed from the channel, never reused.
         </p>
         <p class="receiver-state">
           Courier copy of <span id="receiver-label" class="pad-label">—</span> —
