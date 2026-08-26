@@ -164,9 +164,13 @@
       <section class="station" id="station-verdict" aria-labelledby="verdict-title">
         <h2 id="verdict-title"><span class="step">4</span> The Shannon verdict</h2>
         <p class="lede">
-          One grader, two exhibits. Shannon's perfect-secrecy theorem needs all three
-          conditions; the grader below checks your live pad and a DeckBook-style shuffled
-          deck against the same message. The difference is arithmetic, not opinion.
+          One grader, two exhibits, two lines each. Shannon's perfect-secrecy theorem needs all
+          three conditions; the grader below checks your live pad and a DeckBook-style shuffled
+          deck against the same message. The <strong>combiner</strong> line is the theorem: given
+          the three conditions it is unconditional. The <strong>source</strong> line is where the
+          symbols came from — and <code>crypto.getRandomValues()</code> is a deterministic generator,
+          so a pad can pass all three conditions and still rest on a computational assumption.
+          That is the honest common case, and this page says so rather than rounding it up.
         </p>
         <div class="verdict-controls">
           <span>Grade against a message of <output id="verdict-length">0</output> symbols (from station 2)</span>
