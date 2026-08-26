@@ -12,7 +12,7 @@ export default defineConfig({
         name: "TruePad — a true one-time pad",
         short_name: "TruePad",
         description:
-          "A real one-time pad that satisfies all three Shannon conditions — the honest sibling of DeckBook. Watch the pad burn, hit the wall when it runs out, and see crib-dragging fail.",
+          "A one-time pad whose combiner satisfies all three Shannon conditions, with its entropy source graded honestly — the honest sibling of DeckBook. Watch the pad burn, hit the wall when it runs out, and see crib-dragging fail.",
         start_url: "./",
         scope: "./",
         theme_color: "#11100c",

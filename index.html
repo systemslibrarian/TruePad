@@ -6,7 +6,7 @@
     <title>TruePad — a true one-time pad</title>
     <meta
       name="description"
-      content="A real one-time pad that satisfies all three Shannon conditions — the honest sibling of DeckBook. Watch the pad burn, hit the wall when it runs out, and see crib-dragging fail."
+      content="A one-time pad whose combiner satisfies all three Shannon conditions, with its entropy source graded honestly — the honest sibling of DeckBook. Watch the pad burn, hit the wall when it runs out, and see crib-dragging fail."
     />
     <meta name="theme-color" content="#11100c" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
@@ -24,9 +24,10 @@
       <p class="tagline">
         A true one-time pad — the honest sibling of
         <a href="https://github.com/systemslibrarian/DeckBook">DeckBook</a>.
-        Every claim on this page is enforced by the
+        Every claim about the cipher on this page is enforced by the
         <a href="https://github.com/systemslibrarian/TruePad">open, unit-tested core</a>
-        running live in your browser. Nothing leaves this page.
+        running live in your browser; the claims about the world around it are stated, not
+        enforced. Nothing leaves this page.
       </p>
       <ul class="conditions" aria-label="The three Shannon conditions">
         <li>
@@ -73,7 +74,7 @@
           <span id="pad-summary" class="pad-summary"></span>
         </div>
         <div id="pad-grid" class="pad-grid" aria-label="Pad symbols; burned symbols are struck out"></div>
-        <dl class="ledger" id="ledger" aria-label="Entropy ledger">
+        <dl class="ledger" id="ledger" aria-label="Pad material ledger">
           <div><dt>Material generated</dt><dd id="ledger-generated">—</dd></div>
           <div><dt>Material spent</dt><dd id="ledger-spent">—</dd></div>
           <div><dt>Material remaining</dt><dd id="ledger-remaining">—</dd></div>
@@ -133,8 +134,9 @@
         <h2 id="receive-title"><span class="step">3</span> Decrypt with the courier's copy</h2>
         <p class="lede">
           When the pad was generated, an identical copy was “delivered out of band” to the
-          receiver (via <code>serialize()</code> — burned offsets are not present in any
-          form, so the copy can no more reuse them than the original could). Generation
+          receiver (via <code>serialize()</code>, taken before any burn; a copy taken later
+          would carry no burned offset in any form, so it could no more reuse one than the
+          original could). Generation
           actually produces a <em>pair</em> — one pad per direction, so by declared role
           neither side encrypts with the pad the other encrypts with; this station opens the
           A→B half. The envelope names the pad page and the offsets it used; the copy
@@ -275,7 +277,9 @@
           <li>
             <strong>The courier is simulated.</strong> Sender and receiver pads live in the
             same browser tab. Real one-time-pad security is mostly key logistics — the
-            physical, out-of-band delivery this page can only gesture at.
+            physical, out-of-band delivery this page can only gesture at. There is no key
+            exchange, no KEM, nothing post-quantum here: the pad travels out of band, and
+            that is the thesis, not a gap.
           </li>
           <li>
             <strong>Burned is burned at the API level, not the physical level.</strong>

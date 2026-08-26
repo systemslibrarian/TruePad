@@ -43,6 +43,14 @@ jobs:
       # server (playwright.config.ts). It gates the deploy like the unit suites.
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      # Keep the traces when the e2e suite is red; they are the only useful
+      # artefact of a CI-only failure.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          if-no-files-found: ignore
       # Pull requests stop here: they get the test/type-check/build gate as a
       # status check, but only a push to master publishes.
       - if: github.event_name != 'pull_request'

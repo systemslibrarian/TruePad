@@ -10,7 +10,8 @@ and never each other; a test enforces this):
   three conditions by letting you watch a pad burn, run out, and shrug off
   crib-dragging.
 - **The pad CLI** (`src/cli/`, `truepad-pad`) handles pad material on disk so
-  a symbol is never used twice across crashes, copies, or two peers.
+  that a crash, a stale copy of the pad file, or two peers sharing one pad
+  cannot make a symbol serve twice — with the one limitation its section states.
 
 Neither is a recommendation to use one-time pads for real traffic. Both say,
 on the page and on every start, what they do not do.
@@ -74,6 +75,14 @@ receiver burn forward through its remaining pad — pad can be *destroyed* from
 the channel, never reused. There is no message authentication. If it is ever added, Wegman–Carter over
 the envelope is the seam, and it costs additional pad.
 
+### What is deliberately not here
+
+No message authentication (above). No post-quantum anything, no KEM, no key
+transport of any kind: the pad travels out of band, and that constraint is the
+exhibit's thesis, not a gap to engineer around. No browser persistence of pad
+state: IndexedDB syncs, profiles get backed up, and JavaScript strings cannot
+be zeroed, so the page keeps its pads in memory and says so.
+
 ### Core modules (pure, dependency-free, unit-tested)
 
 | Module | Purpose |
@@ -118,7 +127,8 @@ what stops two peers who share one pad from both encrypting with it and burning
 identical offsets. The role is a declaration: this guards against the accident,
 not against a party who lies about who they are.
 
-**Durable burn.** Each half holds `pad.json` (the pad) and `marks.log`
+**Durable burn** (tested on Linux ext4; see the scope notes in `src/cli/store.ts`
+and `lock.ts`). Each half holds `pad.json` (the pad) and `marks.log`
 (append-only; one fsynced line per init, burn or open recording the pad's
 `nextOffset` afterwards — one past the last burned offset; the highest per
 label is the mark the loader checks; kept *separate* from the pad file on

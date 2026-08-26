@@ -2,9 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 import { EXHAUSTED_MESSAGE } from "../src/core/meter.ts";
 
 /* ============================================================================
- * The exhibit, driven for real. Every claim the page makes is checked the way
- * a visitor would check it: by clicking. Selectors are the element ids that
- * src/exhibit/main.ts reads, so a renamed id fails here before it ships.
+ * The exhibit, driven for real, against the BUILT bundle (vite preview of
+ * dist/, the thing that deploys). Covered here: stations 1–4 and 6 as a
+ * visitor would click through them. Not covered here: station 5 (crib drag)
+ * and the forged-startOffset burn-forward, which the unit suites pin.
+ * Selectors are the element ids that src/exhibit/main.ts reads, so a
+ * renamed id fails here before it ships.
  * ========================================================================= */
 
 async function generate(page: Page, mode: "letters" | "bytes", size: number): Promise<void> {
