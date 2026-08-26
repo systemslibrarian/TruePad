@@ -6,9 +6,14 @@
  *
  * A TruePad pad is the real thing DeckBook only gestures at:
  *
- *   - Every pad symbol is a fresh, independent uniform draw backed by
- *     crypto.getRandomValues() with rejection sampling. No deck, no
- *     permutation, no mod-26 folding of a larger range. Never Math.random().
+ *   - Every pad symbol is one draw, range-reduced by rejection sampling. No
+ *     deck, no permutation, no mod-26 folding of a larger range. Never
+ *     Math.random(). The draws come from crypto.getRandomValues() (source
+ *     "csprng": a DRBG, so "independent uniform" holds computationally and
+ *     the whole pad is bounded by the generator's state entropy) or from
+ *     operator-supplied material (source "external": provenance asserted by
+ *     the operator, not verified here). The pad records which. verdict.ts
+ *     grades the two separately.
  *   - Letter mode draws one uniform value 0..25 per symbol (log2 26 ≈ 4.700
  *     bits each). Byte mode draws one uniform byte 0..255 (8 bits each).
  *   - Consuming a symbol BURNS it: the value is deleted from the pad, not
@@ -19,11 +24,17 @@
 
 export type PadMode = "letters" | "bytes";
 
+// Where the symbols came from. "csprng" = crypto.getRandomValues(), a DRBG.
+// "external" = the operator supplied the bytes and asserts their origin;
+// this code cannot verify physical provenance and never claims to.
+export type PadSource = "csprng" | "external";
+
 export type PadSymbol = { offset: number; value: number };
 
 export type PadSnapshot = {
   label: string;
   mode: PadMode;
+  source: PadSource;
   size: number;
   remaining: number;
   spent: number;
@@ -108,6 +119,9 @@ export class PadReuseError extends Error {
   }
 }
 
+// Raised inside fromExternal's fill when the operator's material runs out.
+class ExternalMaterialExhausted extends Error {}
+
 // Human-readable pad-page label, e.g. "PAD-KQZM". The label is the only pad
 // artifact allowed on the public channel; it identifies which pad page a
 // ciphertext needs without revealing any pad symbol.
@@ -122,6 +136,7 @@ function randomLabel(randomFill: RandomFill): string {
 export class Pad {
   readonly label: string;
   readonly mode: PadMode;
+  readonly source: PadSource;
   readonly size: number;
 
   // offset -> value for symbols not yet consumed. Burning DELETES the entry;
@@ -135,10 +150,12 @@ export class Pad {
     mode: PadMode,
     values: Map<number, number>,
     nextOffset: number,
-    size: number
+    size: number,
+    source: PadSource
   ) {
     this.label = label;
     this.mode = mode;
+    this.source = source;
     this.size = size;
     this.#values = values;
     this.#nextOffset = nextOffset;
@@ -158,7 +175,62 @@ export class Pad {
       values.set(offset, uniformInt(range, randomFill));
     }
     const label = options.label ?? randomLabel(randomFill);
-    return new Pad(label, mode, values, 0, size);
+    return new Pad(label, mode, values, 0, size, "csprng");
+  }
+
+  // Operator-supplied pad material — e.g. a file produced from a hardware
+  // RNG. Tagged "external": this records the operator's assertion about
+  // where the bytes came from; nothing here can verify it. Bytes are used
+  // as-is in byte mode. In letter mode each byte is range-reduced by
+  // REJECTION through the same uniformInt sampler generate() uses — bytes
+  // >= 234 are discarded, never folded mod 26 — so the pad is shorter than
+  // the material. `size` asks for exactly that many symbols and refuses if
+  // the material cannot supply them; without it, all the material is used.
+  static fromExternal(bytes: Uint8Array, mode: PadMode, options: { label?: string; size?: number } = {}): Pad {
+    if (!(bytes instanceof Uint8Array)) {
+      throw new Error("external pad material must be a Uint8Array");
+    }
+    if (mode !== "letters" && mode !== "bytes") {
+      throw new Error(`mode must be letters or bytes, not ${String(mode)}`);
+    }
+    if (options.size !== undefined && (!Number.isInteger(options.size) || options.size <= 0)) {
+      throw new Error("size must be a positive integer");
+    }
+    if (bytes.length === 0) {
+      throw new Error("external pad material is empty");
+    }
+    const range = symbolRange(mode);
+    let index = 0;
+    const fill: RandomFill = (buffer) => {
+      for (let i = 0; i < buffer.length; i += 1) {
+        if (index >= bytes.length) {
+          throw new ExternalMaterialExhausted();
+        }
+        buffer[i] = bytes[index];
+        index += 1;
+      }
+      return buffer;
+    };
+    const values = new Map<number, number>();
+    try {
+      while (options.size === undefined || values.size < options.size) {
+        values.set(values.size, uniformInt(range, fill));
+      }
+    } catch (error) {
+      if (!(error instanceof ExternalMaterialExhausted)) {
+        throw error;
+      }
+    }
+    if (values.size === 0) {
+      throw new Error("external pad material yielded no symbols after rejection");
+    }
+    if (options.size !== undefined && values.size < options.size) {
+      throw new Error(
+        `external pad material is too short: ${values.size} ${mode} symbols after rejection, ${options.size} requested`
+      );
+    }
+    const label = options.label ?? randomLabel(cryptoFill);
+    return new Pad(label, mode, values, 0, values.size, "external");
   }
 
   get remaining(): number {
@@ -259,6 +331,7 @@ export class Pad {
     return {
       label: this.label,
       mode: this.mode,
+      source: this.source,
       size: this.size,
       remaining: this.remaining,
       spent: this.spent,
@@ -277,6 +350,7 @@ export class Pad {
     return JSON.stringify({
       label: this.label,
       mode: this.mode,
+      source: this.source,
       size: this.size,
       nextOffset: this.#nextOffset,
       symbols: [...this.#values.entries()]
@@ -287,6 +361,7 @@ export class Pad {
     const parsed = JSON.parse(data) as {
       label: string;
       mode: PadMode;
+      source: PadSource;
       size: number;
       nextOffset: number;
       symbols: [number, number][];
@@ -299,6 +374,11 @@ export class Pad {
       !Array.isArray(parsed.symbols)
     ) {
       throw new Error("not a serialized TruePad pad");
+    }
+    // Provenance is never assumed: a pad without a recorded source is refused
+    // rather than defaulted to either value.
+    if (parsed.source !== "csprng" && parsed.source !== "external") {
+      throw new Error("not a serialized TruePad pad: missing or unknown source (expected csprng or external)");
     }
     if (parsed.size < 0 || parsed.nextOffset < 0 || parsed.nextOffset > parsed.size) {
       throw new Error("not a serialized TruePad pad: nextOffset outside [0, size]");
@@ -335,6 +415,6 @@ export class Pad {
           `needs ${parsed.size - parsed.nextOffset}; the burn invariant requires a contiguous survivor set`
       );
     }
-    return new Pad(parsed.label, parsed.mode, values, parsed.nextOffset, parsed.size);
+    return new Pad(parsed.label, parsed.mode, values, parsed.nextOffset, parsed.size, parsed.source);
   }
 }
