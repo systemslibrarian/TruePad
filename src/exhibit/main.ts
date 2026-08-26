@@ -8,7 +8,7 @@
  * ========================================================================= */
 
 import "./style.css";
-import { Pad, uniformInt, LETTER_RANGE, type PadMode } from "../core/pad";
+import { Pad, uniformInt, LETTER_RANGE, type PadMode } from "../core/pad.ts";
 import {
   decodeEnvelope,
   decryptBytes,
@@ -20,11 +20,11 @@ import {
   normalizeAZ,
   type Envelope,
   type OtpRefusal
-} from "../core/cipher-otp";
-import { meterState, LEDGER_MOTTO } from "../core/meter";
-import { gradeShannon, type ShannonReport } from "../core/verdict";
-import { compareAttacks, encryptWithKeystream, LEAK_THRESHOLD } from "../core/attack-otp";
-import { diffPositions, forgeLetters, shiftCipherLetter } from "./tamper";
+} from "../core/cipher-otp.ts";
+import { meterState, LEDGER_MOTTO } from "../core/meter.ts";
+import { gradeShannon, type ShannonReport } from "../core/verdict.ts";
+import { compareAttacks, encryptWithKeystream, LEAK_THRESHOLD } from "../core/attack-otp.ts";
+import { diffPositions, forgeLetters, shiftCipherLetter } from "./tamper.ts";
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);

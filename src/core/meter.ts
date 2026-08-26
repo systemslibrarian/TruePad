@@ -6,7 +6,7 @@
  * the UI renders whatever this returns.
  * ========================================================================= */
 
-import type { PadSnapshot } from "./pad";
+import type { PadSnapshot } from "./pad.ts";
 
 export type MeterStatus = "ready" | "low" | "exhausted";
 

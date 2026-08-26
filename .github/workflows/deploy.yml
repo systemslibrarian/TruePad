@@ -32,7 +32,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # The suite spawns bin/truepad-pad.mjs, which needs type stripping
+          # (>= 22.18 / 23.6 / any 24). Pin the line the CLI was tested on.
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm test

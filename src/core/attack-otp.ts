@@ -20,7 +20,7 @@
  *      surfaces it.
  * ========================================================================= */
 
-import { lettersToNumbers, normalizeAZ, numbersToLetters } from "./cipher-otp";
+import { lettersToNumbers, normalizeAZ, numbersToLetters } from "./cipher-otp.ts";
 
 export type CribCandidate = {
   position: number;

@@ -22,7 +22,7 @@
  * must spend pad symbols of its own.
  * ========================================================================= */
 
-import { lettersToNumbers, normalizeAZ, numbersToLetters } from "../core/cipher-otp";
+import { lettersToNumbers, normalizeAZ, numbersToLetters } from "../core/cipher-otp.ts";
 
 // Shift one ciphertext letter by `delta` (mod 26). The receiver's decryption
 // changes at exactly that position, by exactly that delta — every other
