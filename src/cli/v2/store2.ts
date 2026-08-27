@@ -102,6 +102,22 @@ export type SourceDeclaration = {
   lengthBytes: number;
 };
 
+// §15.2 rollback classes. Loading accepts all three structurally; ENFORCEMENT
+// (the platform/remote `witness-unsupported` refusal, the reachability and
+// regression checks) lives in the verbs, never here.
+export type Rollback =
+  | { witnessClass: "none"; config: Record<string, never> }
+  | { witnessClass: "separate-state-file"; config: { path: string } }
+  | { witnessClass: "platform-monotonic" | "remote-monotonic"; config: Record<string, unknown> };
+
+// §16/§1.1 record policy. A store either sizes each record to its message
+// (variable) or freezes every ciphertext at F bytes (fixed). A header without
+// the `record` field — every store generated before Phase 5 — is variable;
+// loadStore2 normalizes that absence to { kind: "variable" } here so the verbs
+// never branch on "field absent". Enforcement of the frame (§16.1) is the
+// caller's; this module only validates the shape and F's bounds.
+export type RecordSpec = { kind: "variable" } | { kind: "fixed"; bytes: number };
+
 export type HeadV2 = {
   formatVersion: 2;
   pairId: string; // 32 lowercase hex characters — an identifier, never a secret
@@ -118,8 +134,8 @@ export type HeadV2 = {
     maxCiphertextBytes: number; // MUST equal 1048576 (§4)
     maxAuthLookahead: number;
   };
-  recordPolicy: { authenticated: "required"; downgradeAllowed: false };
-  rollback: { witnessClass: "none"; config: Record<string, never> };
+  recordPolicy: { authenticated: "required"; downgradeAllowed: false; record: RecordSpec };
+  rollback: Rollback;
   verification: {
     failurePolicy: { kind: "freeze"; threshold: number };
     failureCount: number;
@@ -386,12 +402,53 @@ function validateHead(raw: unknown): { head: HeadV2 } | { why: string } {
   if (!isRecord(raw.recordPolicy)) {
     return { why: "recordPolicy is not an object" };
   }
-  const policyMismatch = keyMismatch(raw.recordPolicy, ["authenticated", "downgradeAllowed"], "recordPolicy");
+  // `record` is optional: absent means variable (§1.1, pre-Phase-5 headers).
+  // The required pair is fixed; the key set admits `record` only additionally.
+  const policyKeys = Object.hasOwn(raw.recordPolicy, "record")
+    ? ["authenticated", "downgradeAllowed", "record"]
+    : ["authenticated", "downgradeAllowed"];
+  const policyMismatch = keyMismatch(raw.recordPolicy, policyKeys, "recordPolicy");
   if (policyMismatch) {
     return { why: policyMismatch };
   }
   if (raw.recordPolicy.authenticated !== "required" || raw.recordPolicy.downgradeAllowed !== false) {
-    return { why: 'recordPolicy must be exactly { "authenticated": "required", "downgradeAllowed": false }' };
+    return { why: 'recordPolicy.authenticated must be "required" and downgradeAllowed must be false' };
+  }
+  // §16/§1.1: exactly the three record shapes — absent = variable,
+  // { kind: "variable" }, or { kind: "fixed", bytes: F } with F a multiple of
+  // 16 and 32 <= F <= maxCiphertextBytes. F <= capacity is NOT required: a
+  // store with F larger than its budget simply exhausts on the first send.
+  let record: RecordSpec;
+  if (!Object.hasOwn(raw.recordPolicy, "record")) {
+    record = { kind: "variable" };
+  } else {
+    const rawRecord = raw.recordPolicy.record;
+    if (!isRecord(rawRecord)) {
+      return { why: "recordPolicy.record is not an object" };
+    }
+    if (rawRecord.kind === "variable") {
+      const variableMismatch = keyMismatch(rawRecord, ["kind"], "recordPolicy.record");
+      if (variableMismatch) {
+        return { why: variableMismatch };
+      }
+      record = { kind: "variable" };
+    } else if (rawRecord.kind === "fixed") {
+      const fixedMismatch = keyMismatch(rawRecord, ["kind", "bytes"], "recordPolicy.record");
+      if (fixedMismatch) {
+        return { why: fixedMismatch };
+      }
+      const bytes = rawRecord.bytes;
+      if (!isSafeCount(bytes) || bytes < 32 || bytes > MAX_CIPHERTEXT_BYTES || bytes % 16 !== 0) {
+        return {
+          why:
+            `recordPolicy.record.bytes must be a multiple of 16 with 32 <= F <= ${MAX_CIPHERTEXT_BYTES} (§16) ` +
+            `(found ${JSON.stringify(bytes)})`
+        };
+      }
+      record = { kind: "fixed", bytes };
+    } else {
+      return { why: `recordPolicy.record.kind must be "variable" or "fixed" (found ${JSON.stringify(rawRecord.kind)})` };
+    }
   }
 
   if (!isRecord(raw.rollback)) {
@@ -401,11 +458,35 @@ function validateHead(raw: unknown): { head: HeadV2 } | { why: string } {
   if (rollbackMismatch) {
     return { why: rollbackMismatch };
   }
-  if (raw.rollback.witnessClass !== "none") {
-    return { why: `rollback.witnessClass must be "none" — other classes are a later phase (found ${JSON.stringify(raw.rollback.witnessClass)})` };
+  if (!isRecord(raw.rollback.config)) {
+    return { why: "rollback.config is not an object" };
   }
-  if (!isRecord(raw.rollback.config) || Object.keys(raw.rollback.config).length !== 0) {
-    return { why: 'rollback.config must be {} for witnessClass "none"' };
+  // §15.2: exactly three accepted shapes. Loading is structure-only; the
+  // verbs enforce (platform/remote refuse witness-unsupported at preflight).
+  let rollback: Rollback;
+  const witnessClass = raw.rollback.witnessClass;
+  if (witnessClass === "none") {
+    if (Object.keys(raw.rollback.config).length !== 0) {
+      return { why: 'rollback.config must be {} for witnessClass "none"' };
+    }
+    rollback = { witnessClass: "none", config: {} };
+  } else if (witnessClass === "separate-state-file") {
+    const configMismatch = keyMismatch(raw.rollback.config, ["path"], "rollback.config");
+    if (configMismatch) {
+      return { why: configMismatch };
+    }
+    if (typeof raw.rollback.config.path !== "string" || raw.rollback.config.path.length === 0) {
+      return { why: 'rollback.config.path must be a non-empty string for witnessClass "separate-state-file"' };
+    }
+    rollback = { witnessClass: "separate-state-file", config: { path: raw.rollback.config.path } };
+  } else if (witnessClass === "platform-monotonic" || witnessClass === "remote-monotonic") {
+    rollback = { witnessClass, config: { ...raw.rollback.config } };
+  } else {
+    return {
+      why:
+        `rollback.witnessClass must be one of "none", "separate-state-file", "platform-monotonic", ` +
+        `"remote-monotonic" (found ${JSON.stringify(witnessClass)})`
+    };
   }
 
   if (!isRecord(raw.verification)) {
@@ -457,8 +538,8 @@ function validateHead(raw: unknown): { head: HeadV2 } | { why: string } {
       maxCiphertextBytes: MAX_CIPHERTEXT_BYTES,
       maxAuthLookahead: auth.maxAuthLookahead
     },
-    recordPolicy: { authenticated: "required", downgradeAllowed: false },
-    rollback: { witnessClass: "none", config: {} },
+    recordPolicy: { authenticated: "required", downgradeAllowed: false, record },
+    rollback,
     verification: {
       failurePolicy: { kind: "freeze", threshold: verification.failurePolicy.threshold },
       failureCount: verification.failureCount,

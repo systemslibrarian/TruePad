@@ -95,7 +95,7 @@ Run once per pair, on a machine that will hold no copy afterwards.
 6. **The workspace copy is removed** — and priced honestly: removal is
    deletion, not proof of erasure. Software can drop its reference to pad
    material; whether the medium forgot the bytes is a destruction claim,
-   and destruction's limits belong to Phase 6 (§14.2 L6). The tmpfs
+   and destruction's limits are stated at §5.3 and FORMAT-V2.md §17. The tmpfs
    assertion in step 2 is what keeps those bytes off persistent storage,
    and that assertion is the operator's. *Enforced:* the removal and the
    sentence saying what it is worth. *Asserted:* that no other copy exists
@@ -111,6 +111,24 @@ Run once per pair, on a machine that will hold no copy afterwards.
    any failure.
 9. **Distribute:** each courier carries one medium to its peer, out of
    band. *Operator step,* end to end: the tool cannot see the couriers.
+
+**Optional: a rollback witness (§15).** Add `--witness-class
+separate-state-file --witness-path <absolute path>` to close the §9.4
+restore residual for these stores. The absolute path is written verbatim
+into both headers and travels with them; on each peer's host it names that
+peer's own witness file, on an **independent medium or failure domain** the
+pair's backup does not cover — the whole point is an authority outside the
+pair directory. Choose that path deliberately (a different device, a
+different backup regime), provision an empty witness file there (an empty
+witness accepts a fresh pair, and protection begins at the first witnessed
+commit), and record the class and path in the pad book. The witness holds
+only counters — never a pad byte — so it is non-secret, but it is also
+*only as monotonic as the mechanism enforcing its non-regression*: a
+separate state file that is itself restored or emptied knows nothing.
+*Asserted, in effect:* that the witness path lives in a domain the pair's
+backup does not reach. *Caveat:* **do not back the witness up together with
+the pair** — a backup that captures both restores both, and the witness can
+no longer catch the rollback it exists to catch.
 
 | step | enforced by code | asserted by the operator |
 | --- | --- | --- |
@@ -270,22 +288,54 @@ material is destroyed at this ceremony, never spent.
 
 ### 5.3 Exhausted media, and destruction
 
-**Physical destruction is a ceremony step, not a software claim.** There
-is no `destroy` verb — Phase 6 owns destruction semantics and the exact
-statement of their limits (§14.2 L6), and this phase does not reach past
-it. Retirement is logical, not physical (§1.2): the durable counters make
-retired material unusable through this tooling while its bytes remain in
-`secret.bin`, and workspace removal is deletion, nothing more. No more
-than that is claimed.
+Destruction is two steps, in this order: the software `destroy` verb
+first, then physical destruction of the medium. Neither replaces the
+other — the verb tears down the store's software state and records the
+intent; only the physical step removes the §1.3 at-rest exposure.
 
-So the media themselves are destroyed by the operator, physically, by
-means fit for the medium, when the pair is exhausted, retired whole, or
-either copy is suspected compromised — in which case both copies retire,
-since either copy contains the whole pair. Both peers destroy their media,
-each destruction entered in the pad book with pairId, date, method, and
-witness. The book entry is the record that the pair ended on purpose;
-the destruction is the only step in this document that removes the §1.3
-at-rest exposure rather than managing it.
+**Step one — `destroy` the pair, in each party's own copy** (Phase 6,
+FORMAT-V2.md §17):
+
+```sh
+node bin/truepad2.mjs destroy <dir> --confirm <pairId> --reason "why, for the pad book"
+```
+
+Under the pair lock this writes a non-secret tombstone (`destroyed.json`:
+pairId, timestamp, reason, and each direction's final high-waters),
+best-effort zero-overwrites each half's `secret.bin`, then unlinks the
+three store files and removes the half directories — leaving
+`manifest.json` and the tombstone as the pair's non-secret record. The
+`--confirm` value must equal the pair's pairId (the tool does not echo the
+expected value — read it from the pad book or `head.json`); a pair too
+corrupt to yield a pairId is destroyed with the literal token
+`destroy-unreadable-pair`, and any other value is refused
+`destroy-unconfirmed` with nothing touched. destroy works on a corrupt or
+half store — a store too damaged to load is still one an operator must be
+able to remove.
+
+**What `destroy` does not claim is erasure.** *Software can forget its
+reference to pad material; it cannot prove that flash forgot the bytes.*
+The zero-overwrite is best-effort and proves nothing about the medium: a
+copy-on-write filesystem (APFS among them) may preserve the pre-overwrite
+blocks, SSD wear leveling may preserve any block, and backups are outside
+the tool's reach. Retirement is logical, not physical (§1.2); so is
+`destroy`'s file removal.
+
+**Step two — physically destroy the media.** The media themselves are
+destroyed by the operator, physically, by means fit for the medium, when
+the pair is exhausted, retired whole, or either copy is suspected
+compromised — in which case both copies are destroyed, since either copy
+contains the whole pair. Run `destroy` on each copy, then destroy each
+medium; enter each destruction in the pad book with pairId, date, method,
+and witness. The book entry is the record that the pair ended on purpose;
+the physical destruction is the only step in this document that removes
+the §1.3 at-rest exposure rather than managing it.
+
+**The witness, if configured, is left alone.** `destroy` does not touch a
+rollback witness (§17.2): its counters are non-secret, monotone, and
+harmless for a pair that no longer exists. Record the pair's end in the
+pad book against its witness entry, and let the witness file age out on
+its own schedule.
 
 ---
 
@@ -318,14 +368,21 @@ Stated here rather than distributed as caveats:
   that; two sources of distinct physics are demanded so the condition has
   independent chances to hold.
 - **Erasure is not proved.** Workspace removal is deletion; retirement is
-  logical, not physical (§1.2). What a flash controller, a journaling
-  filesystem, or a swap file retained is outside every claim here; Phase 6
-  will state
-  destruction's limits rather than remove them.
-- **Whole-directory restore regresses a store** (§9.4, open until
-  Phase 4): an operator restoring a medium from a backup regresses the
-  header and journal together, and the tooling cannot tell. The ceremony's
-  mitigation is procedural — two media, no other copies, by assertion.
+  logical, not physical (§1.2); and `destroy`'s zero-overwrite (§5.3,
+  FORMAT-V2.md §17) is best-effort. What a flash controller, a journaling
+  filesystem, or a swap file retained is outside every claim here: software
+  can forget its reference to pad material; it cannot prove that flash
+  forgot the bytes. Physical destruction of the medium is the only step
+  that removes the §1.3 at-rest exposure.
+- **Whole-directory restore regresses a store** (§9.4): an operator
+  restoring a medium from a backup regresses the header and journal
+  together, and the tooling cannot tell — unless a rollback witness (§15,
+  the optional step above) is configured, in which case the restore refuses
+  `witness-regressed` before anything is consumed. At the default
+  `witnessClass: none` the ceremony's only mitigation is procedural — two
+  media, no other copies, by assertion — and a configured witness is itself
+  only as monotonic as the mechanism enforcing its non-regression (do not
+  back it up with the pair).
 - **Durability is scoped** (§10.2): verified on Linux ext4; macOS carries
   no full-flush guarantee in these primitives; removable media add their
   own write-cache behavior, which is why the provisioning fsync is called

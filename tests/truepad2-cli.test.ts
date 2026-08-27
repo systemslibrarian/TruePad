@@ -290,11 +290,16 @@ describe("truepad2 end to end (real binary via the launcher)", { timeout: 120_00
     const meters = (pairId: string, direction: string, records: number, limitedBy: string) => ({
       pairId,
       direction,
+      // §16: a default store reports its record policy as variable.
+      record: { kind: "variable" },
       encryption: { capacity: 16, nextOffset: 0, remainingBytes: 16 },
       authentication: { capacityRecords: records, nextSequence: 0, remainingRecords: records, contestedLive: 0 },
       verification: { failureCount: 0, clearedAtFailureCount: 0, frozen: false },
       maxRemainingSends: records,
-      limitedBy
+      limitedBy,
+      // §15.3: status carries a per-direction witness block; a default store
+      // reports witnessClass "none".
+      witness: { witnessClass: "none" }
     });
     const authStatus = run("status", authBound);
     expect(authStatus.code).toBe(0);

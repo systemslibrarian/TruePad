@@ -69,7 +69,7 @@ function makeHead(): HeadV2 {
       maxCiphertextBytes: 1048576,
       maxAuthLookahead: 64
     },
-    recordPolicy: { authenticated: "required", downgradeAllowed: false },
+    recordPolicy: { authenticated: "required", downgradeAllowed: false, record: { kind: "variable" } },
     rollback: { witnessClass: "none", config: {} },
     verification: {
       failurePolicy: { kind: "freeze", threshold: 32 },
