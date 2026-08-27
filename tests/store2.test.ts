@@ -1,6 +1,8 @@
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   commitAdvance,
@@ -13,7 +15,6 @@ import {
   readEncryption,
   reserveAttempt,
   SECRET_FILE,
-  zeroizeRetired,
   type HeadV2,
   type JournalRecord
 } from "../src/cli/v2/store2";
@@ -27,8 +28,9 @@ import {
  * regressed-below-mark refusal vs the allowed header-ahead crash signature,
  * the never-refusing maximum rule for attempts and failure counters, retire
  * lines feeding both maxima; the two corrupt-journal registers (torn last
- * line vs malformed mid-file); positioned secret reads; and zeroizeRetired
- * touching exactly the named ranges.
+ * line vs malformed mid-file); positioned secret reads; and the §1.2
+ * physical-presence property — secret.bin never changes after gen, and the
+ * durable counters alone refuse the retired-but-present material for reuse.
  * ========================================================================= */
 
 const E = 64; // encryption capacity, bytes
@@ -78,8 +80,8 @@ function makeHead(): HeadV2 {
   };
 }
 
-// secret.bin fixture: byte i is i mod 256, so every positioned read and
-// every zeroized range is checkable byte-for-byte.
+// secret.bin fixture: byte i is i mod 256, so every positioned read — and
+// the file's required immutability after gen — is checkable byte-for-byte.
 function countingSecret(): Uint8Array {
   const bytes = new Uint8Array(SECRET_TOTAL);
   for (let i = 0; i < bytes.length; i += 1) {
@@ -324,6 +326,29 @@ describe("loadStore2 — high-water reconciliation", () => {
     expect(loaded.effective.nextSequence).toBe(2);
   });
 
+  it("a head behind a journaled send is regressed-below-mark: retired-but-present material is never re-offered", () => {
+    // With no on-disk zeroize, the bytes a send retired still read back
+    // (§1.2). This refusal is the whole mechanism that keeps them from
+    // being offered again when a stale header meets the newer journal.
+    const head = freshStore();
+    const advanced = structuredClone(head);
+    advanced.encryption.nextOffset = 5;
+    advanced.authentication.nextSequence = 1;
+    commitAdvance(storeDir(), advanced, {
+      op: "send",
+      sequence: 0,
+      startOffset: 0,
+      consumed: 5,
+      nextOffset: 5,
+      nextSequence: 1,
+      at: at()
+    });
+    expect(new Uint8Array(readFileSync(secretPath()))).toEqual(countingSecret()); // present…
+    rewriteHead(head); // …and a pre-send header comes back
+    const refusal = expectRefusal("regressed-below-mark");
+    expect(refusal.message).toContain("retired auth records for reuse");
+  });
+
   it("retire lines feed both maxima", () => {
     const head = freshStore();
     const retired = structuredClone(head);
@@ -453,39 +478,93 @@ describe("readEncryption / readAuthRecord — §1.2 offsets", () => {
   });
 });
 
-/* ---- zeroizeRetired --------------------------------------------------------- */
+/* ============================================================================
+ * Physical presence (§1.2; ledger N13's second sentence): after gen, no v2
+ * operation writes secret.bin. The in-place zeroize that once ran after
+ * each retirement was removed deliberately — §10 promises nothing about
+ * sector-write atomicity, so overwriting a newly retired range of a LIVE
+ * secret.bin risks tearing the sector at the retired/live boundary and
+ * corrupting live material beside it (pad bytes, K, R). These tests drive
+ * the real binary, because the property under test is what the verbs do to
+ * the file: the retired bytes stay, byte-for-byte, while the durable
+ * counters — the sole liveness authority — refuse every reuse of them.
+ * ========================================================================= */
 
-describe("zeroizeRetired — exactly the named ranges, nothing else", () => {
-  it("zeroes the given ranges and leaves every other byte intact", () => {
-    const head = freshStore();
-    zeroizeRetired(storeDir(), head, [
-      { offset: 10, length: 5 },
-      { offset: E + 32, length: 32 } // auth record 1, K and R both
-    ]);
-    const body = new Uint8Array(readFileSync(secretPath()));
-    const expected = countingSecret();
-    expected.fill(0, 10, 15);
-    expected.fill(0, E + 32, E + 64);
-    expect(body).toEqual(expected);
+const LAUNCHER = join(resolve(__dirname, ".."), "bin", "truepad2.mjs");
+
+function runCli(...argv: string[]): { code: number; stdout: string; stderr: string } {
+  const child = spawnSync(process.execPath, [LAUNCHER, ...argv], { encoding: "utf8" });
+  return { code: child.status ?? -1, stdout: child.stdout, stderr: child.stderr };
+}
+
+function genCliPair(pair: string): void {
+  const source = join(dir, `source-${Math.random().toString(16).slice(2)}.bin`);
+  writeFileSync(source, randomBytes(2 * SECRET_TOTAL));
+  const gen = runCli("gen", pair, "--source", source, "--encryption-bytes", String(E), "--auth-records", String(N));
+  expect(gen.code).toBe(0);
+}
+
+describe("secret.bin never changes after gen — present is not live (§1.2)", { timeout: 120_000 }, () => {
+  it("burn: the consumed window's bytes stay, the counters advance, and the next burn takes the NEXT window", () => {
+    const pair = join(dir, "pair-burn");
+    genCliPair(pair);
+    const secretFile = join(pair, "a-to-b", SECRET_FILE);
+    const atGen = readFileSync(secretFile);
+
+    const first = runCli("burn", pair, "--as", "A", "hello"); // 5 bytes
+    expect(first.code).toBe(0);
+    expect(JSON.parse(first.stdout)).toMatchObject({ sequence: 0, startOffset: 0 });
+    // The retired window and auth record 0 are physically untouched…
+    expect(readFileSync(secretFile).equals(atGen)).toBe(true);
+    // …while the durable high-waters have moved past them.
+    const head = JSON.parse(readFileSync(join(pair, "a-to-b", HEAD_FILE), "utf8")) as HeadV2;
+    expect(head.encryption.nextOffset).toBe(5);
+    expect(head.authentication.nextSequence).toBe(1);
+
+    // The second burn consumes the NEXT window — sequence 1, offsets from 5 —
+    // never a re-read of the retired-but-present one.
+    const second = runCli("burn", pair, "--as", "A", "world!"); // 6 bytes
+    expect(second.code).toBe(0);
+    expect(JSON.parse(second.stdout)).toMatchObject({ sequence: 1, startOffset: 5 });
+    expect(readFileSync(secretFile).equals(atGen)).toBe(true);
   });
 
-  it("a range past the body is a programmer error and throws before any write", () => {
-    const head = freshStore();
-    expect(() => zeroizeRetired(storeDir(), head, [{ offset: SECRET_TOTAL - 4, length: 8 }])).toThrow(/out of range/);
-    expect(new Uint8Array(readFileSync(secretPath()))).toEqual(countingSecret());
+  it("open: the retired window's original bytes remain readable, and the replay is still refused sequence-retired", () => {
+    const a = join(dir, "pair-a");
+    const b = join(dir, "pair-b");
+    genCliPair(a);
+    cpSync(a, b, { recursive: true });
+    const burn = runCli("burn", a, "--as", "A", "hello");
+    expect(burn.code).toBe(0);
+    const envelope = burn.stdout.trim();
+
+    const secretFile = join(b, "a-to-b", SECRET_FILE);
+    const beforeOpen = readFileSync(secretFile);
+    const open = runCli("open", b, "--as", "B", envelope);
+    expect(open.code).toBe(0);
+    expect(open.stdout.trim()).toBe("hello");
+    // Byte-for-byte the pre-open file, retired window included.
+    expect(readFileSync(secretFile).equals(beforeOpen)).toBe(true);
+
+    // Physical presence does not mean reusable: the counters, not the
+    // content, decide liveness, and they already retired sequence 0.
+    const replay = runCli("open", b, "--as", "B", envelope);
+    expect(replay.code).toBe(2);
+    expect(replay.stderr).toContain("refused: sequence-retired");
+    expect(readFileSync(secretFile).equals(beforeOpen)).toBe(true);
   });
 });
 
 /* ============================================================================
- * §12's commit orders, observed under fault injection (ledger N13). The
- * matrices depend on which write lands first when the second one cannot: the
- * advance order must leave the header AHEAD of the journal (the crash state
- * §12.1 accepts), and the failure order must leave the journal ahead (the
- * state the maximum rule absorbs). An inverted implementation passes every
+ * §12's commit orders, observed under fault injection. The matrices depend
+ * on which write lands first when the second one cannot: the advance order
+ * must leave the header AHEAD of the journal (the crash state §12.1
+ * accepts), and the failure order must leave the journal ahead (the state
+ * the maximum rule absorbs). An inverted implementation passes every
  * happy-path test and turns those crash states into wedged stores.
  * ========================================================================= */
 
-describe("commit orders under fault injection (§12.2 S2, §12.3 O4, N13)", () => {
+describe("commit orders under fault injection (§12.2 S2, §12.3 O4)", () => {
   it("commitAdvance writes the header before the journal: a failing append leaves the header already ahead", () => {
     const head = freshStore();
     chmodSync(journalPath(), 0o444);

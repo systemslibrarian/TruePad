@@ -197,6 +197,19 @@ send spends exactly one auth record, so the two run out separately;
 on that direction; stranded encryption material is destroyed at retirement,
 never spent.
 
+**Multi-source generation.** `gen` takes `--source FILE` one or more times,
+XOR-combines the declared streams, and partitions the result into the two
+directions' encryption and authentication slices — no hash, KDF, extractor,
+or conditioner anywhere between the source bytes and the pad. The same file
+declared twice — by repeated path, symlink, or hardlink — is refused
+(one physical origin is one source), but the *value* of the combined bytes
+is never inspected: under the assumption below every combined value is a
+legitimate draw, all-zeros included, and rejecting any value would condition
+the output away from exact uniformity. The verdict `gen` prints, and the
+whole of what it claims, is: "Uniform if at least one declared source was
+uniform and independent of the others." The tool records each source's
+declared origin; it cannot verify physical randomness and never says it can.
+
 **The availability price, stated plainly.** Every in-window forgery attempt
 costs the receiver one durable write — the attempt reservation, persisted
 before any verification, so a crash loses an attempt and never grants one.
@@ -220,8 +233,11 @@ regresses the counters and the journal together — the v2 format does not
 fix backup, and that residual is STILL OPEN until a Phase-4 rollback
 witness exists — and v2 adds a named operator assumption of its own: a
 pair directory is restored as all three files together or not at all
-(FORMAT-V2.md §9.4; a per-file restore that rolls the counters back over
-zeroized regions voids the bound outright). Durability is verified on
+(FORMAT-V2.md §9.4; retired material stays physically present in
+secret.bin — retirement is the counters' doing, never the file's — so
+counters restored to an earlier state offer that material for two-time-pad
+reuse, and only a restore the journal survives is caught at load as
+regressed-below-mark). Durability is verified on
 Linux ext4 only (FORMAT-V2.md §10); Windows, network filesystems, and
 macOS power-loss durability are unverified. And this tool still cannot
 verify that source material came from a physical source: it records the
@@ -259,7 +275,7 @@ documented procedure around the standalone `retire` verb. All of it is in
 | `src/core/wc-one-time.ts` | `wc-one-time-v1`: canonical bytes, tag = POLYVAL XOR mask, constant-time compare |
 | `src/core/envelope2.ts` | The strict eight-field v2 envelope: encode, strict parse, v1-signature refusal |
 | `src/core/partition2.ts` | Bytewise-XOR source combination and the deterministic four-slice partition |
-| `src/cli/v2/store2.ts` | `head.json` + `secret.bin` + `journal.log`: durable commits, attempt reservation, journal reconciliation, zeroize-after-retire |
+| `src/cli/v2/store2.ts` | `head.json` + `secret.bin` + `journal.log`: durable commits, attempt reservation, journal reconciliation; `secret.bin` written once at gen, never rewritten |
 | `src/cli/v2/truepad2.ts` | The verbs, the typed refusal register, the banner, exit codes |
 | `bin/truepad2.mjs` | Plain-JS launcher: Node-version gate, then the `.ts` entry |
 

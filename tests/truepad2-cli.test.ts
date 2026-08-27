@@ -18,7 +18,7 @@ import { LOCK_FILE } from "../src/cli/lock";
  * Covered: gen -> courier -> burn/open both directions; replay; skip-and-
  * late-arrival; retire unwedging a contested channel; a stale head.json;
  * v1 stores; half-pairs; source-too-short; the one-file-one-source rule
- * (by realpath); and the §13 status meters with both LIMITED BY values.
+ * (by device+inode); and the §13 status meters with both LIMITED BY values.
  * Budgets are kept tiny so every store fits in a few hundred bytes.
  * ========================================================================= */
 
@@ -142,11 +142,12 @@ describe("truepad2 end to end (real binary via the launcher)", { timeout: 120_00
     expect(status["A->B"].authentication).toMatchObject({ nextSequence: 2, remainingRecords: 6 });
     expect(status["A->B"].maxRemainingSends).toBe(6);
 
-    // §1.2 hygiene: the retired ranges — used AND skipped — are zeroed in the
-    // receiving copy: encryption [0, 7) and auth records 0..1 at [64, 128).
+    // §1.2: retirement is logical, not physical. secret.bin never changes
+    // after gen — the receiving copy is still byte-identical to the sender's,
+    // retired ranges (used AND skipped) included; the counters above are the
+    // whole of the retirement.
     const secret = readFileSync(join(b, "a-to-b", "secret.bin"));
-    expect([...secret.subarray(0, 7)].every((byte) => byte === 0)).toBe(true);
-    expect([...secret.subarray(64, 128)].every((byte) => byte === 0)).toBe(true);
+    expect(secret.equals(readFileSync(join(a, "a-to-b", "secret.bin")))).toBe(true);
 
     // The dropped envelope arrives late: its material is gone.
     const late = run("open", b, "--as", "B", first.stdout.trim());
@@ -255,7 +256,7 @@ describe("truepad2 end to end (real binary via the launcher)", { timeout: 120_00
     expect(existsSync(a)).toBe(false);
   });
 
-  it("gen refuses one file declared as two sources — by realpath, so a symlink does not fool it", () => {
+  it("gen refuses one file declared as two sources — by device+inode, so a symlink does not fool it", () => {
     const a = join(dir, "a");
     const source = sourceFile(2 * (16 + 32 * 4));
     const twice = run(
@@ -349,12 +350,31 @@ describe("open releases the plaintext byte-exact", () => {
 
 /* ============================================================================
  * One file is one source, by device+inode: a hardlink is the same file under
- * a second name, and counting it twice would XOR the material to zeros.
+ * a second name. Identity of FILES is refused; the VALUE of the combined
+ * bytes is never inspected — under the declared-uniform assumption every
+ * combined value is a legitimate draw, all-zeros included, and rejecting
+ * any value would condition the distribution away from exact uniformity.
  * ========================================================================= */
 
-describe("gen refuses the same inode declared as two sources", () => {
-  it("a hardlinked source is refused, and identical content under distinct inodes trips the all-zero tripwire", () => {
+describe("one file is one source — identity refused, content never judged", () => {
+  it("a repeated path, a symlink alias, and a hardlink alias are all refused as one file", () => {
     const source = sourceFile(2 * (16 + 32 * 1));
+    const repeated = run(
+      "gen", join(dir, "rp-pair"), "--source", source, "--source", source,
+      "--encryption-bytes", "16", "--auth-records", "1"
+    );
+    expect(repeated.code).toBe(1);
+    expect(repeated.stderr).toContain("same device and inode");
+
+    const symlink = join(dir, "symlink.bin");
+    symlinkSync(source, symlink);
+    const symlinked = run(
+      "gen", join(dir, "sl-pair"), "--source", source, "--source", symlink,
+      "--encryption-bytes", "16", "--auth-records", "1"
+    );
+    expect(symlinked.code).toBe(1);
+    expect(symlinked.stderr).toContain("same device and inode");
+
     const hardlink = join(dir, "hardlink.bin");
     linkSync(source, hardlink);
     const linked = run(
@@ -363,15 +383,31 @@ describe("gen refuses the same inode declared as two sources", () => {
     );
     expect(linked.code).toBe(1);
     expect(linked.stderr).toContain("same device and inode");
+  });
 
+  it("an all-zero combination is accepted and partitioned normally — content is never a refusal", () => {
+    // Two distinct files with identical content XOR to all zeros. The tool
+    // accepts it: it cannot know the files are dependent, and refusing the
+    // VALUE would condition the output distribution. The verdict line is
+    // the honest statement of the assumption this rests on.
+    const e = 16;
+    const n = 1;
+    const source = sourceFile(2 * (e + 32 * n));
     const copy = join(dir, "copy.bin");
     writeFileSync(copy, readFileSync(source));
-    const cancelled = run(
-      "gen", join(dir, "copy-pair"), "--source", source, "--source", copy,
-      "--encryption-bytes", "16", "--auth-records", "1"
+    const pair = join(dir, "zero-pair");
+    const result = run(
+      "gen", pair, "--source", source, "--source", copy,
+      "--encryption-bytes", String(e), "--auth-records", String(n)
     );
-    expect(cancelled.code).toBe(1);
-    expect(cancelled.stderr).toContain("all zeros");
-    expect(existsSync(join(dir, "copy-pair", "a-to-b", "head.json"))).toBe(false);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain(
+      "Uniform if at least one declared source was uniform and independent of the others."
+    );
+    for (const half of ["a-to-b", "b-to-a"]) {
+      const secret = readFileSync(join(pair, half, "secret.bin"));
+      expect(secret.length).toBe(e + 32 * n);
+      expect(secret.every((byte) => byte === 0)).toBe(true);
+    }
   });
 });

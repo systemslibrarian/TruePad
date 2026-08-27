@@ -14,8 +14,9 @@
  *                      head.json or any journal line exists (§12.4) — the
  *                      reverse order could survive a power loss at the
  *                      correct length with zeroed blocks, undetectable
- *                      thereafter. Which bytes are live is decided by the
- *                      header/journal counters, never by file content.
+ *                      thereafter — and never written again for the life
+ *                      of the store. Which bytes are live is decided by
+ *                      the header/journal counters, never by file content.
  *   <dir>/journal.log  append-only, fsynced, 0600. One JSON line per event
  *                      (§12.1) — the durable authority that the header's
  *                      counters merely cache.
@@ -23,7 +24,7 @@
  * Commit orders, non-negotiable:
  *   advance (SEND S2 / OPEN O5 / operator actions): rewrite head.json
  *     atomically, then append the journal line, each durable — only then
- *     may the caller emit anything or zeroize retired ranges.
+ *     may the caller emit anything.
  *   attempt reservation (OPEN O3): journal append only; verification must
  *     not begin until it is durable.
  *   auth failure (OPEN O4): journal append FIRST, header rewrite second —
@@ -49,9 +50,14 @@
  * is verified on Linux ext4 only; fsync on a directory handle is skipped
  * where one cannot be opened, and macOS fsync does not guarantee media
  * flush without F_FULLFSYNC, which these primitives do not issue (§10.2).
- * Zeroization of retired ranges is hygiene, not destruction: software can
- * forget its reference to pad material; it cannot prove that the storage
- * medium forgot the bytes.
+ * Retired ranges stay physically present in secret.bin for the life of
+ * the store: retirement is the durable counters' doing alone, and this
+ * module never writes secret.bin after gen — an in-place overwrite of a
+ * live file has no sector-write atomicity promise here, so a crash mid-
+ * write could tear the sector at the retired/live boundary and corrupt
+ * LIVE material next to it (§1.2). Software can forget its reference to
+ * pad material; it cannot prove that the storage medium forgot the
+ * bytes. Destruction and its limits belong to Phase 6.
  * ========================================================================= */
 
 import {
@@ -903,64 +909,11 @@ export function persistAuthFail(dir: string, head: HeadV2, sequence: number): He
 
 // SEND S2 / OPEN O5 / operator actions: atomically rewrite the advanced
 // header, THEN append the journal line, each durable. Only after this
-// returns may the caller zeroize retired ranges or emit anything — a crash
-// between the two halves leaves the header ahead of the journal, which
-// load accepts as the later truth (§12.1).
+// returns may the caller emit anything — a crash between the two halves
+// leaves the header ahead of the journal, which load accepts as the later
+// truth (§12.1). secret.bin is deliberately untouched: the newly retired
+// ranges stay physically present, retired by these counters alone (§1.2).
 export function commitAdvance(dir: string, newHead: HeadV2, line: JournalRecord): void {
   writeFileDurably(dir, HEAD_FILE, JSON.stringify(newHead));
   appendLineDurably(dir, JOURNAL_FILE, JSON.stringify(line));
-}
-
-// Overwrite newly retired secret.bin byte ranges with zeros and fsync,
-// strictly AFTER the counters retiring them are durable (§1.2). Best-effort
-// by design: a write failure past that point is a logged hygiene gap, never
-// a throw — the counters, not the content, decide liveness. Bad ranges are
-// programmer errors and do throw, before any write is attempted. What the
-// step is worth is stated in the module header: forgetting a reference is
-// not proving the medium forgot the bytes.
-export function zeroizeRetired(dir: string, head: HeadV2, ranges: { offset: number; length: number }[]): void {
-  const total = secretLength(head);
-  for (const range of ranges) {
-    if (!isSafeCount(range.offset) || !isSafeCount(range.length) || range.offset + range.length > total) {
-      throw new Error(
-        `zeroizeRetired out of range: [${range.offset}, ${range.offset + range.length}) with body length ${total}`
-      );
-    }
-  }
-  const note = (error: unknown): void => {
-    process.stderr.write(
-      `truepad2: zeroize of retired ${SECRET_FILE} range(s) failed (${(error as Error).message}); the counters ` +
-        `are durable, so the material is retired regardless — a hygiene gap, not a refusal.\n`
-    );
-  };
-  let fd: number;
-  try {
-    fd = openSync(join(dir, SECRET_FILE), "r+");
-  } catch (error) {
-    note(error);
-    return;
-  }
-  try {
-    const chunk = Buffer.alloc(65536);
-    for (const range of ranges) {
-      let done = 0;
-      while (done < range.length) {
-        const step = Math.min(chunk.length, range.length - done);
-        const written = writeSync(fd, chunk, 0, step, range.offset + done);
-        if (written <= 0) {
-          throw new Error(`short write: ${done} of ${range.length} bytes at offset ${range.offset}`);
-        }
-        done += written;
-      }
-    }
-    fsyncSync(fd);
-  } catch (error) {
-    note(error);
-  } finally {
-    try {
-      closeSync(fd);
-    } catch (error) {
-      note(error);
-    }
-  }
 }

@@ -27,10 +27,10 @@
  *
  * All 2^128 key values are legal, including zero — the §5 bound accounts
  * for every key, so there is no rejection step and no conditioning of any
- * kind between pad material and key. The flip side is documented in §9.4:
- * POLYVAL under an all-zero key hashes everything to zero, which is why a
- * mismatched per-file restore over zeroized auth records is fatal to the
- * bound, and why that stands as a named operator assumption.
+ * kind between pad material and key. POLYVAL under an all-zero key hashes
+ * everything to zero; that is a fact about the family the bound already
+ * prices, not a state this format manufactures (retirement never writes
+ * secret.bin — §1.2), and §9.4 documents the restore hazards that remain.
  * ========================================================================= */
 
 import type { PadDirection } from "./pad.ts";

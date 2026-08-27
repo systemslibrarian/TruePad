@@ -51,7 +51,6 @@ import {
   readAuthRecord,
   readEncryption,
   reserveAttempt,
-  zeroizeRetired,
   type HeadV2,
   type LoadedStore2,
   type SourceDeclaration
@@ -384,16 +383,14 @@ export function gen(args: Args2): void {
   }));
 
   const combined = combineSources(buffers, required);
-  // Tripwire, not a uniformity check: an all-zero combination means the
-  // declared sources cancelled each other exactly (identical content under
-  // different names), which the identity check above cannot see. Uniform
-  // material is all-zero with probability 2^-8L — never in practice.
-  if (combined.every((byte) => byte === 0)) {
-    throw new Error(
-      "the combined source material is all zeros: the declared sources cancelled each other (identical content " +
-        "under different names?). One file is one source. Nothing was written."
-    );
-  }
+  // The combined bytes are NEVER inspected or rejected by value. If at
+  // least one declared source is uniform and independent of the others,
+  // the XOR is exactly uniform over the full space — and every value,
+  // including all-zeros, is a legitimate draw. Rejecting any value would
+  // condition the accepted distribution and quietly break the exact
+  // uniformity this tool claims. Identity of the FILES (dedup above) is
+  // checkable; identity of their CONTENT is the operator's declaration,
+  // like every other provenance fact here.
   const slices = partition(combined, capacity, capacityRecords);
   combined.fill(0); // in-memory hygiene only; no erasure claim (§1.2 register)
   for (const buffer of buffers) {
@@ -565,7 +562,12 @@ export function burn(args: Args2): void {
       tag
     };
 
-    // S2 — durable commit of BOTH namespaces, then hygiene.
+    // S2 — durable commit of BOTH namespaces. secret.bin is not touched:
+    // the consumed window and auth record stay physically present, retired
+    // by these counters alone. Overwriting them in place was rejected — an
+    // in-place write to a live secret.bin can tear the sector at the
+    // retired/live boundary on crash and corrupt LIVE material beside it
+    // (§1.2); present is not live, and the counters never move backwards.
     const newHead: HeadV2 = {
       ...head,
       encryption: { ...head.encryption, nextOffset: startOffset + c },
@@ -580,10 +582,6 @@ export function burn(args: Args2): void {
       nextSequence: sequence + 1,
       at: new Date().toISOString()
     });
-    zeroizeRetired(halfDir, newHead, [
-      { offset: startOffset, length: c },
-      { offset: head.encryption.capacity + AUTH_RECORD_BYTES * sequence, length: AUTH_RECORD_BYTES }
-    ]);
 
     // S3 — only now does the envelope exist outside this process.
     out(encodeEnvelope2(envelope));
@@ -633,7 +631,8 @@ export function open(args: Args2): void {
       throw new Refused2(
         "sequence-retired",
         `sequence ${sequence} is below this store's auth high-water ${effective.nextSequence}: a replayed, late, ` +
-          "or already-opened record. Its authentication material is gone from this copy. Nothing was burned."
+          "or already-opened record. Its authentication material is retired in this copy — still physically " +
+          "present (FORMAT-V2.md §1.2), never again usable. Nothing was burned."
       );
     }
     if (sequence >= head.authentication.capacityRecords) {
@@ -761,10 +760,8 @@ export function open(args: Args2): void {
       nextSequence: sequence + 1,
       at: new Date().toISOString()
     });
-    zeroizeRetired(halfDir, newHead, [
-      { offset: oldOffset, length: startOffset + c - oldOffset },
-      { offset: head.encryption.capacity + AUTH_RECORD_BYTES * oldSequence, length: AUTH_RECORD_BYTES * (sequence - oldSequence + 1) }
-    ]);
+    // The retired ranges — used and skipped alike — stay physically present
+    // in secret.bin; the durable counters above are what retire them (§1.2).
 
     // O6 — only now is the plaintext released, byte-exact.
     if (skippedBytes > 0 || skippedRecords > 0) {
@@ -947,13 +944,9 @@ export function retire(args: Args2): void {
       reason,
       at: new Date().toISOString()
     });
-    zeroizeRetired(halfDir, newHead, [
-      { offset: effective.nextOffset, length: newNextOffset - effective.nextOffset },
-      {
-        offset: head.encryption.capacity + AUTH_RECORD_BYTES * effective.nextSequence,
-        length: AUTH_RECORD_BYTES * (newNextSequence - effective.nextSequence)
-      }
-    ]);
+    // Retired material stays physically present in secret.bin; the durable
+    // counters above are the retirement (§1.2). "Destroyed" below is the
+    // channel's meaning — never usable again — not physical erasure.
     err(
       `${direction}: retired auth sequences [${effective.nextSequence}, ${newNextSequence}) and encryption ` +
         `[${effective.nextOffset}, ${newNextOffset}) — destroyed unused, never spent. Reason: ${reason}. ` +
