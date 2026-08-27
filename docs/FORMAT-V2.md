@@ -1277,8 +1277,10 @@ refusal-register row for comparison.
 | `corrupt-head` / `corrupt-secret-body` / `corrupt-store` | structural | header/body/store fails its checks (§1, §12.4) | none |
 | `corrupt-journal` | structural | malformed journal line — torn last line vs mid-file, distinguished (§12.1) | none |
 | `half-pair` | structural | one direction store missing (§12.4) | none |
+| `no-store` | structural | the directory holds no pair at all — v1's `no-pad` analogue; a directory with orphan `secret.bin`/`journal.log` but no header is `corrupt-store` instead (§12.4) | none |
 | `regressed-below-mark` | structural | header high-waters behind journal (§12.1) | none |
 | `source-too-short` | structural (gen) | a declared source supplies fewer than `L = 2·(E + 32·N)` bytes (§7) | none |
+| `ceremony-incomplete` | structural (ceremony) | a Phase-3 ceremony precondition unmet — missing operator assertion, fewer than two sources, provisioned media (added with Phase 3; see `docs/CEREMONY.md`) | none |
 | `sequence-retired` | window | `s < nextSequence` (§8.1) | none |
 | `sequence-malformed` | window | `s ≥ capacityRecords` (§8.1) | none |
 | `sequence-out-of-window` | window | beyond `maxAuthLookahead` (§8.2) | none |

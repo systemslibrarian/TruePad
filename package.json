@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "description": "TruePad — a true one-time pad exhibit, the honest sibling of DeckBook",
   "bin": {
-    "truepad-pad": "bin/truepad-pad.mjs"
+    "truepad-pad": "bin/truepad-pad.mjs",
+    "truepad2": "bin/truepad2.mjs"
   },
   "engines": {
     "node": ">=22.18.0"
@@ -15,7 +16,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "cli": "node bin/truepad-pad.mjs"
+    "cli": "node bin/truepad-pad.mjs",
+    "cli2": "node bin/truepad2.mjs"
   },
   "repository": {
     "type": "git",
