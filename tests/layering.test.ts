@@ -17,7 +17,10 @@ import { describe, expect, it } from "vitest";
  * ========================================================================= */
 
 const SRC = resolve(__dirname, "..", "src");
-const LAYERS = ["core", "exhibit", "cli"] as const;
+// src/browser is the Browser Edition (the OPFS-worker product). Like exhibit,
+// it may import core; it may NOT import cli (node-only) or exhibit, and it
+// runs in the browser/worker so it uses no node: builtins.
+const LAYERS = ["core", "exhibit", "cli", "browser"] as const;
 type Layer = (typeof LAYERS)[number];
 
 // Every static or dynamic import specifier in a TS source file:
@@ -103,6 +106,13 @@ describe("layering: import direction is one-way into src/core", () => {
     expect(describeViolations(bad)).toBe("");
     // And the scanner really sees the cli layer (it did not exist when this test was written).
     expect(importsOf("cli").some((i) => i.target === "core")).toBe(true);
+  });
+
+  it("src/browser (Browser Edition) imports only core — never cli, exhibit, or node: builtins", () => {
+    const bad = importsOf("browser").filter(
+      (i) => i.target === "cli" || i.target === "exhibit" || i.target === "node"
+    );
+    expect(describeViolations(bad)).toBe("");
   });
 
   it("no layer imports from outside src/", () => {
