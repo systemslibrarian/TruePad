@@ -57,6 +57,18 @@ describe("README v2 section: the load-bearing sentences stay", () => {
     [
       "There is no conversion, in either direction, ever — no `--legacy`, no `--no-auth`, no `--force`",
       "§9.2: refusals, not bridges"
+    ],
+    [
+      "the channel observes record count and timing but never message length",
+      "§16: the length-hiding property of a fixed-record store"
+    ],
+    [
+      "its per-attempt forgery bound is exactly `(4 + F/16) · 2^-128`",
+      "§16 / N20: the fixed-store ε, stated as the number, not stronger"
+    ],
+    [
+      "a message may hold at most `F − 4` bytes",
+      "§16.1: the fixed-record plaintext capacity, and its pad-spend price"
     ]
   ];
 

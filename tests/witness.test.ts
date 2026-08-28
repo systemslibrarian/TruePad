@@ -214,6 +214,27 @@ describe("rollback witness end to end", { timeout: 120_000 }, () => {
     expect(run("burn", a, "--as", "A", "three").code).toBe(0);
   });
 
+  it("a present-but-empty witness file is the fresh-witness bootstrap, not inconsistent", () => {
+    // The ceremony tells the operator to provision an EMPTY witness file; a
+    // literal `touch` (0 bytes) — and a whitespace-only file — must accept a
+    // fresh pair and record the first commit, not fail witness-inconsistent.
+    const a = join(dir, "a");
+    const wa = join(dir, "wa.json");
+    expect(genWitnessed(a, 64, 8, wa).code).toBe(0);
+    writeFileSync(wa, ""); // 0-byte, as `touch` leaves it
+    const first = run("burn", a, "--as", "A", "hello");
+    expect(first.code).toBe(0);
+    // The witness now carries this pair's first entry.
+    expect(Object.keys(readWitness(wa).witness)).toHaveLength(1);
+
+    // Whitespace-only is treated the same way.
+    const a2 = join(dir, "a2");
+    const wa2 = join(dir, "wa2.json");
+    expect(genWitnessed(a2, 64, 8, wa2).code).toBe(0);
+    writeFileSync(wa2, "  \n");
+    expect(run("burn", a2, "--as", "A", "hello").code).toBe(0);
+  });
+
   it("a malformed or mis-shaped witness file is refused witness-inconsistent", () => {
     const a = join(dir, "a");
     const wa = join(dir, "wa.json");
@@ -231,7 +252,7 @@ describe("rollback witness end to end", { timeout: 120_000 }, () => {
     expect(misshaped.stderr).toContain("refused: witness-inconsistent");
   });
 
-  it("a witness that cannot be advanced loses the record (exit 1, no output, store advanced), then re-aligns", () => {
+  it("a witness whose medium is unwritable refuses FREE at preflight (no record lost), and re-aligns when writable", () => {
     if (asRoot) {
       return; // root ignores the directory write bit; the denial cannot be staged
     }
@@ -244,28 +265,32 @@ describe("rollback witness end to end", { timeout: 120_000 }, () => {
     const pairId = JSON.parse(gen.stdout).pairId as string;
     const key = `${pairId}/A->B`;
     emptyWitness(wa);
+    // Advance once so the witness carries an entry, then make its medium
+    // read-only: the file still READS, but the atomic-replace advance needs a
+    // writable directory. The §15.3 writability probe must catch this at
+    // preflight — a free refusal, NOT a per-operation record loss.
+    expect(run("burn", a, "--as", "A", "zero").code).toBe(0);
 
-    // Read passes (the empty file is readable); the atomic-replace WRITE cannot
-    // create its temp file in a read/execute-only directory.
     chmodSync(wdir, 0o500);
+    const before = JSON.parse(run("status", a).stdout)["A->B"].authentication.nextSequence;
     const burn1 = run("burn", a, "--as", "A", "one");
+    const burn2 = run("burn", a, "--as", "A", "two");
     chmodSync(wdir, 0o700); // restore before asserting, so cleanup always works
 
-    expect(burn1.code).toBe(1);
-    expect(burn1.stdout).toBe("");
-    expect(burn1.stderr).toContain("already retired and is LOST");
-    expect(burn1.stderr).toContain("withheld");
+    // Both refuse free (witness-unreachable), nothing consumed — the store's
+    // high-water did not move, so no record was lost per operation.
+    for (const burn of [burn1, burn2]) {
+      expect(burn.code).toBe(2);
+      expect(burn.stdout).toBe("");
+      expect(burn.stderr).toContain("refused: witness-unreachable");
+    }
+    const after = JSON.parse(run("status", a).stdout)["A->B"].authentication.nextSequence;
+    expect(after).toBe(before);
 
-    // The store's high-waters advanced (the commit ran before the witness
-    // write): the material is spent and lost.
-    const status1 = JSON.parse(run("status", a).stdout);
-    expect(status1["A->B"].authentication.nextSequence).toBe(1);
-
-    // With the directory writable again, the next burn succeeds and re-aligns
-    // the witness to the store's current high-water.
-    const burn2 = run("burn", a, "--as", "A", "two");
-    expect(burn2.code).toBe(0);
-    expect(readWitness(wa).witness[key].authenticationNextSequence).toBe(2);
+    // With the directory writable again, sending resumes and the witness advances.
+    const burn3 = run("burn", a, "--as", "A", "three");
+    expect(burn3.code).toBe(0);
+    expect(readWitness(wa).witness[key].authenticationNextSequence).toBe(before + 1);
   });
 
   it("gen --witness-class platform-monotonic is refused witness-unsupported, nothing written", () => {
@@ -301,6 +326,42 @@ describe("rollback witness end to end", { timeout: 120_000 }, () => {
     );
     expect(relative.code).toBe(1);
     expect(relative.stderr).toContain("must be an absolute path");
+  });
+
+  it("gen --witness-class remote-monotonic is also refused witness-unsupported (N18, the other unimplemented class)", () => {
+    const a = join(dir, "a");
+    const gen = run(
+      "gen", a,
+      "--source", sourceFile(2 * (16 + 32 * 1)),
+      "--encryption-bytes", "16", "--auth-records", "1",
+      "--witness-class", "remote-monotonic", "--witness-path", "/tmp/does-not-matter.json"
+    );
+    expect(gen.code).toBe(2);
+    expect(gen.stderr).toContain("refused: witness-unsupported");
+    expect(existsSync(a)).toBe(false);
+  });
+
+  it("a store whose header already names platform/remote monotonic is refused witness-unsupported at LOAD (N18, the at-load cell)", () => {
+    // Header-injection: a store whose rollback.witnessClass was set to an
+    // unimplemented class must be refused by burn/open/status, not silently
+    // treated as none. loadStore2 accepts the shape; the verb preflight refuses.
+    for (const cls of ["platform-monotonic", "remote-monotonic"] as const) {
+      const a = join(dir, `load-${cls}`);
+      const source = sourceFile(2 * (16 + 32 * 2));
+      expect(run("gen", a, "--source", source, "--encryption-bytes", "16", "--auth-records", "2").code).toBe(0);
+      for (const half of ["a-to-b", "b-to-a"]) {
+        const hp = join(a, half, "head.json");
+        const head = JSON.parse(readFileSync(hp, "utf8"));
+        head.rollback = { witnessClass: cls, config: {} };
+        writeFileSync(hp, JSON.stringify(head));
+      }
+      const journalBefore = readFileSync(join(a, "a-to-b", "journal.log"), "utf8");
+      const burn = run("burn", a, "--as", "A", "hi");
+      expect(burn.code).toBe(2);
+      expect(burn.stderr).toContain("refused: witness-unsupported");
+      // Free refusal: no durable write.
+      expect(readFileSync(join(a, "a-to-b", "journal.log"), "utf8")).toBe(journalBefore);
+    }
   });
 
   it("status reports the witness block per direction and refuses nothing when the witness is gone", () => {

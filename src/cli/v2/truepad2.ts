@@ -74,7 +74,7 @@ import {
   type Rollback,
   type SourceDeclaration
 } from "./store2.ts";
-import { advanceWitness, readWitnessCounters, type WitnessCounters } from "./witness.ts";
+import { advanceWitness, readWitnessCounters, witnessWritable, type WitnessCounters } from "./witness.ts";
 import { CEREMONY_ASSERTIONS, ceremonyCreate, ceremonyVerify } from "./ceremony.ts";
 
 export const BANNER2 =
@@ -376,6 +376,14 @@ function witnessPreflight(store: LoadedStore2): void {
   if (!result.ok) {
     throw new Refused2(result.reason, result.message);
   }
+  // The advance (post-commit) writes the witness; probe now so an unwritable
+  // witness refuses free here instead of losing a record per operation
+  // (§15.3). This keeps the stated bound — at most the one in-flight record —
+  // honest.
+  const writable = witnessWritable(path);
+  if (!writable.ok) {
+    throw new Refused2(writable.reason, writable.message);
+  }
   if (result.counters !== null) {
     const { encryptionNextOffset, authenticationNextSequence } = result.counters;
     if (
@@ -417,8 +425,8 @@ function witnessAdvance(store: LoadedStore2, counters: WitnessCounters): void {
       `the durable state commit succeeded but the rollback witness at ${rollback.config.path} could not be ` +
         `advanced (${(error as Error).message}). This record's pad material is already retired and is LOST; the ` +
         "output was withheld and never released (FORMAT-V2.md §15.3, the same loss row as a crash between commit " +
-        "and emit). Every later operation will refuse free at preflight (witness-unreachable) until the witness is " +
-        "reachable again."
+        "and emit) — this is the race between the preflight writability probe and the advance. Every later " +
+        "operation refuses free at preflight (witness-unreachable) until the witness is reachable and writable again."
     );
   }
 }

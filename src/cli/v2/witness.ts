@@ -34,7 +34,7 @@
  * path lives in a domain the pair's backup does not cover.
  * ========================================================================= */
 
-import { closeSync, fsyncSync, openSync, readFileSync, renameSync, writeSync } from "node:fs";
+import { accessSync, closeSync, constants, fsyncSync, openSync, readFileSync, renameSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import type { PadDirection } from "../../core/pad.ts";
 
@@ -143,6 +143,14 @@ function writeWitnessDurably(path: string, data: string): void {
 // violates its own shape is `witness-inconsistent`. A file with no entry for
 // this (pair, direction) is a fresh witness — null counters, which the caller
 // treats as pass (protection begins at the first witnessed commit, §15.2).
+//
+// Bootstrap: the operator provisions the witness file (an absent file fails
+// closed as unreachable — a configured witness that is not there is an
+// outage to surface, not a fresh start). A present-but-empty file — the
+// natural `touch`ed "empty witness file" the ceremony asks for — is a fresh
+// witness with no entries, exactly like `{"witness":{}}`. That an emptied
+// witness reads as fresh is not a weakness the spec hides: §15.2 states a
+// separate state file that is itself restored or emptied "knows nothing".
 export function readWitnessCounters(path: string, pairId: string, direction: PadDirection): WitnessReadResult {
   let text: string;
   try {
@@ -154,9 +162,14 @@ export function readWitnessCounters(path: string, pairId: string, direction: Pad
       message:
         `the configured rollback witness at ${path} cannot be read (${(error as Error).message}). A witness that ` +
         "cannot be reached fails closed (§15.3): witness outage is an availability failure, never a silent " +
-        "downgrade. Provision the witness file (an empty one accepts a fresh pair) or restore its medium. " +
+        "downgrade. Provision the witness file (an empty file accepts a fresh pair) or restore its medium. " +
         "Nothing was burned."
     };
+  }
+  // A present-but-empty (or whitespace-only) file is the fresh-witness
+  // bootstrap, not malformed JSON.
+  if (text.trim() === "") {
+    return { ok: true, counters: null };
   }
   let parsed: unknown;
   try {
@@ -184,6 +197,35 @@ export function readWitnessCounters(path: string, pairId: string, direction: Pad
   return { ok: true, counters: entry ?? null };
 }
 
+// Preflight writability probe. The advance write (§15.3) atomic-replaces
+// through a temp file in the witness DIRECTORY, so a witness whose FILE reads
+// but whose DIRECTORY cannot be written (a read-only mount, a write-protected
+// card, ENOSPC) would pass a read-only preflight and then fail at advance —
+// AFTER the store has durably committed, losing that record on EVERY
+// operation, not once. Probing the directory's write permission here turns
+// that into a free preflight refusal (witness-unreachable), so the loss is
+// bounded to at most the one record already in flight when the medium went
+// unwritable — exactly what §15.3 claims. It is a probe, not a guarantee:
+// a race or a quota hit between probe and write can still lose one record,
+// which is the stated bound.
+export function witnessWritable(path: string): { ok: true } | { ok: false; reason: "witness-unreachable"; message: string } {
+  try {
+    accessSync(dirname(path), constants.W_OK);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "witness-unreachable",
+      message:
+        `the rollback witness at ${path} is readable but its directory is not writable ` +
+        `(${(error as Error).message}). The witness is advanced by an atomic replace in that directory, so an ` +
+        "unwritable medium fails closed at preflight (§15.3) rather than losing a record per operation: witness " +
+        "outage is an availability failure, never a silent downgrade. Restore write access to the witness medium. " +
+        "Nothing was burned."
+    };
+  }
+}
+
 // ADVANCE write (§15.3). Read-modify-write the entry for this (pair,
 // direction) to the new high-waters, MONOTONE: the elementwise maximum, so an
 // out-of-order or replayed advance never lowers the recorded position.
@@ -198,7 +240,9 @@ export function advanceWitness(path: string, pairId: string, direction: PadDirec
   } catch {
     existing = null; // absent: a fresh witness, created below
   }
-  if (existing === null) {
+  if (existing === null || existing.trim() === "") {
+    // Absent, or the present-but-empty bootstrap file the operator provisions
+    // (see readWitnessCounters): either way, start a fresh witness to build on.
     file = { formatVersion: 2, witness: {} };
   } else {
     const validated = validateWitnessFile(JSON.parse(existing));

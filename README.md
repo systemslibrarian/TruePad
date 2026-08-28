@@ -254,12 +254,14 @@ store, whole-directory or the both-state-files partial restore that the
 load-time mark check cannot see. The path travels verbatim in the header,
 and each peer maintains its own witness file at that path on its host; an
 empty file accepts a fresh pair, and protection begins at the first
-witnessed commit. It fails closed: a witness that cannot be read
-(`witness-unreachable`) or that violates its own shape
-(`witness-inconsistent`) refuses burn, open, and retire rather than
-downgrading silently, and a witness write that fails after the durable
-commit withholds that record (its material is lost, and every later
-operation refuses free until the witness returns). The strength is only
+witnessed commit. It fails closed: a witness that cannot be read or whose
+medium is not writable (`witness-unreachable`), or that violates its own
+shape (`witness-inconsistent`), refuses burn, open, and retire rather than
+downgrading silently. The preflight probes writability, so a read-only
+witness medium refuses free before the store commits; only a write that
+fails in the race between that probe and the advance withholds one
+in-flight record (its material lost, never reused), after which every
+later operation refuses free until the witness is writable again. The strength is only
 what the mechanism gives — a witness is only as monotonic as the mechanism
 enforcing its non-regression: a separate state file is an independent
 failure domain, not intrinsically monotonic, and an emptied or restored

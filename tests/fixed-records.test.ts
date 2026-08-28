@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildFrame, frameCapacity, parseFrame } from "../src/core/frame2";
+import { bytesToHex, hexToBytes } from "../src/core/hex";
+import { wcTag } from "../src/core/wc-one-time";
+import { loadStore2, readAuthRecord, readEncryption } from "../src/cli/v2/store2";
+import { encodeEnvelope2 } from "../src/core/envelope2";
 
 /* ============================================================================
  * truepad2 fixed-size records end to end (FORMAT-V2.md §16; ledger N19–N20).
@@ -207,5 +211,62 @@ describe("fixed-size records end to end", { timeout: 120_000 }, () => {
     // The stated price: F encryption bytes spent regardless of message size.
     expect(status["A->B"].encryption.nextOffset).toBe(F);
     expect(status["A->B"].record).toEqual({ kind: "fixed", bytes: F });
+  });
+
+  it("a valid-tag frame whose length prefix exceeds F−4 is record-frame-invalid (exit 1) AFTER commit — material retired, nothing released (§16.2)", () => {
+    // The one §16.2 path the unit test cannot reach: a frame that verifies but
+    // decodes to an over-capacity length. Forge it with the store's OWN key,
+    // mask, and pad — a conforming sender could never emit it, but the receiver
+    // must fail closed (exit 1), having already retired the material.
+    const a = join(dir, "a");
+    const b = join(dir, "b");
+    expect(genStore(a, 256, 4, F).code).toBe(0);
+    cpSync(a, b, { recursive: true });
+
+    const halfDir = join(b, "a-to-b");
+    const loaded = loadStore2(halfDir);
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    const head = loaded.head;
+    const sequence = 0;
+    const startOffset = 0;
+
+    // A frame of exactly F bytes whose u32-LE length prefix is F−3 (> F−4).
+    const badFrame = new Uint8Array(F);
+    const badLen = frameCapacity(F) + 1; // F - 3
+    badFrame[0] = badLen & 0xff;
+    badFrame[1] = (badLen >> 8) & 0xff;
+    expect(parseFrame(badFrame)).toBeNull(); // sanity: this is the invalid case
+
+    const pad = readEncryption(halfDir, head, startOffset, F);
+    const ciphertext = new Uint8Array(F);
+    for (let i = 0; i < F; i += 1) ciphertext[i] = badFrame[i] ^ pad[i];
+
+    const { key, mask } = readAuthRecord(halfDir, head, sequence);
+    const tag = wcTag(key, mask, {
+      pairId: hexToBytes(head.pairId)!,
+      direction: "A->B",
+      sequence,
+      startOffset,
+      ciphertext
+    });
+    const envelope = encodeEnvelope2({
+      pairId: head.pairId,
+      direction: "A->B",
+      sequence,
+      startOffset,
+      ciphertextLength: F,
+      ciphertext,
+      tag
+    });
+
+    const before = JSON.parse(run("status", b).stdout)["A->B"].authentication.nextSequence;
+    const opened = run("open", b, "--as", "B", envelope);
+    expect(opened.code).toBe(1); // an error, not a typed refusal
+    expect(opened.stderr).toContain("record-frame-invalid");
+    expect(opened.stdout).toBe(""); // nothing released
+    // The tag verified, so O5 committed: the material is retired and lost.
+    const after = JSON.parse(run("status", b).stdout)["A->B"].authentication.nextSequence;
+    expect(after).toBe(before + 1);
   });
 });

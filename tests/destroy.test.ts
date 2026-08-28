@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -217,5 +217,29 @@ describe("truepad2 destroy (FORMAT-V2.md §17)", { timeout: 120_000 }, () => {
     // And B's copy destroys on its own confirmation (same pairId, its own files).
     expect(run("destroy", b, "--confirm", pairId).code).toBe(0);
     expect(existsSync(join(b, "b-to-a"))).toBe(false);
+  });
+
+  it("§17.2 order: the tombstone is durable BEFORE the files are unlinked (a mid-teardown failure still records the intent)", () => {
+    const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
+    if (asRoot) {
+      return; // root ignores the directory write bit; the unlink cannot be forced to fail
+    }
+    const a = join(dir, "a");
+    const gen = genPair(a, 64, 8);
+    const pairId = JSON.parse(gen.stdout).pairId as string;
+    // Make one half undeletable: a read/execute-only half directory fails the
+    // unlink of its files. Because the tombstone (step 2) is durable before any
+    // unlink (step 4), the recorded intent survives even though the teardown
+    // cannot complete — pinning the normative ordering against a reorder.
+    chmodSync(join(a, "a-to-b"), 0o500);
+    const destroyed = run("destroy", a, "--confirm", pairId);
+    chmodSync(join(a, "a-to-b"), 0o700); // restore so cleanup works
+    // The intent is recorded regardless of the unlink outcome.
+    expect(existsSync(join(a, "destroyed.json"))).toBe(true);
+    const tombstone = JSON.parse(readFileSync(join(a, "destroyed.json"), "utf8"));
+    expect(tombstone.pairId).toBe(pairId);
+    expect(tombstone.limitation).toContain("cannot prove that flash forgot the bytes");
+    // The other half was still torn down.
+    expect(existsSync(join(a, "b-to-a"))).toBe(false);
   });
 });

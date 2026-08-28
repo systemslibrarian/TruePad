@@ -1385,13 +1385,13 @@ an implementation exists; the mathematics in N6–N7 holds now.
 | N10 | Accepting sequence `s` durably sets `nextSequence = s+1` and `nextOffset = startOffset + C` before any plaintext is released. | §12.3 |
 | N11 | `nextOffset`, `nextSequence`, per-sequence attempt counts, and `failureCount` never decrease across any sequence of v2 operations, crashes, and reloads — absent external replacement of the store's files (§9.4) — given §10's platform scope. | §12.1, §13 |
 | N12 | A store generated per §7 required exactly `2·(E + 32·N)` bytes from every declared source, and gen refused (`source-too-short`) any source supplying less. | §7 |
-| N13 | Required durability ordering at gen: `secret.bin` durable before `head.json` and the `init` line exist (§12.4). After gen, no v2 operation writes `secret.bin` (§1.2). | §1.2, §12.4 |
+| N13 | Required durability ordering at gen: `secret.bin` durable before `head.json` and the `init` line exist (§12.4). After gen, no v2 operation writes `secret.bin` except `destroy`'s terminal teardown (§17.2), which overwrites then unlinks it — `burn`/`open`/`retire` never rewrite it (§1.2). | §1.2, §12.4, §17.2 |
 | N14 | `sourceDeclarations` entries in `head.json` contain no hash, checksum, fingerprint, or any other value derived from pad bytes. | §1.1 |
 | N15 | With a witness configured, `burn`/`open`/`retire` refuse `witness-unreachable` or `witness-inconsistent` before anything is consumed when the witness cannot be read or fails its shape. | §15.3 |
 | N16 | Store high-waters strictly below the witness record refuse `witness-regressed` before anything is consumed — a restored store cannot move. | §15.3, §9.4 |
 | N17 | A witness file contains only pairId, direction, and the two counters — never a pad byte, key, mask, plaintext, or ciphertext. | §15.1 |
 | N18 | `witnessClass` platform-monotonic or remote-monotonic is refused `witness-unsupported` at gen and at load — never silently downgraded to a weaker class. | §15.2 |
-| N19 | A fixed-record store refuses `ciphertextLength ≠ F` structurally (`record-size-mismatch`), costing nothing durable. | §16.2 |
+| N19 | A fixed-record store refuses a valid-range `ciphertextLength ≠ F` structurally (`record-size-mismatch`), costing nothing durable; a `ciphertextLength > maxCiphertextBytes` is still refused first by §4's oversize check (`oversize-ciphertext`), also free. | §16.2 |
 | N20 | For a fixed-record store, the per-attempt forgery bound is exactly `(4 + F/16) · 2^-128`. | §16 |
 | N21 | `destroy` refuses without the matching confirmation (`destroy-unconfirmed`) touching nothing; after it succeeds, `secret.bin`, `head.json`, and `journal.log` are gone, the tombstone records the intent, and no erasure of the medium is claimed. | §17 |
 
@@ -1510,21 +1510,30 @@ The witness participates in exactly the verbs that advance high-waters:
 but refuses nothing (it is read-only). Two touchpoints:
 
 - **PREFLIGHT**, before anything is consumed, with the free refusals of
-  §14.1: the witness cannot be read → `witness-unreachable`; it parses
-  but violates its own shape → `witness-inconsistent`; the store's
-  effective high-waters are strictly below the witness record's →
-  `witness-regressed`. All three FAIL CLOSED and consume nothing —
-  witness outage is an availability failure, never a silent downgrade.
-  The store being AHEAD of the witness is the benign crash signature
-  (§15.3's advance ordering below) and passes.
+  §14.1: the witness cannot be read, OR its directory is not writable
+  (the advance below writes there, so an unwritable witness is caught
+  now rather than after the store commits) → `witness-unreachable`; it
+  parses but violates its own shape → `witness-inconsistent`; the
+  store's effective high-waters are strictly below the witness record's →
+  `witness-regressed`. All FAIL CLOSED and consume nothing — witness
+  outage is an availability failure, never a silent downgrade. The store
+  being AHEAD of the witness is the benign crash signature (§15.3's
+  advance ordering below) and passes. A present-but-empty (or
+  whitespace-only) witness file is the fresh bootstrap — no entry yet,
+  passes — distinct from a non-empty shape-violating file, which is
+  `witness-inconsistent`.
 - **ADVANCE**, after the §12 durable commit and before the emit (between
   S2 and S3; between O5 and O6; after retire's commit): write the new
   high-waters to the witness durably. If the write fails, the material is
   already retired and the envelope or plaintext MUST NOT be released —
   the same loss row as a crash between commit and emit (§12: material,
-  never reuse). The availability price of a severed witness link is
-  therefore: at most the one in-flight record's material, then clean
-  free refusals at every subsequent preflight.
+  never reuse). Because the preflight probes writability, an unwritable
+  witness refuses free BEFORE the store commits, so the availability
+  price of a severed witness link is bounded to at most the one record
+  in flight when the medium first fails, then clean free refusals at
+  every subsequent preflight. Only a witness that fails to write in the
+  race between the preflight probe and the advance (a quota hit, a medium
+  yanked mid-operation) costs that one in-flight record.
 
 ### 15.4 What this closes, and what it does not
 
@@ -1582,7 +1591,9 @@ auth record regardless of message size.
   proceeds unchanged with `C = F`.
 - OPEN on a fixed store: an envelope whose `ciphertextLength ≠ F` is
   refused `record-size-mismatch` structurally — before the window
-  checks, costing nothing durable. §12.3 then proceeds unchanged; after
+  checks, costing nothing durable — except a `ciphertextLength >
+  maxCiphertextBytes`, which §4's oversize check (`oversize-ciphertext`)
+  refuses first, also free. §12.3 then proceeds unchanged; after
   the tag verifies and O5 commits, the frame is parsed and the
   `plaintextLength` prefix selects the released bytes.
 - A decrypted frame whose length field exceeds `F − 4` cannot come from
