@@ -126,10 +126,10 @@ describe("zero key: POLYVAL(0, M) = 0 for every message", () => {
   // This documents a FACT, not a defense: every term of the polynomial is
   // multiplied by a power of the key, so K = 0 hashes everything to zero,
   // and an all-zero (K, R) verifies an all-zero tag on ANY message with
-  // probability 1. FORMAT-V2.md §9.4 is why this matters operationally: a
-  // mismatched per-file restore that rolls counters back over zeroized
-  // auth records voids the §5 bound outright. No code below defends
-  // against that — the spec names it as an operator assumption instead.
+  // probability 1. The §5 bound already prices the zero key like any
+  // other, and retirement never writes secret.bin (§1.2), so no store
+  // state manufactures zeroed records; FORMAT-V2.md §9.4 documents the
+  // restore hazards that do remain, as operator assumptions.
   it("returns zero for messages of several lengths and contents", () => {
     const zeroKey = new Uint8Array(16);
     const zeroHash = "00000000000000000000000000000000";

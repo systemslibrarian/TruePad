@@ -22,9 +22,13 @@
  * provisions TWO PEER MEDIA: each medium receives the WHOLE pair — both
  * direction stores and the manifest — never one direction per drive. Each
  * peer needs both halves: A burns a-to-b and opens b-to-a in A's copy, B
- * the reverse in B's. Then the workspace copy is removed, and the removal
- * is priced honestly: deletion, not proof of erasure — destruction claims
- * and their limits are Phase 6's register, not this file's.
+ * the reverse in B's. The two media must be two filesystem objects
+ * (requireDistinctMedia), and before the workspace copy is touched every
+ * load-bearing file on each medium is byte-compared against the workspace
+ * original (verifyMediumCopy) and both copies are re-loaded structurally.
+ * Only then is the workspace copy removed, and the removal is priced
+ * honestly: deletion, not proof of erasure — destruction claims and their
+ * limits are Phase 6's register, not this file's.
  *
  * verify is structural only: it loads both halves of one medium's copy via
  * loadStore2, cross-checks that they are halves of ONE pair, prints the
@@ -40,13 +44,15 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
+  statSync,
   writeSync
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { PadDirection } from "../../core/pad.ts";
 import { acquireLock, LOCK_FILE } from "../lock.ts";
-import { HEAD_FILE, loadStore2, type LoadedStore2 } from "./store2.ts";
+import { HEAD_FILE, JOURNAL_FILE, loadStore2, SECRET_FILE, type LoadedStore2 } from "./store2.ts";
 import { gen, Refused2, SUBDIR2, type Args2 } from "./truepad2.ts";
 
 /* ---- the operator assertions ----------------------------------------------
@@ -171,6 +177,148 @@ function copyTreeDurably(src: string, dst: string): void {
   }
 }
 
+// The load-bearing files of one pair copy, relative to the pair root: per
+// direction the header, the secret body, and the journal, plus the manifest.
+// This list is the provisioning contract — nothing else on a medium carries
+// state the tooling reads. Computed per call, not at module load: this
+// module and truepad2.ts import each other, and a module-level read of
+// SUBDIR2 would evaluate before truepad2's body has run.
+function pairFiles(): readonly string[] {
+  return [
+    ...(["A->B", "B->A"] as const).flatMap((direction) => [
+      join(SUBDIR2[direction], HEAD_FILE),
+      join(SUBDIR2[direction], SECRET_FILE),
+      join(SUBDIR2[direction], JOURNAL_FILE)
+    ]),
+    "manifest.json"
+  ];
+}
+
+// Byte-verification of one medium's copy against the workspace pair, run
+// BEFORE the workspace copy is removed. The structural re-load in
+// ceremonyCreate proves each copy LOADS; it cannot prove the copy EQUALS
+// the workspace bytes — a medium that flipped a bit inside a correct-length
+// secret.bin still loads cleanly, because content never decides liveness
+// (§1.2), and would burn garbage. So every load-bearing file is compared
+// byte-for-byte. The comparison's OUTPUT is value-independent by
+// construction: it passes, or it names the medium and the file that
+// differed — never a checksum, hash, fingerprint, offset, or byte, in any
+// message, log, or record, because a value derived from pad bytes lives
+// nowhere but secret.bin (§1.1, N14). What byte equality proves is the copy
+// AT THIS MOMENT; a later ceremony verify proves structure, not continued
+// bitwise identity with the ceremony image.
+// The recovery a provisioning failure leaves the operator, stated where the
+// failure is reported so the message never orders an action the tooling
+// cannot perform. There is no re-provision verb by design: the safe path is
+// to abandon the run, not to patch a suspect medium in place.
+export const RECOVERY_NOTE =
+  "Recovery: destroy or quarantine BOTH media's copies (a failed medium may hold a near-complete copy of the pad), " +
+  "then restart the ceremony from a clean workspace. Do NOT reuse the collected source files: gen is a deterministic " +
+  "XOR of the sources, so the same sources reproduce the same pad material — draw fresh source material for the retry " +
+  "(docs/CEREMONY.md, retirement & recovery).";
+
+export function verifyMediumCopy(workspacePair: string, mediumPair: string, mediumLabel: string): void {
+  for (const rel of pairFiles()) {
+    const mediumPath = join(mediumPair, rel);
+    if (!existsSync(mediumPath)) {
+      throw new Refused2(
+        "ceremony-incomplete",
+        `medium ${mediumLabel}: ${mediumPath} is missing after the copy. The workspace copy at ${workspacePair} was ` +
+          "NOT removed — it is still the good copy. " + RECOVERY_NOTE
+      );
+    }
+    // readFileSync's Buffers are compared and then wiped in place — for
+    // secret.bin these two allocations hold pad material, and a Buffer IS
+    // its allocation (a Buffer is a Uint8Array), so the fill(0) wipes the
+    // actual bytes, not a copy of them. In-memory hygiene only; no erasure
+    // claim. The wipe runs on the mismatch path too, before the throw.
+    const expected = readFileSync(join(workspacePair, rel));
+    const actual = readFileSync(mediumPath);
+    const equal = expected.equals(actual);
+    expected.fill(0);
+    actual.fill(0);
+    if (!equal) {
+      throw new Refused2(
+        "ceremony-incomplete",
+        `medium ${mediumLabel}: ${mediumPath} does not byte-match the workspace original. Only the medium and file ` +
+          "are named — no checksum, fingerprint, or content of either copy is printed (§1.1). The workspace copy at " +
+          `${workspacePair} was NOT removed — it is still the good copy. ` + RECOVERY_NOTE
+      );
+    }
+  }
+}
+
+// The two media must be two filesystem objects, not one object under two
+// names. Identity is checked per the platform: the resolved path strings,
+// the realpaths, and — when both directories exist — the (device, inode)
+// pair of the destinations, which catches what realpath can miss (one
+// directory reached through two mount points). What this establishes is
+// distinctness per the platform's identity checks, no more: two mount
+// points that pass can still be one physical flash device or controller
+// presenting twice, and no filesystem call can see that — the media's
+// physical distinctness stays operator knowledge (docs/CEREMONY.md §1
+// step 4), like the sources' physics.
+// Two paths are the same filesystem object when they resolve to the same
+// realpath OR the same device+inode. Only meaningful once both exist —
+// callers that need certainty check AFTER the directories are created,
+// since a dangling symlink or an unmounted alias resolves to nothing until
+// then.
+function sameFsObject(a: string, b: string): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (!existsSync(a) || !existsSync(b)) {
+    return false;
+  }
+  if (realpathSync(a) === realpathSync(b)) {
+    return true;
+  }
+  const sa = statSync(a);
+  const sb = statSync(b);
+  return sa.dev === sb.dev && sa.ino === sb.ino;
+}
+
+const ALIAS_LIMITS =
+  "This check establishes distinctness per the platform's identity checks (realpath, device+inode); it cannot " +
+  "prove two mount points are not the same physical device or controller — that stays the operator's knowledge.";
+
+// The two media must be distinct filesystem objects. Called once early (a
+// fast fail on obvious aliases) and AGAIN after both media directories
+// exist, because a dangling symlink or unmounted-alias destination cannot
+// be resolved until the copy has created it — and a one-object "two media"
+// would leave a single physical copy while the record claims two.
+function requireDistinctMedia(mediumA: string, mediumB: string, when: "before" | "after"): void {
+  if (sameFsObject(mediumA, mediumB)) {
+    throw new Refused2(
+      "ceremony-incomplete",
+      `--medium-a (${mediumA}) and --medium-b (${mediumB}) resolve to the same filesystem object; the ceremony ` +
+        "provisions two peer media, and one directory under two names is one medium holding one copy. " +
+        ALIAS_LIMITS +
+        (when === "after"
+          ? " The alias only became detectable once the copies created both paths; the workspace copy was NOT removed."
+          : "") +
+        " Nothing was generated and nothing was written."
+    );
+  }
+}
+
+// A medium may not be the workspace itself, nor contain or sit inside the
+// pair directory: those would leave a copy on the generating machine (a
+// medium == workspace) or copy the tree into itself. Path-based, so it
+// holds before anything exists.
+function requireMediumOutsideWorkspace(workspace: string, pairDir: string, medium: string, label: string): void {
+  const within = (parent: string, child: string): boolean =>
+    child === parent || child.startsWith(parent + sep);
+  if (medium === workspace || within(pairDir, medium) || within(medium, pairDir)) {
+    throw new Refused2(
+      "ceremony-incomplete",
+      `medium ${label} (${medium}) is the workspace or overlaps the generated pair at ${pairDir}; a medium must be ` +
+        "a separate destination, so that removing the workspace copy really leaves no copy on the generating " +
+        "machine. Nothing was generated and nothing was written."
+    );
+  }
+}
+
 /* ---- one medium's pair, loaded and cross-checked --------------------------- */
 
 type MediumPair = { "A->B": LoadedStore2; "B->A": LoadedStore2 };
@@ -281,9 +429,10 @@ export function ceremonyCreate(args: Args2): void {
   }
   const mediumA = resolve(mediumAArg);
   const mediumB = resolve(mediumBArg);
-  if (mediumA === mediumB) {
-    throw new Error("--medium-a and --medium-b name the same directory; the ceremony provisions two peer media");
-  }
+  const pairDir = join(workspace, "pair");
+  requireMediumOutsideWorkspace(workspace, pairDir, mediumA, "A");
+  requireMediumOutsideWorkspace(workspace, pairDir, mediumB, "B");
+  requireDistinctMedia(mediumA, mediumB, "before");
 
   // Every assertion is required. An assertion is a statement by the operator
   // — this tool cannot verify the network state, the mount table, the
@@ -312,7 +461,6 @@ export function ceremonyCreate(args: Args2): void {
     );
   }
 
-  const pairDir = join(workspace, "pair");
   if (existsSync(pairDir)) {
     throw new Error(`${pairDir} already exists; a ceremony starts from an empty workspace`);
   }
@@ -351,9 +499,31 @@ export function ceremonyCreate(args: Args2): void {
   err(`medium B: copying the full pair to ${mediumB}`);
   copyTreeDurably(pairDir, mediumB);
 
-  // Post-copy check, BEFORE the workspace copy is removed: both media must
-  // load as whole pairs. A medium that fails here is a provisioning failure,
-  // and destroying the only good copy over it would be absurd.
+  // Decisive identity re-check: both media directories now exist, so a
+  // dangling-symlink or unmounted alias that was invisible at the "before"
+  // check resolves and is caught here — before the workspace copy, the only
+  // other copy, is removed.
+  requireDistinctMedia(mediumA, mediumB, "after");
+
+  // Two post-copy checks, both BEFORE the workspace copy is removed, each
+  // catching what the other cannot. First, byte-verification: every
+  // load-bearing file on each medium must equal the workspace original —
+  // a copy that loads but differs would pass every structural check and
+  // burn garbage. On a mismatch the refusal names the medium and file, the
+  // workspace copy stays, and the operator inspects the medium.
+  for (const [label, medium] of [
+    ["A", mediumA],
+    ["B", mediumB]
+  ] as const) {
+    err(`medium ${label}: byte-verifying every load-bearing file against the workspace pair`);
+    verifyMediumCopy(pairDir, medium, label);
+  }
+
+  // Second, the structural re-load: both media must load as whole pairs
+  // through the same loader every later verb will use — an unreadable
+  // medium or a store the loader refuses is a different failure class from
+  // a byte mismatch. A medium that fails either check is a provisioning
+  // failure, and destroying the only good copy over it would be absurd.
   let headSample: LoadedStore2 | undefined;
   for (const [label, medium] of [
     ["A", mediumA],
@@ -367,7 +537,7 @@ export function ceremonyCreate(args: Args2): void {
         throw new Refused2(
           error.type,
           `medium ${label} (${medium}) failed its post-copy check — ${error.message} The workspace copy at ` +
-            `${pairDir} was NOT removed; fix the medium and re-provision before anything else.`
+            `${pairDir} was NOT removed — it is still the good copy. ` + RECOVERY_NOTE
         );
       }
       throw error;
@@ -388,6 +558,10 @@ export function ceremonyCreate(args: Args2): void {
       `workspace: ${pairDir} removed. Removal is deletion, not proof of erasure — destruction claims are Phase 6's ` +
         "(FORMAT-V2.md §14.2 L6); the tmpfs assertion is what keeps these bytes off persistent storage, and that " +
         "assertion is the operator's."
+    );
+    err(
+      `note: the manifest path on the stdout line was the workspace copy just removed; each medium now holds its own ` +
+        "manifest.json (see medium A/B in the record below)."
     );
   } else {
     err(`workspace: WARNING — ${pairDir} could not be removed. Remove it by hand before the machine leaves the ceremony.`);
@@ -415,8 +589,8 @@ export function ceremonyCreate(args: Args2): void {
   for (const { flag, statement } of CEREMONY_ASSERTIONS) {
     err(`  --${flag}: ${statement}`);
   }
-  err(`medium A:  ${mediumA} (full pair: a-to-b/, b-to-a/, manifest.json)`);
-  err(`medium B:  ${mediumB} (full pair: a-to-b/, b-to-a/, manifest.json)`);
+  err(`medium A:  ${mediumA} (full pair: a-to-b/, b-to-a/, manifest.json; byte-verified against the workspace pair at provisioning)`);
+  err(`medium B:  ${mediumB} (full pair: a-to-b/, b-to-a/, manifest.json; byte-verified against the workspace pair at provisioning)`);
   err(`workspace: ${pairDir} ${removed ? "removed (deletion, not proof of erasure)" : "NOT removed — remove it by hand"}`);
   err(`recorded:  ${new Date().toISOString()}`);
   err("==== END CEREMONY RECORD ====");

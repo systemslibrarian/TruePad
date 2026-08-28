@@ -160,14 +160,23 @@ offset E + 32·s + 16.. E + 32·s + 31  auth record s: R_s (16 bytes)
 for `0 ≤ e < E`, `0 ≤ s < N`. Which bytes are *live* is decided by the
 header/journal counters, never by file content: a byte below
 `encryption.nextOffset`, and any record below `authentication.nextSequence`,
-is retired whether or not its bytes still read back. After counters are
-durably advanced, implementations MUST attempt to overwrite the newly
-retired regions with zeros and fsync (§12.2 S2, §12.3 O5); a failure of
-that step after the counters are durable is a logged hygiene gap, never a
-refusal — and the spec says plainly what the step is worth: software can
-forget its reference to pad material; it cannot prove that the storage
-medium forgot the bytes. Phase 6 owns destruction and its stated limits;
-nothing in this format claims secure erasure.
+is retired whether or not its bytes still read back. Retired regions
+remain physically present in `secret.bin` for the life of the store:
+after gen, no v2 operation writes `secret.bin` (§10.1, §12). Retirement
+is logical — enforced by the durable counters, which never move
+backwards — and it prevents reuse; it is not physical erasure, and this
+spec does not pretend the two are the same. Overwriting newly retired
+regions in place was considered and rejected: §10 promises nothing about
+sector-write atomicity, so an in-place write to a live `secret.bin` that
+dies mid-write can tear the sector straddling the retired/live boundary
+and corrupt *live* material adjacent to it — pad bytes, `K`, `R` —
+which is damage to material still trusted, not merely lost capacity (on
+a receiving store, a corrupted live pad byte would let a later genuine
+record verify and release wrong plaintext). And even a clean overwrite
+would have bought only this: software can forget its reference to pad
+material; it cannot prove that the storage medium forgot the bytes.
+Phase 6 owns destruction and its stated limits; nothing in this format
+claims secure erasure.
 
 A `secret.bin` whose length is not exactly `E + 32·N` is refused
 structurally (`corrupt-secret-body`) before any of it is used.
@@ -521,7 +530,22 @@ touched):
 - The v1-signature check runs first, before the eight-key rule: a JSON
   object with a `label` field and no `formatVersion` is a v1 envelope,
   refused `envelope-v1` (§9) — never `malformed-envelope`. This
-  precedence is what makes ledger claim N4 decidable.
+  precedence is what makes ledger claim N4 decidable. (The signature is
+  read from the parsed keys, so a v1 line whose spellings use JSON
+  escapes still lands here, not below.)
+- After that, spellings are checked lexically, on the raw text: property
+  names on the wire are the eight literal spellings, with no JSON escape
+  sequences, and no property name appears twice — an escaped or
+  duplicated property name, of any key, required or extra, is
+  `malformed-envelope`. String values are held to the same one-spelling
+  rule: a value spelled with escape sequences is `malformed-envelope`
+  even when it decodes to an in-domain string. Number values obey it too:
+  `formatVersion` is spelled exactly `2`, and `sequence`, `startOffset`,
+  and `ciphertextLength` are canonical decimal integers matching
+  `^(0|[1-9][0-9]*)$` — a non-canonical spelling that still parses
+  in-domain (`7.0`, `7e0`, `-0`, `2.000`) is `malformed-envelope`. JSON
+  inter-token whitespace remains legal exactly as JSON defines it; the
+  grammar is strict about spellings, not byte-exact between tokens.
 - After that, the input MUST be a JSON object with exactly these eight
   keys — no extras, none missing. (Key order is not significant on parse;
   JSON does not order objects. Tags do not depend on it; they are over
@@ -533,9 +557,10 @@ touched):
   representation, byte for byte, no alternates.
 - `direction` MUST be exactly `"A->B"` or `"B->A"`.
 - `sequence`, `startOffset`, `ciphertextLength` MUST be non-negative safe
-  integers (JSON numbers that are integers in `[0, 2^53)`); anything else —
-  fractions, exponent forms that parse non-integral, negatives — is
-  `malformed-envelope`. Their operative domains are narrower and checked
+  integers (JSON numbers that are integers in `[0, 2^53)`) AND spelled
+  canonically per the bullet above; a value that is out of that range, or
+  spelled non-canonically, is `malformed-envelope`. Their operative
+  domains are narrower and checked
   later: `sequence` against §8.1/§8.2's window, `startOffset` against
   §12.3 O1's offset and capacity checks.
 - `ciphertext` MUST be exactly `2·ciphertextLength` characters; a mismatch
@@ -769,21 +794,34 @@ its non-regression"). Until a witness class other than `none` is
 configured and enforced, this residual stands, and this spec states it
 rather than claiming otherwise.
 
-v2's three-file store adds a **worse variant** that v1's single pad file
-could not have, and it is stated rather than discovered later: a
-**mismatched per-file restore**. If `head.json` and `journal.log` are
-restored to an earlier state while a later `secret.bin` is kept (for
+v2's three-file store also invites a **mismatched per-file restore** (for
 example, a backup tool that versions small text files but skips the large
-binary), the counters roll back over regions §1.2 required to be
-zeroized. Those records are then live-by-counter and all-zero on disk —
-and an all-zero `(K, R)` verifies an attacker's envelope with its all-zero
-tag with probability 1 (`POLYVAL(0, M) = 0`), voiding §5 outright, not
-degrading it. No in-format check can detect this: content never decides
-liveness (§1.2), and adding a fingerprint of the material to the header
-would violate §1.1's no-derived-content rule. It is therefore a **named
-operator assumption**, alongside §10.3's: a pair directory is restored as
-all three files together or not at all. The Phase-4 witness is what
-retires the assumption; until then it stands, stated.
+binary). An earlier revision of this spec named that variant *worse* than
+the whole-directory restore: its required §1.2 zeroize could leave
+restored counters pointing at all-zero records, and an all-zero `(K, R)`
+verifies an attacker's all-zero tag with probability 1
+(`POLYVAL(0, M) = 0`). That hazard described a store this format no
+longer produces: §1.2 now forbids writing `secret.bin` after gen, so on
+an active store the file never changes and there are no zeroed regions
+for counters to roll back over. What a restore of `head.json` and
+`journal.log` to earlier counters does instead — with the unchanged
+`secret.bin`, whole-directory or per-file makes no difference to the
+outcome — is resurrect retired-but-physically-present material for
+**reuse**: the classic two-time-pad regression, plus re-verification
+under spent `K`/`R`. The load-time mark check catches the half it can
+see: a `head.json` behind a journal that survived the restore is refused
+`regressed-below-mark` (§12.1). It cannot catch both state files
+regressing together — that is indistinguishable from an honest earlier
+state, content never decides liveness (§1.2), and a header fingerprint of
+the material would violate §1.1's no-derived-content rule. The **named
+operator assumption**, alongside §10.3's, therefore keeps its wording: a
+pair directory is restored as all three files together or not at all —
+no longer because a partial restore is a distinct catastrophe, but
+because every restore that regresses both state files, partial or whole,
+collapses into the whole-directory residual above, and only the partial
+restore that leaves the journal behind is caught. That whole-directory
+residual stays OPEN; the Phase-4 witness is what retires the assumption,
+and until then it stands, stated.
 
 ---
 
@@ -802,12 +840,12 @@ the directory. Concretely, v2 carries forward v1's two primitives from
 `src/cli/store.ts`: atomic replace (write `<name>.tmp.<pid>` in full with
 short writes detected, fsync, rename over the target, fsync the
 directory) for `head.json`, and append-then-fsync (append one line, fsync
-the file, fsync the directory) for `journal.log`. `secret.bin` has two
-write points, each with its own rule: its initial write at gen MUST be
-durable — written in full with short writes detected, fsynced, directory
-entry fsynced — before `head.json` or the `init` journal line exists
-(§12.4); its zeroization writes are fsynced after the counters that
-retired them are durable (§12.2 S2, §12.3 O5).
+the file, fsync the directory) for `journal.log`. `secret.bin` has
+exactly one write point: its initial write at gen MUST be durable —
+written in full with short writes detected, fsynced, directory entry
+fsynced — before `head.json` or the `init` journal line exists (§12.4).
+After gen it is never written again (§1.2): retirement moves the
+counters, not the file.
 
 ### 10.2 Platform scope, stated
 
@@ -1074,10 +1112,9 @@ States:  S0 checked  →  S1 staged (in memory)  →  S2 committed  →  S3 emit
   changed.
 - **S2 — committed, durably:** rewrite `head.json` with
   `nextSequence := s + 1`, `nextOffset := nextOffset + C` (atomic
-  replace); append the `send` journal line (append-then-fsync); then
-  attempt the §1.2 zeroize of the consumed regions of `secret.bin` and
-  fsync it (a failure past this point is a logged hygiene gap, not a
-  refusal).
+  replace); append the `send` journal line (append-then-fsync).
+  `secret.bin` is not touched: the consumed regions stay physically
+  present, retired by the counters alone (§1.2).
 - **S3 — emitted:** only now is the envelope written to stdout.
 
 Crash matrix (SEND):
@@ -1087,22 +1124,24 @@ Crash matrix (SEND):
 | S0/S1 | unchanged | nothing | no |
 | S2, before `head.json` rename lands | temp file lingers; old state | nothing (retry re-stages) | no |
 | S2, after rename, before journal append | header ahead of journal — allowed on load (§12.1) | the staged record + window: consumed, never emitted | no |
-| S2, after journal append, before/during zeroize | fully committed; retired bytes may linger in `secret.bin` | same as above, plus hygiene gap only (§1.2 — counters, not content, decide liveness) | no |
 | after S2, before S3 | fully committed | the material (envelope never existed outside the process) | no |
 
 A crash before emission loses material and never reuses it — v1's
 non-negotiable burn order (`store.ts`: "(1) write … (2) fsync … (3) only
 then does the caller emit"), extended to two namespaces. Losing pad is the
-correct failure direction. The zeroize step runs strictly **after** the
-counters are durable: the reverse order could zero a live auth record and
-later verify against an attacker-knowable all-zero key, so the order is
-normative, not advisory. One more honest note on the "hygiene gap only"
-rows in both matrices: the zeroize is necessarily an in-place write, and
-§10 promises nothing about sector-write atomicity, so a power loss
-mid-zeroize can tear the sector straddling the retired/live boundary and
-lose live bytes adjacent to it — additional material loss, still in the
-safe direction (never reuse, never a free attempt), distinct from the
-hygiene gap.
+correct failure direction. There is no zeroize step, and the reasoning
+that once ordered one strictly after the counters now removes it
+entirely. An earlier revision required overwriting the newly retired
+regions with zeros; zeroize-before-counters was always forbidden, because
+zeroing a live auth record would later verify an attacker-knowable
+all-zero key — but zeroize-after-counters is an in-place write to a live
+`secret.bin`, and §10 promises nothing about sector-write atomicity: a
+power loss mid-write can tear the sector straddling the retired/live
+boundary and corrupt *live* bytes adjacent to it, damage to trusted
+material rather than the safe lose-material direction (§1.2 states the
+receiving-store consequence). One order voids the bound, the other
+corrupts live material; the write is therefore not performed at all, and
+retirement is the counters' act alone.
 
 ### 12.3 OPEN
 
@@ -1143,8 +1182,9 @@ States:  O0 structural  →  O1 window  →  O2 state gates  →  O3 reserved
   the accepted window, including the skipped `[old nextOffset,
   startOffset)` bytes and the skipped sequences' `K`/`R`, which are
   destroyed unused (lost-message material is burned as surely as used
-  material); append the `open` journal line; attempt the §1.2 zeroize +
-  fsync.
+  material); append the `open` journal line. `secret.bin` is not
+  touched: the retired ranges, used and skipped alike, stay physically
+  present (§1.2).
 - **O6 — released:** only now is the plaintext written to stdout.
 
 Crash matrix (OPEN):
@@ -1158,7 +1198,6 @@ Crash matrix (OPEN):
 | O4 fail, after the `auth-fail` append, before the header rewrite | journal holds the failure; header `failureCount` lags — resolved by §12.1's maximum, nothing under-counts | the refusal was never emitted | no | no |
 | O4 pass → O5, before header rename lands | attempt journaled, counters unchanged | one attempt; the envelope re-verifies on retry | no | no |
 | O5, after rename, before journal append | header ahead of journal — allowed (§12.1) | plaintext never released; the record and window are retired: the envelope can never be opened (its sequence is now `sequence-retired`) — the message is lost, not reusable | no | no |
-| O5, after journal append, before/during zeroize | fully committed; retired bytes may linger | same as above; hygiene gap only | no | no |
 | O5→O6 | fully committed | the plaintext (re-running the open now refuses `sequence-retired`) | no | no |
 
 Every crash, at every point, loses **material or an attempt — never
@@ -1280,7 +1319,7 @@ refusal-register row for comparison.
 | `no-store` | structural | the directory holds no pair at all — v1's `no-pad` analogue; a directory with orphan `secret.bin`/`journal.log` but no header is `corrupt-store` instead (§12.4) | none |
 | `regressed-below-mark` | structural | header high-waters behind journal (§12.1) | none |
 | `source-too-short` | structural (gen) | a declared source supplies fewer than `L = 2·(E + 32·N)` bytes (§7) | none |
-| `ceremony-incomplete` | structural (ceremony) | a Phase-3 ceremony precondition unmet — missing operator assertion, fewer than two sources, provisioned media (added with Phase 3; see `docs/CEREMONY.md`) | none |
+| `ceremony-incomplete` | structural (ceremony) | a Phase-3 ceremony precondition unmet — missing operator assertion, fewer than two sources, provisioned media, two media names reaching one filesystem object, or a medium copy that fails byte-verification against the workspace pair (added with Phase 3; see `docs/CEREMONY.md`) | none |
 | `sequence-retired` | window | `s < nextSequence` (§8.1) | none |
 | `sequence-malformed` | window | `s ≥ capacityRecords` (§8.1) | none |
 | `sequence-out-of-window` | window | beyond `maxAuthLookahead` (§8.2) | none |
@@ -1318,7 +1357,7 @@ an implementation exists; the mathematics in N6–N7 holds now.
 | N10 | Accepting sequence `s` durably sets `nextSequence = s+1` and `nextOffset = startOffset + C` before any plaintext is released. | §12.3 |
 | N11 | `nextOffset`, `nextSequence`, per-sequence attempt counts, and `failureCount` never decrease across any sequence of v2 operations, crashes, and reloads — absent external replacement of the store's files (§9.4) — given §10's platform scope. | §12.1, §13 |
 | N12 | A store generated per §7 required exactly `2·(E + 32·N)` bytes from every declared source, and gen refused (`source-too-short`) any source supplying less. | §7 |
-| N13 | Required durability ordering (§12.2 S2, §12.3 O5): counters durable → zeroize; never the reverse. At gen: `secret.bin` durable before `head.json` and the `init` line exist (§12.4). | §12 |
+| N13 | Required durability ordering at gen: `secret.bin` durable before `head.json` and the `init` line exist (§12.4). After gen, no v2 operation writes `secret.bin` (§1.2). | §1.2, §12.4 |
 | N14 | `sourceDeclarations` entries in `head.json` contain no hash, checksum, fingerprint, or any other value derived from pad bytes. | §1.1 |
 
 **Promised by later phases (the format makes them expressible; it does not
@@ -1326,7 +1365,7 @@ enforce them):**
 
 | # | claim | phase |
 | --- | --- | --- |
-| L1 | Multi-source gen: repeatable `--source`, equal lengths, bytewise XOR, one-file-one-source, the verbatim verdict line "Uniform if at least one declared source was uniform and independent of the others", and a manifest with nothing derived from pad bytes. | Phase 1 |
+| L1 | Multi-source gen: repeatable `--source`, equal lengths, bytewise XOR, one-file-one-source, the verbatim verdict line "Uniform if at least one declared source was uniform and independent of the others.", and a manifest with nothing derived from pad bytes. | Phase 1 |
 | L2 | Live authentication: the SEND and OPEN transactions of §12 actually executed by `burn`/`open`; the forged-`startOffset` burn attack becoming the typed refusals of §14.1; the freeze and window brakes operating; the `status` meters and `CHANNEL CAPACITY LIMITED BY:` display of §13; this ledger's N-claims wired into the claims-test suite. | Phase 2 |
 | L3 | Ceremony as code: `ceremony create/verify`, offline gen with ≥2 sources of distinct physics, tmpfs workspace, two peer media, printed operator assertions, retirement ceremony (including auth-exhausted pairs, contested-record retirement, destruction of stranded encryption material). | Phase 3 |
 | L4 | Rollback witness classes beyond `none`; fail-closed on unreachable/inconsistent witness; closure of the §9.4 OPEN V1 RESIDUAL; the confidentiality/metadata-privacy split for remote witnesses. | Phase 4 |
@@ -1334,8 +1373,9 @@ enforce them):**
 | L6 | `destroy` semantics and the verbatim README destruction sentence ("Software can forget its reference to pad material; it cannot prove that flash forgot the bytes."). | Phase 6 |
 
 **Standing residual, restated:** §9.4's whole-directory-restore regression
-is open until L4 lands; §1.2's zeroization is hygiene, not destruction,
-until L6 states destruction's limits; and every durability claim above is
+is open until L4 lands; §1.2's retirement is logical, not physical —
+retired bytes remain present in `secret.bin`, and destruction stays
+unclaimed until L6 states its limits; and every durability claim above is
 scoped by §10 to verified-on-Linux-ext4.
 
 ### 14.3 Open questions

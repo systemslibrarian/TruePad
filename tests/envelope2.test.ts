@@ -5,11 +5,13 @@ import { MAX_CIPHERTEXT_BYTES } from "../src/core/wc-one-time";
 /* ============================================================================
  * FORMAT-V2.md §6.2 / §9.1 — the strict v2 wire envelope.
  *
- * Exactly eight keys, one accepted spelling per value, declared length
- * cross-checked, oversize checked on the DECLARED length, and the
- * v1-signature check (label + no formatVersion -> envelope-v1) running
- * before the eight-key rule. Every refusal is structural: typed, and it
- * says "Nothing was burned." because nothing was.
+ * Exactly eight keys, one accepted spelling per token — property names
+ * and string values literal on the wire, JSON escapes and duplicate keys
+ * refused lexically on the raw text — declared length cross-checked,
+ * oversize checked on the DECLARED length, and the v1-signature check
+ * (label + no formatVersion -> envelope-v1) running before the eight-key
+ * rule and before the spelling rules. Every refusal is structural: typed,
+ * and it says "Nothing was burned." because nothing was.
  * ========================================================================= */
 
 const PAIR_ID = "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf";
@@ -226,6 +228,104 @@ describe("malformed-envelope — strict parse, one accepted spelling (§6.2)", (
   });
 });
 
+describe("wire spellings — escapes and duplicate keys are refused lexically (§6.2)", () => {
+  // JSON.parse decodes escape sequences and collapses duplicate keys (last
+  // one wins) before any check on the parsed object can see either, so
+  // these rules live in a lexical scan of the raw text. The lines below
+  // are built by string surgery on a valid envelope: JSON.stringify never
+  // emits an escape for any legal v2 value, so no encoded envelope can
+  // trip these refusals.
+  const VALID = JSON.stringify(wire());
+
+  it("a duplicated key is malformed, even though JSON.parse would collapse it silently", () => {
+    const line = VALID.slice(0, -1) + ',"sequence":8}';
+    expect(JSON.parse(line).sequence).toBe(8); // parse alone would take the last one
+    const refusal = expectRefusal(decodeEnvelope2(line), "malformed-envelope");
+    expect(refusal.message).toContain("sequence appears 2 times");
+  });
+
+  it("a duplicate whose second spelling uses \\u escapes is malformed — the escaped name refuses first", () => {
+    const line = VALID.slice(0, -1) + `,"\\u0070airId":"${PAIR_ID}"}`;
+    const refusal = expectRefusal(decodeEnvelope2(line), "malformed-envelope");
+    expect(refusal.message).toContain("escape sequences");
+  });
+
+  it("a required key spelled ONLY with escapes is malformed, never accepted", () => {
+    // "\u0070airId" decodes to pairId, so every check on the parsed
+    // object would pass — this is the bypass the spelling rule closes.
+    const line = VALID.replace('"pairId"', '"\\u0070airId"');
+    expect(JSON.parse(line).pairId).toBe(PAIR_ID);
+    const refusal = expectRefusal(decodeEnvelope2(line), "malformed-envelope");
+    expect(refusal.message).toContain("escape sequences");
+  });
+
+  it("an extra key with an escaped name is malformed via the spelling rule, not the eight-key rule", () => {
+    const line = VALID.slice(0, -1) + ',"\\u006eote":"x"}';
+    const refusal = expectRefusal(decodeEnvelope2(line), "malformed-envelope");
+    expect(refusal.message).toContain("escape sequences");
+    expect(refusal.message).not.toContain("unexpected");
+  });
+
+  it("escapes in VALUE strings are refused even when they decode to in-domain values", () => {
+    // "\u00300abff" decodes to "00abff" and "A-\u003eB" decodes to
+    // "A->B": in-domain after decoding, but §6.2/§6.3 promise exactly one
+    // accepted wire spelling per value — the decoded-equivalent form is
+    // refused, never domain-checked.
+    const ct = VALID.replace('"00abff"', '"\\u00300abff"');
+    expect(JSON.parse(ct).ciphertext).toBe("00abff");
+    expectRefusal(decodeEnvelope2(ct), "malformed-envelope");
+    const dir = VALID.replace('"A->B"', '"A-\\u003eB"');
+    expect(JSON.parse(dir).direction).toBe("A->B");
+    const refusal = expectRefusal(decodeEnvelope2(dir), "malformed-envelope");
+    expect(refusal.message).toContain("escape sequences");
+  });
+
+  it("JSON inter-token whitespace stays legal — strict about spellings, not byte-exact", () => {
+    const pretty = JSON.stringify(wire(), null, 2); // newlines and indentation
+    expect(decodeEnvelope2(pretty).ok).toBe(true);
+    const spaced = VALID.replace(/":/g, '" : ').replace(/,"/g, ' , "');
+    expect(JSON.parse(spaced)).toEqual(wire()); // same object, more whitespace
+    expect(decodeEnvelope2(spaced).ok).toBe(true);
+  });
+
+  it("braces, colons, and commas inside a value string do not miscount the scan", () => {
+    // The extra key is still the refusal, and it is named correctly — the
+    // structural characters inside the value were lexed as string content.
+    const line = VALID.slice(0, -1) + ',"note":"{[:,]}"}';
+    const refusal = expectRefusal(decodeEnvelope2(line), "malformed-envelope");
+    expect(refusal.message).toContain("unexpected note");
+  });
+
+  it("a nested value mentioning a wire key is not a duplicate — only top-level names count", () => {
+    const line = VALID.slice(0, -1) + ',"note":{"pairId":1}}';
+    const refusal = expectRefusal(decodeEnvelope2(line), "malformed-envelope");
+    expect(refusal.message).toContain("unexpected note"); // eight-key rule, not the duplicate rule
+  });
+
+  it("an escaped quote inside a value lexes as content, not a terminator", () => {
+    // The raw value is "a\"b\\" — the lexer must ride over \" and \\ to the
+    // real closing quote; the refusal is the value-spelling rule.
+    const line = VALID.replace('"00abff"', '"a\\"b\\\\"');
+    const refusal = expectRefusal(decodeEnvelope2(line), "malformed-envelope");
+    expect(refusal.message).toContain("escape sequences");
+  });
+
+  it("truncated JSON is malformed before the scanner ever runs", () => {
+    expectRefusal(decodeEnvelope2(VALID.slice(0, -2)), "malformed-envelope");
+  });
+
+  it("v1 precedence is unchanged — a v1 envelope containing escapes is still envelope-v1", () => {
+    // The v1 signature is read from PARSED keys, so a v1 line whose label
+    // key or values are spelled with escapes still lands at envelope-v1:
+    // the refusal that names the right tooling outranks the spelling rule.
+    expectRefusal(decodeEnvelope2('{"\\u006cabel":"PAD-KQZM-AB","startOffset":12}'), "envelope-v1");
+    expectRefusal(
+      decodeEnvelope2('{"label":"PAD\\u002dKQZM-AB","startOffset":12,"consumed":3,"payload":"00ABFF"}'),
+      "envelope-v1"
+    );
+  });
+});
+
 describe("oversize-ciphertext — checked on the DECLARED length (§6.2, §4)", () => {
   it("fires on the declared length even when the ciphertext hex is truncated", () => {
     // The cross-check would also fail here; oversize must win — the declared
@@ -247,5 +347,47 @@ describe("oversize-ciphertext — checked on the DECLARED length (§6.2, §4)", 
   it("a huge declared length that is still a safe integer is oversize, not malformed", () => {
     const refusal = decode(wire({ ciphertextLength: 2 ** 53 - 1, ciphertext: "00" }));
     expect(!refusal.ok && refusal.reason).toBe("oversize-ciphertext");
+  });
+});
+
+describe("number spellings — one canonical wire spelling per numeric field (§6.2)", () => {
+  // A valid line as raw text, so we can substitute non-canonical number
+  // spellings JSON.stringify would never emit.
+  const RAW = `{"formatVersion":2,"pairId":"${PAIR_ID}","direction":"A->B","sequence":7,"startOffset":4096,"ciphertextLength":3,"ciphertext":"00abff","tag":"${TAG_HEX}"}`;
+
+  it("the canonical line still decodes", () => {
+    expect(decodeEnvelope2(RAW).ok).toBe(true);
+  });
+
+  const nonCanonical: [string, string][] = [
+    ['"sequence":7', '"sequence":7.0'],
+    ['"sequence":7', '"sequence":7e0'],
+    ['"sequence":7', '"sequence":07'],
+    ['"startOffset":4096', '"startOffset":4.096e3'],
+    ['"startOffset":4096', '"startOffset":-0'],
+    ['"ciphertextLength":3', '"ciphertextLength":3e0'],
+    ['"formatVersion":2', '"formatVersion":2.000'],
+    ['"formatVersion":2', '"formatVersion":2e0']
+  ];
+
+  for (const [from, to] of nonCanonical) {
+    it(`refuses ${to.trim()} — decodes in-domain but is a non-canonical spelling`, () => {
+      const result = decodeEnvelope2(RAW.replace(from, to));
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe("malformed-envelope");
+      expect(result.message).toContain("Nothing was burned.");
+    });
+  }
+
+  it("genuinely out-of-domain numbers are still refused (7.5, -1)", () => {
+    expect(decodeEnvelope2(RAW.replace('"sequence":7', '"sequence":7.5')).ok).toBe(false);
+    expect(decodeEnvelope2(RAW.replace('"sequence":7', '"sequence":-1')).ok).toBe(false);
+  });
+
+  it("a number spelling inside a VALUE string is not a top-level number (no false positive)", () => {
+    // The ciphertext value happens to be all hex digits; a bare digit run
+    // there must not be mistaken for a numeric member.
+    expect(decodeEnvelope2(RAW).ok).toBe(true);
   });
 });

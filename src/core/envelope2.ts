@@ -8,10 +8,17 @@
  *    ciphertextLength, ciphertext, tag}
  *
  * Parsing is strict: exactly those eight keys, one accepted spelling per
- * value (lowercase hex only, integer counters only), and the declared
- * ciphertextLength cross-checked against the ciphertext hex. Every refusal
- * here is structural (§14.1): typed, first-class, fired before any secret
- * is touched, and it burns nothing — this module never sees a store.
+ * token. Property names and string values are literal on the wire — no
+ * JSON escape sequences, no duplicate keys — enforced by a lexical scan
+ * of the raw text, because JSON.parse decodes escapes and collapses
+ * duplicates before any check on the parsed object can see them. Values
+ * are lowercase hex only and integer counters only, with the declared
+ * ciphertextLength cross-checked against the ciphertext hex. JSON
+ * inter-token whitespace stays legal exactly as JSON defines it; the
+ * grammar is strict about spellings, not byte-exact between tokens.
+ * Every refusal here is structural (§14.1): typed, first-class, fired
+ * before any secret is touched, and it burns nothing — this module never
+ * sees a store.
  *
  * The v1-signature check runs FIRST, before the eight-key rule: a JSON
  * object with a `label` field and no `formatVersion` is the v1 wire shape
@@ -100,9 +107,89 @@ function refuseOversize(declared: number): Envelope2Refusal {
 const isCounter = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
+// A top-level string token as spelled in the source: a property name or a
+// string value, with whether its source spelling contains an escape.
+type WireToken = { kind: "name" | "value"; spelling: string; escaped: boolean };
+// A top-level number-valued member, name paired with the number's raw
+// source spelling — so 7, 7.0, 7e0, and -0 are distinguishable even though
+// JSON.parse folds them all to 7 / 0.
+type NumberMember = { name: string; spelling: string };
+type WireScan = { tokens: WireToken[]; numbers: NumberMember[] };
+
+// Refusal messages quote the offending spelling, clipped: a hostile line
+// can put megabytes behind one escape, and a refusal is not an echo chamber.
+const clip = (spelling: string): string => (spelling.length > 48 ? `${spelling.slice(0, 48)}…` : spelling);
+
+// Lexical scan of the top level of an envelope line. Precondition: `text`
+// is valid JSON whose top-level value is a non-null, non-array object
+// (JSON.parse already succeeded), so the walk never meets a truncated
+// string or an unbalanced brace. It lexes strings properly — opening quote
+// to unescaped closing quote, a backslash always consuming the character
+// after it (the four hex digits of \uXXXX cannot be mistaken for the
+// terminator) — and tracks brace depth, so braces, colons, and escaped
+// quotes INSIDE values never miscount. One pass, linear: ciphertext hex
+// can be long. Tokens below the top level (inside a nested value) are not
+// collected; an envelope with a nested value has an extra key and the
+// eight-key rule refuses it.
+function scanTopLevelStrings(text: string): WireScan {
+  const tokens: WireToken[] = [];
+  const numbers: NumberMember[] = [];
+  let depth = 0;
+  let expectName = false;
+  let pendingName = ""; // the most recent top-level name, for pairing values
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"') {
+      const start = i + 1;
+      let j = start;
+      let escaped = false;
+      while (j < text.length) {
+        const c = text[j];
+        if (c === "\\") {
+          escaped = true;
+          j += 2;
+          continue;
+        }
+        if (c === '"') break;
+        j += 1;
+      }
+      if (depth === 1) {
+        const spelling = text.slice(start, j);
+        tokens.push({ kind: expectName ? "name" : "value", spelling, escaped });
+        if (expectName) pendingName = spelling;
+        expectName = false;
+      }
+      i = j + 1;
+    } else if (ch === "{" || ch === "[") {
+      depth += 1;
+      if (depth === 1) expectName = true; // entering the top-level object
+      i += 1;
+    } else if (ch === "}" || ch === "]") {
+      depth -= 1;
+      if (depth === 0) break; // top-level object closed; only trailing whitespace remains
+      i += 1;
+    } else if (depth === 1 && !expectName && (ch === "-" || (ch >= "0" && ch <= "9"))) {
+      // A top-level number value: capture its exact source spelling so a
+      // non-canonical spelling (7.0, 7e0, -0, 2.000) is distinguishable from
+      // the canonical decimal integer, which JSON.parse would hide.
+      let j = i + 1;
+      while (j < text.length && "+-.eE0123456789".includes(text[j])) j += 1;
+      numbers.push({ name: pendingName, spelling: text.slice(i, j) });
+      i = j;
+    } else {
+      if (ch === "," && depth === 1) expectName = true;
+      i += 1;
+    }
+  }
+  return { tokens, numbers };
+}
+
 // Strict §6.2 parse. Check order is normative: (1) JSON, (2) the v1
-// signature, (3) exactly eight keys, (4) per-field domains, (5) oversize on
-// the DECLARED length, (6) declared length vs ciphertext hex length.
+// signature, (3) wire spellings — lexical: escape-free property names,
+// then no duplicate keys, then escape-free string values, all on the raw
+// text — (4) exactly eight keys, (5) per-field domains, (6) oversize on
+// the DECLARED length, (7) declared length vs ciphertext hex length.
 export function decodeEnvelope2(text: string): Envelope2Decode {
   let parsed: unknown;
   try {
@@ -121,16 +208,59 @@ export function decodeEnvelope2(text: string): Envelope2Decode {
     return refuseV1();
   }
 
-  // JSON.parse collapses duplicate keys (last one wins) before any check on
-  // the parsed object can see them, so "exactly these eight keys" (§6.2) is
-  // also enforced on the raw text. Sound because no legal v2 field value can
-  // contain a quote character (hex, integers, "A->B"/"B->A").
-  for (const key of WIRE_KEYS) {
-    const occurrences = text.match(new RegExp(`"${key}"\\s*:`, "g"));
-    if (occurrences !== null && occurrences.length > 1) {
+  // Wire spellings, checked lexically on the raw text. JSON.parse decodes
+  // escape sequences and collapses duplicate keys (last one wins) before
+  // any check on the parsed object can see them, so neither rule can be
+  // enforced on `raw`. The canonical grammar has exactly one spelling per
+  // key: a property name spelled with ANY escape sequence — of any key,
+  // required or extra — is ambiguity, refused before further processing.
+  // After that, surviving names are literal, so duplicate logical keys are
+  // duplicate spellings and refuse next. String VALUES are held to the
+  // same one-spelling rule (§6.3 promises exactly one accepted wire
+  // spelling per domain value): an escaped value is refused even when it
+  // decodes to an in-domain string.
+  const { tokens, numbers } = scanTopLevelStrings(text);
+  for (const token of tokens) {
+    if (token.kind === "name" && token.escaped) {
       return refuseMalformed(
-        `the key ${key} appears ${occurrences.length} times; a v2 envelope carries each of its eight fields exactly once`
+        `the property name "${clip(token.spelling)}" is spelled with JSON escape sequences; the v2 wire grammar has exactly one spelling per key`
       );
+    }
+  }
+  const nameCounts = new Map<string, number>();
+  for (const token of tokens) {
+    if (token.kind === "name") {
+      nameCounts.set(token.spelling, (nameCounts.get(token.spelling) ?? 0) + 1);
+    }
+  }
+  for (const [name, count] of nameCounts) {
+    if (count > 1) {
+      return refuseMalformed(`the key ${clip(name)} appears ${count} times; a v2 envelope carries each of its keys exactly once`);
+    }
+  }
+  for (const token of tokens) {
+    if (token.kind === "value" && token.escaped) {
+      return refuseMalformed(
+        `the string value "${clip(token.spelling)}" is spelled with JSON escape sequences; each value has exactly one accepted wire spelling, and the decoded-equivalent form is refused`
+      );
+    }
+  }
+  // Number values obey the one-spelling rule too: the counters are canonical
+  // decimal integers (no leading zero, no sign, no fraction, no exponent),
+  // and formatVersion is literally 2. 7.0, 7e0, -0, and 2.000 all decode
+  // in-domain but are non-canonical spellings, refused before the domain
+  // checks below ever run.
+  for (const { name, spelling } of numbers) {
+    if (name === "formatVersion") {
+      if (spelling !== "2") {
+        return refuseMalformed(`formatVersion must be spelled exactly 2, not ${clip(spelling)}`);
+      }
+    } else if (name === "sequence" || name === "startOffset" || name === "ciphertextLength") {
+      if (!/^(?:0|[1-9][0-9]*)$/.test(spelling)) {
+        return refuseMalformed(
+          `${name} must be a canonical decimal integer (no leading zero, sign, fraction, or exponent), not ${clip(spelling)}`
+        );
+      }
     }
   }
 

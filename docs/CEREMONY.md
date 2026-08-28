@@ -40,7 +40,21 @@ Run once per pair, on a machine that will hold no copy afterwards.
    verdict is conditional on it).
 4. **Prepare two blank peer media**, one per peer. *Enforced:* a medium
    that already holds a pad store is refused (`ceremony-incomplete`,
-   exit 2); nothing is written.
+   exit 2); nothing is written. *Enforced:* the two media must be two
+   filesystem objects — the same directory under two names (same resolved
+   path, same realpath, or same device+inode of the destinations) is
+   refused (`ceremony-incomplete`). The identity check runs twice: once up
+   front, and once **after the copies have created both destinations**, so
+   an alias that could not be resolved until then — a symlink to a
+   not-yet-created directory, an unmounted mount point — is still caught
+   before the workspace copy is removed. A medium that is the workspace
+   itself, or overlaps the generated pair, is refused for the same reason
+   (it would leave a copy on the generating machine). That check
+   establishes distinctness per the platform's identity checks, no more:
+   it cannot prove that two mount points are not one physical flash device
+   or controller presenting twice. *Asserted, in effect:* that the media
+   are two physical devices — the operator's knowledge, like the sources'
+   physics.
 5. **Run the ceremony:**
 
    ```sh
@@ -62,8 +76,22 @@ Run once per pair, on a machine that will hold no copy afterwards.
    both direction stores and the manifest — copied file by file with
    short writes detected and fsync attempted per file and directory
    (best-effort: removable media sit outside §10's verified durability
-   scope). Both copies are structurally re-loaded before the workspace
-   copy is touched.
+   scope). Before the workspace copy is touched, both copies pass two
+   checks against different failure classes. First, **byte-verification**:
+   every load-bearing file on each medium (`head.json`, `secret.bin`,
+   `journal.log` per direction, plus `manifest.json`) is compared
+   byte-for-byte against the workspace original. The comparison's output
+   is value-independent: it passes, or it names the medium and the file
+   that differed — never a checksum, hash, or fingerprint, written or
+   printed anywhere (§1.1: no value derived from pad bytes lives outside
+   `secret.bin`, and that includes refusal messages, manifests, and the
+   pad book). On a mismatch the ceremony refuses (`ceremony-incomplete`),
+   the workspace copy is **not** removed, and the operator inspects the
+   medium before anything else. Second, both copies are **structurally
+   re-loaded** through the store loader. Byte equality proves the copy
+   **at that moment**; the later `ceremony verify` (§4) proves structural
+   consistency, not provenance or continued bitwise identity with the
+   ceremony image.
 6. **The workspace copy is removed** — and priced honestly: removal is
    deletion, not proof of erasure. Software can drop its reference to pad
    material; whether the medium forgot the bytes is a destruction claim,
@@ -89,8 +117,8 @@ Run once per pair, on a machine that will hold no copy afterwards.
 | 1 offline machine | — | `--assert-offline` |
 | 2 tmpfs workspace | — | `--assert-tmpfs-workspace` |
 | 3 sources | ≥2 sources; one file = one source; full `L` bytes each (`source-too-short`) | distinct physics (`--assert-distinct-physics`); uniformity of any source |
-| 4 blank media | refuses provisioned media | media are the intended drives |
-| 5 generation | all assertions present (`ceremony-incomplete`); §7 partition; §12.4 write order; manifest free of pad-derived values; two FULL pair copies; post-copy load check | — |
+| 4 blank media | refuses provisioned media; refuses two names for one filesystem object (realpath / device+inode) | media are the intended drives, and two physical devices — identity checks cannot see one flash controller behind two mount points |
+| 5 generation | all assertions present (`ceremony-incomplete`); §7 partition; §12.4 write order; manifest free of pad-derived values; two FULL pair copies; per-file byte-verification against the workspace pair (no checksum recorded anywhere); post-copy load check | — |
 | 6 workspace removal | removal, and the statement of what removal is not | no persistent copy (`--assert-no-persistent-copy`); unmount/power-off |
 | 7 pad book entry | prints the record | copies it into the book |
 | 8 verify media | structural verification | — |
@@ -163,9 +191,37 @@ liveness (§1.2).
 
 What verify proves is structure, not provenance. It cannot show that the
 bytes on the medium are the ceremony's bytes, that the declared sources
-were what the operator said, or that no other copy exists. Those live in
-the pad book and in the assertions — which is where this document filed
-them.
+were what the operator said, or that no other copy exists. In particular
+it does not re-prove bitwise identity with the ceremony image: the
+provisioning-time byte-verification (§1 step 5) proved equality at that
+moment, and nothing after it can — a re-comparison would need a reference
+copy, and keeping one is exactly what the ceremony forbids. Provenance
+lives in the pad book and in the assertions — which is where this
+document filed it.
+
+---
+
+## 4.1 When provisioning fails
+
+A byte-verification or structural failure at step 5 is not recoverable by
+patching the suspect medium: there is deliberately **no re-provision
+verb**. The safe path is to abandon the run. The workspace copy is left in
+place only so that nothing is lost before the operator acts — it is still
+the good copy, and the next step destroys everything, not preserves it:
+
+1. **Destroy or quarantine both media's copies.** A failed medium may hold
+   a near-complete copy of the pad; treat it like exhausted media (§5.3),
+   not like a blank to reuse.
+2. **Restart from a clean workspace** — a fresh tmpfs, a fresh `pair`
+   directory.
+3. **Draw fresh source material.** `gen` is a deterministic XOR of the
+   declared sources, so the *same* sources reproduce the *same* pad
+   material under a new pairId. Reusing the collected source files after a
+   provisioning failure would recreate on new media a pad that a suspect
+   medium may already hold a copy of. New pad means new sources.
+
+The refusal message states this recovery inline, so the operator is never
+directed at a verb the tooling does not have.
 
 ---
 
@@ -217,9 +273,10 @@ material is destroyed at this ceremony, never spent.
 **Physical destruction is a ceremony step, not a software claim.** There
 is no `destroy` verb — Phase 6 owns destruction semantics and the exact
 statement of their limits (§14.2 L6), and this phase does not reach past
-it. What the software does along the way — zeroizing retired ranges,
-removing the workspace copy — is hygiene (§1.2): the counters make the
-material unusable through this tooling, and no more than that is claimed.
+it. Retirement is logical, not physical (§1.2): the durable counters make
+retired material unusable through this tooling while its bytes remain in
+`secret.bin`, and workspace removal is deletion, nothing more. No more
+than that is claimed.
 
 So the media themselves are destroyed by the operator, physically, by
 means fit for the medium, when the pair is exhausted, retired whole, or
@@ -241,14 +298,29 @@ Stated here rather than distributed as caveats:
   checks no network state, no mount table, no device physics, and no
   absence of copies. A false assertion produces a pair whose record says
   more than what is true, and no later step detects it.
+- **Media distinctness is a filesystem identity check.** Create refuses
+  two names for one filesystem object — same resolved path, same
+  realpath, or same device+inode of the destination directories — which
+  catches a repeated path, a symlink alias, and a directory reached
+  through two mount points. It cannot see whether two mount points that
+  pass are one physical flash device or controller presenting twice;
+  physical distinctness of the media stays with the operator.
+- **Provisioning byte-equality is momentary.** The per-file comparison at
+  create proves each medium's copy equaled the workspace pair at that
+  moment, and its output is only pass or the name of the medium and file
+  that differed — no checksum, hash, or fingerprint exists to re-check
+  against later (§1.1, deliberately, per §3). Later `ceremony verify`
+  proves structure, not continued bitwise identity with the ceremony
+  image.
 - **Source quality is declared, not measured.** §7's verdict is
   conditional: uniform **if** at least one declared source was uniform and
   independent of the others. No test in this repository can establish
   that; two sources of distinct physics are demanded so the condition has
   independent chances to hold.
-- **Erasure is not proved.** Workspace removal is deletion; zeroization is
-  hygiene (§1.2). What a flash controller, a journaling filesystem, or a
-  swap file retained is outside every claim here; Phase 6 will state
+- **Erasure is not proved.** Workspace removal is deletion; retirement is
+  logical, not physical (§1.2). What a flash controller, a journaling
+  filesystem, or a swap file retained is outside every claim here; Phase 6
+  will state
   destruction's limits rather than remove them.
 - **Whole-directory restore regresses a store** (§9.4, open until
   Phase 4): an operator restoring a medium from a backup regresses the
