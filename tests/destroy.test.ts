@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -171,15 +171,18 @@ describe("truepad2 destroy (FORMAT-V2.md §17)", { timeout: 120_000 }, () => {
     expect(existsSync(join(v1, "destroyed.json"))).toBe(false);
   });
 
-  it("a destroyed pair no longer loads: status refuses with nothing usable left", () => {
+  it("a destroyed pair is refused pair-destroyed by the tombstone, not treated as corrupt/absent (§17.3)", () => {
     const a = join(dir, "a");
     const gen = genPair(a, 64, 8);
     const pairId = JSON.parse(gen.stdout).pairId as string;
     expect(run("destroy", a, "--confirm", pairId).code).toBe(0);
 
+    // The tombstone is authoritative: this is a known, intentional condition,
+    // refused pair-destroyed — never no-store/corrupt-store.
     const status = run("status", a);
     expect(status.code).toBe(2);
-    expect(status.stderr).toMatch(/refused: (no-store|corrupt-store)/);
+    expect(status.stderr).toContain("refused: pair-destroyed");
+    expect(status.stderr).not.toContain("corrupt-store");
   });
 
   it("a configured rollback witness is left untouched by destroy (§17.2)", () => {
@@ -241,5 +244,184 @@ describe("truepad2 destroy (FORMAT-V2.md §17)", { timeout: 120_000 }, () => {
     expect(tombstone.limitation).toContain("cannot prove that flash forgot the bytes");
     // The other half was still torn down.
     expect(existsSync(join(a, "b-to-a"))).toBe(false);
+  });
+});
+
+/* ============================================================================
+ * §17.3 — the tombstone is the irreversible destruction boundary. Once
+ * destroyed.json is durable, every normal verb refuses pair-destroyed before
+ * reading any secret, even if an interrupted teardown left valid-looking
+ * store files (and a partially-zeroed secret) behind; and destroy is
+ * restartable/idempotent. These are the crash states, not the happy path.
+ * ========================================================================= */
+
+describe("destruction boundary (FORMAT-V2.md §17.3)", { timeout: 120_000 }, () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "truepad2-destroyboundary-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+  function run2(...argv: string[]): { code: number; stdout: string; stderr: string } {
+    const child = spawnSync(process.execPath, [LAUNCHER, ...argv], { encoding: "utf8" });
+    return { code: child.status ?? -1, stdout: child.stdout, stderr: child.stderr };
+  }
+  function src(bytes: number): string {
+    const p = join(dir, `src-${Math.random().toString(36).slice(2)}.bin`);
+    writeFileSync(p, randomBytes(bytes));
+    return p;
+  }
+  function gen(pairDir: string, e = 64, n = 8): string {
+    const r = run2("gen", pairDir, "--source", src(2 * (e + 32 * n)), "--encryption-bytes", String(e), "--auth-records", String(n));
+    expect(r.code).toBe(0);
+    return JSON.parse(r.stdout).pairId as string;
+  }
+  // Write a durable-looking tombstone by hand — the crash state a destroy
+  // interrupted right after step 2 leaves behind.
+  function tombstone(pairDir: string, pairId: string, at = "2020-01-01T00:00:00.000Z"): void {
+    writeFileSync(
+      join(pairDir, "destroyed.json"),
+      JSON.stringify({
+        formatVersion: 2,
+        pairId,
+        destroyedAt: at,
+        reason: "interrupted-crash-fixture",
+        finalHighWaters: { "A->B": null, "B->A": null },
+        limitation: "Software can forget its reference to pad material; it cannot prove that flash forgot the bytes."
+      })
+    );
+  }
+  const normalOps = (pairDir: string): { verb: string; argv: string[] }[] => [
+    { verb: "burn", argv: ["burn", pairDir, "--as", "A", "hello"] },
+    { verb: "open", argv: ["open", pairDir, "--as", "B", "{}"] },
+    { verb: "status", argv: ["status", pairDir] },
+    { verb: "clear-freeze", argv: ["clear-freeze", pairDir] },
+    { verb: "retire", argv: ["retire", pairDir, "--direction", "a-to-b", "--through-sequence", "0"] }
+  ];
+
+  it("tombstone + intact stores: every normal op refuses pair-destroyed before reading secret.bin", () => {
+    const a = join(dir, "a");
+    const pairId = gen(a);
+    const secretHash = statSync(join(a, "a-to-b", "secret.bin")).size + ":" + readFileSync(join(a, "a-to-b", "secret.bin")).toString("hex");
+    tombstone(a, pairId);
+    for (const { verb, argv } of normalOps(a)) {
+      const r = run2(...argv);
+      expect(r.code, verb).toBe(2);
+      expect(r.stderr, verb).toContain("refused: pair-destroyed");
+      expect(r.stderr, verb).not.toContain("corrupt-store");
+    }
+    // secret.bin was never read or altered by any refused op.
+    const after = statSync(join(a, "a-to-b", "secret.bin")).size + ":" + readFileSync(join(a, "a-to-b", "secret.bin")).toString("hex");
+    expect(after).toBe(secretHash);
+  });
+
+  it("ceremony verify also refuses a tombstoned medium pair-destroyed (N21a, the sixth verb)", () => {
+    const a = join(dir, "a");
+    const pairId = gen(a);
+    tombstone(a, pairId);
+    const r = run2("ceremony", "verify", a);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("refused: pair-destroyed");
+  });
+
+  it("gen refuses to provision a fresh pair into a tombstoned directory (§17.3 defense-in-depth)", () => {
+    const a = join(dir, "a");
+    const pairId = gen(a);
+    // Fully destroy, leaving the tombstone.
+    expect(run2("destroy", a, "--confirm", pairId).code).toBe(0);
+    // A new gen at the same (tombstoned) path is refused, not silently created.
+    const regen = run2("gen", a, "--source", src(2 * (64 + 32 * 8)), "--encryption-bytes", "64", "--auth-records", "8");
+    expect(regen.code).toBe(2);
+    expect(regen.stderr).toContain("refused: pair-destroyed");
+    // No fresh store was written.
+    expect(existsSync(join(a, "a-to-b", "head.json"))).toBe(false);
+  });
+
+  it("tombstone + PARTIALLY-ZEROED secret body: the partial secret is never consumed", () => {
+    const a = join(dir, "a");
+    const pairId = gen(a);
+    // Zero the first half of secret.bin — the exact crash-during-overwrite state.
+    const sp = join(a, "a-to-b", "secret.bin");
+    const bytes = readFileSync(sp);
+    for (let i = 0; i < bytes.length >> 1; i += 1) bytes[i] = 0;
+    writeFileSync(sp, bytes);
+    tombstone(a, pairId);
+    for (const { verb, argv } of normalOps(a)) {
+      const r = run2(...argv);
+      expect(r.code, verb).toBe(2);
+      expect(r.stderr, verb).toContain("refused: pair-destroyed");
+    }
+  });
+
+  it("tombstone + one missing half / missing secret.bin still refuses pair-destroyed", () => {
+    const a = join(dir, "a");
+    const pairId = gen(a);
+    tombstone(a, pairId);
+    rmSync(join(a, "b-to-a"), { recursive: true, force: true }); // one half gone
+    rmSync(join(a, "a-to-b", "secret.bin"), { force: true }); // secret gone from the other
+    expect(run2("status", a).stderr).toContain("refused: pair-destroyed");
+    expect(run2("burn", a, "--as", "A", "x").stderr).toContain("refused: pair-destroyed");
+  });
+
+  it("deleting head.json/journal.log cannot make a tombstoned pair usable through supported tooling", () => {
+    const a = join(dir, "a");
+    const pairId = gen(a);
+    tombstone(a, pairId);
+    // Even if an operator scrubs ordinary state files, the tombstone dominates.
+    rmSync(join(a, "a-to-b", "head.json"), { force: true });
+    rmSync(join(a, "a-to-b", "journal.log"), { force: true });
+    expect(run2("status", a).stderr).toContain("refused: pair-destroyed");
+    expect(run2("burn", a, "--as", "A", "x").stderr).toContain("refused: pair-destroyed");
+    // There is no verb that clears the tombstone: no --force is accepted anywhere.
+    expect(run2("burn", a, "--as", "A", "x", "--force").code).not.toBe(0);
+  });
+
+  it("destroy is restartable: a rerun after an interrupted teardown finishes cleanup, preserving destroyedAt", () => {
+    const a = join(dir, "a");
+    const pairId = gen(a);
+    // Interrupted right after the tombstone (stores intact).
+    const at = "2019-06-06T06:06:06.000Z";
+    tombstone(a, pairId, at);
+    const resume = run2("destroy", a, "--confirm", pairId);
+    expect(resume.code).toBe(0);
+    // Teardown completed.
+    for (const half of ["a-to-b", "b-to-a"]) {
+      expect(existsSync(join(a, half))).toBe(false);
+    }
+    // The original intent timestamp is preserved, not restamped.
+    expect(JSON.parse(readFileSync(join(a, "destroyed.json"), "utf8")).destroyedAt).toBe(at);
+    // manifest.json and the tombstone remain.
+    expect(existsSync(join(a, "destroyed.json"))).toBe(true);
+  });
+
+  it("destroy is idempotent and never resurrects: repeated runs converge to the same state", () => {
+    const a = join(dir, "a");
+    const pairId = gen(a);
+    expect(run2("destroy", a, "--confirm", pairId).code).toBe(0);
+    // Rerun on a fully-destroyed pair: harmless already-destroyed, nothing recreated.
+    const again = run2("destroy", a, "--confirm", pairId);
+    expect(again.code).toBe(0);
+    expect(JSON.parse(again.stdout).alreadyDestroyed).toBe(true);
+    for (const half of ["a-to-b", "b-to-a"]) {
+      expect(existsSync(join(a, half))).toBe(false);
+    }
+    // A third run is equally stable.
+    expect(run2("destroy", a, "--confirm", pairId).code).toBe(0);
+    // Normal ops remain refused.
+    expect(run2("status", a).stderr).toContain("refused: pair-destroyed");
+  });
+
+  it("MUTATION guard: without the tombstone gate the intact-store refusal would not fire", () => {
+    // Proves the test above is non-vacuous: the pair-destroyed refusal is what
+    // stops a valid-looking tombstoned store, not some other error. With the
+    // tombstone REMOVED, the same store loads and status succeeds — so the gate
+    // is the sole thing standing between a tombstoned pair and normal use.
+    const a = join(dir, "a");
+    const pairId = gen(a);
+    tombstone(a, pairId);
+    expect(run2("status", a).code).toBe(2); // gated
+    rmSync(join(a, "destroyed.json"), { force: true });
+    expect(run2("status", a).code).toBe(0); // ungated, the store is otherwise valid
   });
 });

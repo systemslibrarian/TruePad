@@ -112,6 +112,7 @@ export type RefusalType =
   | "wrong-pair"
   | "wrong-direction"
   | "v1-store"
+  | "pair-destroyed"
   | "corrupt-head"
   | "corrupt-secret-body"
   | "corrupt-store"
@@ -312,12 +313,34 @@ function loadHalf2(dir: string, direction: PadDirection): LoadedStore2 {
 // Hold the pair lock, check the pair is whole, load BOTH halves. Both are
 // loaded even for single-direction verbs because the freeze is pair-wide
 // (§8.4): a frozen receiving store pauses sending too.
+// The destruction boundary (§17): once <dir>/destroyed.json is durable, the
+// pair has crossed an irreversible line and MUST NEVER be used for a
+// cryptographic operation again — even if an interrupted teardown left
+// head.json/journal.log/secret.bin (whole or partially zeroed) behind. The
+// tombstone is authoritative over the store files: it is checked BEFORE any
+// secret is read, and there is no --force, restore, or clear that reopens
+// the pair. Deleting the tombstone by hand is outside TruePad's guarantees.
+function requireNotDestroyed(dir: string): void {
+  if (existsSync(join(dir, TOMBSTONE_FILE))) {
+    throw new Refused2(
+      "pair-destroyed",
+      `${dir} carries a durable ${TOMBSTONE_FILE}: destruction of this pair was initiated (§17), so it is ` +
+        "permanently unusable. Its secret material may be partially overwritten or already absent, and there is no " +
+        "path back to an active state. Re-run `truepad2 destroy` to finish any interrupted cleanup. Nothing was " +
+        "touched."
+    );
+  }
+}
+
 function withPair<T>(dir: string, fn: (pair: LoadedPair) => T): T {
   const lock = acquireLock(dir);
   if (!lock.ok) {
     throw new Refused2("locked", lock.message);
   }
   try {
+    // Before anything is loaded or any secret is read: a tombstoned pair is
+    // refused outright (§17, §14.1 pair-destroyed).
+    requireNotDestroyed(dir);
     requirePair2(dir);
     const pair: LoadedPair = { "A->B": loadHalf2(dir, "A->B"), "B->A": loadHalf2(dir, "B->A") };
     return fn(pair);
@@ -385,20 +408,24 @@ function witnessPreflight(store: LoadedStore2): void {
     throw new Refused2(writable.reason, writable.message);
   }
   if (result.counters !== null) {
-    const { encryptionNextOffset, authenticationNextSequence } = result.counters;
+    const { encryptionNextOffset, authenticationNextSequence, attemptsReserved } = result.counters;
     if (
       store.effective.nextOffset < encryptionNextOffset ||
-      store.effective.nextSequence < authenticationNextSequence
+      store.effective.nextSequence < authenticationNextSequence ||
+      store.effective.attemptsReserved < attemptsReserved
     ) {
       throw new Refused2(
         "witness-regressed",
         `this store is behind its rollback witness: the witness at ${path} records encryptionNextOffset ` +
-          `${encryptionNextOffset} and authenticationNextSequence ${authenticationNextSequence}, but this store is ` +
-          `at nextOffset ${store.effective.nextOffset} and nextSequence ${store.effective.nextSequence}. A store ` +
-          "below its witness is the restored-store signature (FORMAT-V2.md §9.4): head.json and journal.log were " +
-          "rolled back together — whole-directory or the both-files partial restore the load-time mark check cannot " +
-          "see — while the witness, in its separate failure domain, remembers the true high-water. Refusing before " +
-          "anything is consumed. Nothing was burned."
+          `${encryptionNextOffset}, authenticationNextSequence ${authenticationNextSequence}, and attemptsReserved ` +
+          `${attemptsReserved}, but this store is ` +
+          `at nextOffset ${store.effective.nextOffset}, nextSequence ${store.effective.nextSequence}, and ` +
+          `attemptsReserved ${store.effective.attemptsReserved}. A store below its witness is the restored-store ` +
+          "signature (FORMAT-V2.md §9.4): head.json and journal.log were rolled back together — whole-directory or " +
+          "the both-files partial restore the load-time mark check cannot see — while the witness, in its separate " +
+          "failure domain, remembers the true high-water and attempt budget (a restore that only rolled back the " +
+          "attempt count would otherwise refill a contested record's guesses). Refusing before anything is " +
+          "consumed. Nothing was burned."
       );
     }
   }
@@ -464,10 +491,12 @@ function witnessReport(store: LoadedStore2): WitnessReport {
   }
   const behind =
     store.effective.nextOffset < result.counters.encryptionNextOffset ||
-    store.effective.nextSequence < result.counters.authenticationNextSequence;
+    store.effective.nextSequence < result.counters.authenticationNextSequence ||
+    store.effective.attemptsReserved < result.counters.attemptsReserved;
   const aligned =
     store.effective.nextOffset === result.counters.encryptionNextOffset &&
-    store.effective.nextSequence === result.counters.authenticationNextSequence;
+    store.effective.nextSequence === result.counters.authenticationNextSequence &&
+    store.effective.attemptsReserved === result.counters.attemptsReserved;
   return {
     witnessClass: "separate-state-file",
     path,
@@ -544,6 +573,10 @@ function recordSpecFromFlag(recordBytes: string | undefined): RecordSpec {
 
 export function gen(args: Args2): void {
   const dir = dirArg(args, "gen");
+  // A tombstoned directory has crossed the §17.3 boundary: never provision a
+  // fresh pair into it (it would be dead on arrival, and it would spend
+  // ceremony-grade source material at a path no verb can use).
+  requireNotDestroyed(dir);
   const sourcePaths = args.flags.get("source") ?? [];
   const origins = args.flags.get("origin") ?? [];
   if (sourcePaths.length === 0) {
@@ -844,7 +877,12 @@ export function burn(args: Args2): void {
 
     // §15.3 advance — after the durable commit, before the emit. A witness
     // write failure withholds the envelope (the material is already retired).
-    witnessAdvance(store, { encryptionNextOffset: startOffset + c, authenticationNextSequence: sequence + 1 });
+    // burn reserves no verification attempt, so attemptsReserved is unchanged.
+    witnessAdvance(store, {
+      encryptionNextOffset: startOffset + c,
+      authenticationNextSequence: sequence + 1,
+      attemptsReserved: store.effective.attemptsReserved
+    });
 
     // S3 — only now does the envelope exist outside this process.
     out(encodeEnvelope2(envelope));
@@ -962,6 +1000,19 @@ export function open(args: Args2): void {
     reserveAttempt(halfDir, sequence);
     const attemptsNow = attempts + 1;
 
+    // §15.3 advance the witness with the new attempt total, still BEFORE the
+    // verification — so a later backup-restore that rolls the attempt budget
+    // back is refused witness-regressed at preflight. Failed authentications
+    // do not move the high-waters, so without this the witness would never
+    // learn about the attacker's guesses. A write failure here is the §15.3
+    // loss row: the attempt is durable (consumed, the safe direction), the
+    // output is not yet reachable, and the next op refuses free.
+    witnessAdvance(store, {
+      encryptionNextOffset: effective.nextOffset,
+      authenticationNextSequence: effective.nextSequence,
+      attemptsReserved: effective.attemptsReserved + 1
+    });
+
     // O4 — verify over canonical bytes.
     const { key, mask } = readAuthRecord(halfDir, head, sequence);
     const pairIdBytes = hexToBytes(head.pairId);
@@ -1044,8 +1095,12 @@ export function open(args: Args2): void {
 
     // §15.3 advance — after the durable commit (O5), before the release (O6).
     // A witness write failure withholds the plaintext (material already
-    // retired).
-    witnessAdvance(store, { encryptionNextOffset: startOffset + c, authenticationNextSequence: sequence + 1 });
+    // retired). attemptsReserved already advanced at O3; carry it forward.
+    witnessAdvance(store, {
+      encryptionNextOffset: startOffset + c,
+      authenticationNextSequence: sequence + 1,
+      attemptsReserved: effective.attemptsReserved + 1
+    });
 
     // §16.2: on a fixed store the decrypted bytes are the frame; the length
     // prefix selects the released plaintext. A prefix past F − 4 cannot come
@@ -1279,8 +1334,13 @@ export function retire(args: Args2): void {
       at: new Date().toISOString()
     });
     // §15.3 advance — after the durable commit. A witness write failure exits
-    // 1 with the loss row; the retire is durable regardless.
-    witnessAdvance(store, { encryptionNextOffset: newNextOffset, authenticationNextSequence: newNextSequence });
+    // 1 with the loss row; the retire is durable regardless. retire reserves
+    // no verification attempt, so attemptsReserved is unchanged.
+    witnessAdvance(store, {
+      encryptionNextOffset: newNextOffset,
+      authenticationNextSequence: newNextSequence,
+      attemptsReserved: effective.attemptsReserved
+    });
     // Retired material stays physically present in secret.bin; the durable
     // counters above are the retirement (§1.2). "Destroyed" below is the
     // channel's meaning — never usable again — not physical erasure.
@@ -1332,6 +1392,32 @@ const DESTROY_LIMITATION =
 const TOMBSTONE_FILE = "destroyed.json";
 
 type HalfSummary = { pairId: string | null; nextOffset: number | null; nextSequence: number | null };
+
+// An existing tombstone (a resume of an interrupted teardown). `record` is the
+// original parsed object when it is well-formed enough to preserve — destroy
+// keeps it rather than rewriting destroyedAt/reason as if destruction began
+// again; `pairId` is lifted for the confirmation token when head.json is gone.
+type ExistingTombstone = { exists: boolean; pairId: string | null; record: Record<string, unknown> | null };
+
+function readTombstone(dir: string): ExistingTombstone {
+  const path = join(dir, TOMBSTONE_FILE);
+  if (!existsSync(path)) {
+    return { exists: false, pairId: null, record: null };
+  }
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof parsed === "object" && parsed !== null) {
+      const obj = parsed as Record<string, unknown>;
+      const pairId = typeof obj.pairId === "string" && /^[0-9a-f]{32}$/.test(obj.pairId) ? obj.pairId : null;
+      // Preserve only a well-formed original; a corrupt tombstone still marks
+      // the boundary but its intent cannot be trusted, so it is rewritten.
+      return { exists: true, pairId, record: obj.formatVersion === 2 ? obj : null };
+    }
+  } catch {
+    /* unparseable tombstone: the boundary stands, but rewrite a clean one */
+  }
+  return { exists: true, pairId: null, record: null };
+}
 
 // Best-effort read of one half's identifying pairId and final high-waters for
 // the tombstone and the confirmation token. A clean load gives the
@@ -1459,47 +1545,74 @@ export function destroy(args: Args2): void {
   }
   try {
     // §17.1: a v1 store is refused; v1 material is handled by v1's own tooling.
-    refuseIfV1Store(dir);
+    // (Only when this is NOT already a tombstoned v2 pair: a destroyed pair
+    // may have lost the head.json that distinguishes it, and a leftover
+    // pad.json must not misroute a destroy-resume to v1.)
+    const priorTombstone = readTombstone(dir);
+    if (!priorTombstone.exists) {
+      refuseIfV1Store(dir);
+    }
 
     const summaries: Record<PadDirection, HalfSummary> = {
       "A->B": readHalfSummary(join(dir, SUBDIR2["A->B"])),
       "B->A": readHalfSummary(join(dir, SUBDIR2["B->A"]))
     };
-    const pairId = summaries["A->B"].pairId ?? summaries["B->A"].pairId;
+    const pairId = summaries["A->B"].pairId ?? summaries["B->A"].pairId ?? priorTombstone.pairId;
 
     // §17.1 confirmation: --confirm MUST equal the pair's pairId where any
-    // half's head.json yields one; for a pair too corrupt to yield a pairId
-    // the literal token destroy-unreadable-pair is required instead. The
-    // expected pairId is deliberately NOT echoed — the operator confirms by
-    // knowing it (pad book / head.json), the way a destructive gesture should.
+    // half's head.json (or, on a resume, the existing tombstone) yields one;
+    // for a pair too corrupt to yield a pairId the literal token
+    // destroy-unreadable-pair is required instead. The expected pairId is
+    // deliberately NOT echoed — the operator confirms by knowing it (pad book /
+    // head.json / tombstone), the way a destructive gesture should.
     const requiredToken = pairId ?? UNREADABLE_PAIR_TOKEN;
     if (confirm !== requiredToken) {
       throw new Refused2(
         "destroy-unconfirmed",
         pairId === null
-          ? `this pair is too corrupt to confirm by pairId — no half's ${HEAD_FILE} yields one — so destroy requires ` +
-              `--confirm ${UNREADABLE_PAIR_TOKEN} for it. Re-run with that literal token. Nothing was touched.`
-          : `--confirm must equal the pair's pairId to destroy it. It is NOT echoed here — read it from the pad book ` +
-              `or a half's ${HEAD_FILE} and pass it verbatim. Nothing was touched.`
+          ? `this pair is too corrupt to confirm by pairId — no half's ${HEAD_FILE} nor the tombstone yields one — so ` +
+              `destroy requires --confirm ${UNREADABLE_PAIR_TOKEN} for it. Re-run with that literal token. Nothing was touched.`
+          : `--confirm must equal the pair's pairId to destroy it. It is NOT echoed here — read it from the pad book, ` +
+              `a half's ${HEAD_FILE}, or ${TOMBSTONE_FILE} and pass it verbatim. Nothing was touched.`
       );
+    }
+
+    // Already fully torn down (tombstone present, both halves gone): destroy is
+    // idempotent — report the existing destruction and change nothing. There
+    // is nothing to resurrect and nothing left to remove.
+    const alreadyGone =
+      priorTombstone.exists &&
+      !existsSync(join(dir, SUBDIR2["A->B"])) &&
+      !existsSync(join(dir, SUBDIR2["B->A"]));
+    if (alreadyGone) {
+      err(`${dir} was already destroyed; ${TOMBSTONE_FILE} stands and nothing remained to remove.`);
+      err(DESTROY_LIMITATION);
+      out(JSON.stringify({ destroyed: true, alreadyDestroyed: true, pairId, tombstone: join(dir, TOMBSTONE_FILE) }));
+      return;
     }
 
     // §17.2 order is normative.
     // 2 — the tombstone: non-secret recorded intent, durable, survives the
-    // destruction. pairId (or null), timestamp, reason, per-direction final
-    // high-waters where readable, and the verbatim limitation sentence.
-    const tombstone = {
-      formatVersion: 2,
-      pairId,
-      destroyedAt: new Date().toISOString(),
-      reason,
-      finalHighWaters: {
-        "A->B": highWatersOrNull(summaries["A->B"]),
-        "B->A": highWatersOrNull(summaries["B->A"])
-      },
-      limitation: DESTROY_LIMITATION
-    };
-    writeFileDurablyAt(dir, TOMBSTONE_FILE, JSON.stringify(tombstone, null, 2));
+    // destruction. On a RESUME (a well-formed tombstone already exists) it is
+    // PRESERVED, not rewritten — its original destroyedAt/reason/high-waters
+    // are the historical truth, and a retry after a crash must not restamp
+    // them as if destruction began later. Otherwise it is written fresh.
+    if (priorTombstone.record !== null) {
+      err(`resuming an interrupted destroy: ${TOMBSTONE_FILE} already records the intent; finishing cleanup.`);
+    } else {
+      const tombstone = {
+        formatVersion: 2,
+        pairId,
+        destroyedAt: new Date().toISOString(),
+        reason,
+        finalHighWaters: {
+          "A->B": highWatersOrNull(summaries["A->B"]),
+          "B->A": highWatersOrNull(summaries["B->A"])
+        },
+        limitation: DESTROY_LIMITATION
+      };
+      writeFileDurablyAt(dir, TOMBSTONE_FILE, JSON.stringify(tombstone, null, 2));
+    }
 
     // 3 — per half: best-effort zero-overwrite of secret.bin + fsync.
     for (const direction of ["A->B", "B->A"] as const) {

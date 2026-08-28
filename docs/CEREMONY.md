@@ -313,6 +313,14 @@ corrupt to yield a pairId is destroyed with the literal token
 half store — a store too damaged to load is still one an operator must be
 able to remove.
 
+Once the tombstone is durable, the pair is **permanently retired from
+software use**: every normal verb refuses it `pair-destroyed`, and no flag
+brings it back (§17.3). If the machine crashes mid-teardown, simply run
+`destroy` again with the same confirmation — it finishes the cleanup and
+never resurrects the pair. Do not attempt to restore an active state from a
+backup after this point; the secret body may be half-overwritten, and
+reusing it risks reuse of pad material.
+
 **What `destroy` does not claim is erasure.** *Software can forget its
 reference to pad material; it cannot prove that flash forgot the bytes.*
 The zero-overwrite is best-effort and proves nothing about the medium: a

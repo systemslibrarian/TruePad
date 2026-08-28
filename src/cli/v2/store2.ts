@@ -179,6 +179,10 @@ export type EffectiveState = {
   nextOffset: number;
   nextSequence: number;
   attempts: Map<number, number>;
+  // Total verification attempts ever reserved (count of `attempt` journal
+  // lines) — monotone, and the quantity the rollback witness records so a
+  // backup-restore cannot refill the per-record attempt budget (§15.1).
+  attemptsReserved: number;
   failureCount: number;
   clearedAtFailureCount: number;
 };
@@ -648,6 +652,7 @@ type JournalAggregates = {
   maxNextOffset: number;
   maxNextSequence: number;
   attemptCounts: Map<number, number>;
+  attemptsReserved: number;
   failureCount: number;
   lastClearedAt: number;
 };
@@ -669,6 +674,7 @@ function readJournal(dir: string): JournalAggregates | Store2Refusal {
     maxNextOffset: 0,
     maxNextSequence: 0,
     attemptCounts: new Map<number, number>(),
+    attemptsReserved: 0,
     failureCount: 0,
     lastClearedAt: 0
   };
@@ -703,6 +709,7 @@ function readJournal(dir: string): JournalAggregates | Store2Refusal {
         break;
       case "attempt":
         aggregates.attemptCounts.set(record.sequence, (aggregates.attemptCounts.get(record.sequence) ?? 0) + 1);
+        aggregates.attemptsReserved += 1;
         break;
       case "auth-fail":
         // The line count is the journal's failure count; each line also
@@ -896,6 +903,7 @@ export function loadStore2(dir: string): LoadedStore2 | Store2Refusal {
     nextOffset: head.encryption.nextOffset,
     nextSequence: head.authentication.nextSequence,
     attempts,
+    attemptsReserved: journal.attemptsReserved,
     failureCount: Math.max(head.verification.failureCount, journal.failureCount),
     clearedAtFailureCount: Math.max(head.verification.clearedAtFailureCount, journal.lastClearedAt)
   };

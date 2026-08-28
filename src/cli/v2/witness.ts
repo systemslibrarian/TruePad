@@ -8,10 +8,12 @@
  *
  *   <path>  a JSON witness file (§15.2), 0600, rewritten atomically per §10:
  *           { "formatVersion": 2, "witness": { "<pairId>/<direction>":
- *             { "encryptionNextOffset": n, "authenticationNextSequence": n } } }
- *           One file may witness several pairs. It holds counters and nothing
- *           else — never a pad byte, key, mask, plaintext, or ciphertext
- *           (§15.1, ledger N17).
+ *             { "encryptionNextOffset": n, "authenticationNextSequence": n,
+ *               "attemptsReserved": n } } }
+ *           The entry is FROZEN as exactly those three required counters
+ *           (§15.2). One file may witness several pairs. It holds counters
+ *           and nothing else — never a pad byte, key, mask, plaintext, or
+ *           ciphertext (§15.1, ledger N17).
  *
  * Two operations, matching §15.3's two touchpoints:
  *   readWitnessCounters — PREFLIGHT: fail closed. A missing or unreadable file
@@ -38,7 +40,19 @@ import { accessSync, closeSync, constants, fsyncSync, openSync, readFileSync, re
 import { dirname } from "node:path";
 import type { PadDirection } from "../../core/pad.ts";
 
-export type WitnessCounters = { encryptionNextOffset: number; authenticationNextSequence: number };
+// The three monotone quantities a witness records. The two high-waters catch
+// a restore that would REUSE material (§9.4). attemptsReserved — the total
+// verification attempts ever reserved for this (pair, direction) — catches a
+// restore that would refill the per-record attempt budget: failed
+// authentications reserve attempts without moving the high-waters, so a
+// pair backup-restore could otherwise reset perSequenceAttempts and hand the
+// attacker verifyAttemptLimit fresh guesses per restore, defeating §5's
+// finite-forgery bound. All three are non-secret counters (N17).
+export type WitnessCounters = {
+  encryptionNextOffset: number;
+  authenticationNextSequence: number;
+  attemptsReserved: number;
+};
 
 // key: `${pairId}/${direction}` — one entry per (pair, direction).
 export type WitnessFile = { formatVersion: 2; witness: Record<string, WitnessCounters> };
@@ -78,14 +92,27 @@ function validateWitnessFile(raw: unknown): { file: WitnessFile } | { why: strin
       return { why: `witness["${key}"] is not an object` };
     }
     const keys = Object.keys(value);
-    if (keys.length !== 2 || !isSafeCount(value.encryptionNextOffset) || !isSafeCount(value.authenticationNextSequence)) {
+    // The frozen v2 witness entry is EXACTLY the three monotone counters, all
+    // required. There is no legacy two-counter form: a store new enough to
+    // have a witness is new enough to write attemptsReserved, so a missing
+    // one is a shape violation (fails closed), never a silent 0 (which would
+    // reopen the attempt-budget rollback §15.1 closes).
+    if (
+      keys.length !== 3 ||
+      !isSafeCount(value.encryptionNextOffset) ||
+      !isSafeCount(value.authenticationNextSequence) ||
+      !isSafeCount(value.attemptsReserved)
+    ) {
       return {
-        why: `witness["${key}"] must be exactly { encryptionNextOffset, authenticationNextSequence } with safe integers >= 0`
+        why:
+          `witness["${key}"] must be exactly { encryptionNextOffset, authenticationNextSequence, attemptsReserved } ` +
+          "with safe integers >= 0 and no other keys"
       };
     }
     witness[key] = {
       encryptionNextOffset: value.encryptionNextOffset,
-      authenticationNextSequence: value.authenticationNextSequence
+      authenticationNextSequence: value.authenticationNextSequence,
+      attemptsReserved: value.attemptsReserved
     };
   }
   return { file: { formatVersion: 2, witness } };
@@ -252,13 +279,13 @@ export function advanceWitness(path: string, pairId: string, direction: PadDirec
     file = validated.file;
   }
   const key = keyOf(pairId, direction);
-  const prev = file.witness[key];
-  file.witness[key] =
-    prev === undefined
-      ? { encryptionNextOffset: counters.encryptionNextOffset, authenticationNextSequence: counters.authenticationNextSequence }
-      : {
-          encryptionNextOffset: Math.max(prev.encryptionNextOffset, counters.encryptionNextOffset),
-          authenticationNextSequence: Math.max(prev.authenticationNextSequence, counters.authenticationNextSequence)
-        };
+  const prev = file.witness[key] ?? { encryptionNextOffset: 0, authenticationNextSequence: 0, attemptsReserved: 0 };
+  // MONOTONE on every field: elementwise maximum, so an out-of-order or
+  // replayed advance never lowers a recorded position or the attempt count.
+  file.witness[key] = {
+    encryptionNextOffset: Math.max(prev.encryptionNextOffset, counters.encryptionNextOffset),
+    authenticationNextSequence: Math.max(prev.authenticationNextSequence, counters.authenticationNextSequence),
+    attemptsReserved: Math.max(prev.attemptsReserved, counters.attemptsReserved)
+  };
   writeWitnessDurably(path, JSON.stringify(file));
 }

@@ -400,6 +400,16 @@ function metersOf(store: LoadedStore2): VerifyMeters {
 /* ---- ceremony create ------------------------------------------------------- */
 
 function requireUnprovisioned(medium: string): void {
+  // A tombstoned medium (§17.3) is past the destruction boundary: never
+  // provision a fresh pair onto it. Typed pair-destroyed like every other
+  // consuming path that meets a tombstone.
+  if (existsSync(join(medium, "destroyed.json"))) {
+    throw new Refused2(
+      "pair-destroyed",
+      `${medium} carries a durable destroyed.json: this medium held a destroyed pair (§17.3) and must not be ` +
+        "reprovisioned. Use fresh media. Nothing was written."
+    );
+  }
   for (const direction of ["A->B", "B->A"] as const) {
     const half = join(medium, SUBDIR2[direction]);
     if (existsSync(join(half, HEAD_FILE)) || existsSync(join(half, "pad.json"))) {
@@ -611,6 +621,16 @@ export function ceremonyVerify(args: Args2): void {
     throw new Refused2("locked", lock.message);
   }
   try {
+    // §17: a tombstoned pair is permanently unusable and must not be reported
+    // as a verifiable medium, even if the store files still look structurally
+    // valid. Checked before any secret is read.
+    if (existsSync(join(dir, "destroyed.json"))) {
+      throw new Refused2(
+        "pair-destroyed",
+        `${dir} carries a durable destroyed.json: this pair was destroyed (§17) and is not a usable medium. ` +
+          "Nothing was touched."
+      );
+    }
     const pair = loadMediumPair(dir);
     const pairId = pair["A->B"].head.pairId;
     const snapshot = { "A->B": metersOf(pair["A->B"]), "B->A": metersOf(pair["B->A"]) };
