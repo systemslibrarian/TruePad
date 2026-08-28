@@ -23,6 +23,7 @@ function walk(dir: string, out: string[] = []): string[] {
 const FILES = [
   join(ROOT, "README.md"),
   join(ROOT, "index.html"),
+  join(ROOT, "learn.html"),
   join(ROOT, "vite.config.ts"),
   join(ROOT, "playwright.config.ts"),
   join(ROOT, ".github", "workflows", "deploy.yml"),
@@ -51,7 +52,10 @@ describe("retracted claims do not come back", () => {
 
 describe("the disclosures stay where a reader will meet them", () => {
   const readme = readFileSync(join(ROOT, "README.md"), "utf8");
-  const html = readFileSync(join(ROOT, "index.html"), "utf8");
+  // The teaching exhibit moved to learn.html (the Learn/Lab route) when
+  // index.html became the Browser Edition; its honest-disclosure copy travels
+  // with it. index.html is still scanned for retracted phrases via FILES above.
+  const html = readFileSync(join(ROOT, "learn.html"), "utf8");
   const cli = readFileSync(join(ROOT, "src", "cli", "truepad-pad.ts"), "utf8");
 
   it("README: computational source, unauthenticated envelope, Wegman–Carter seam, backup limitation, no recommendation", () => {

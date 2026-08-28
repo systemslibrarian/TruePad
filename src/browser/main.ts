@@ -1,0 +1,396 @@
+/* ============================================================================
+ * TruePad 2 Browser Edition — application entry
+ * ----------------------------------------------------------------------------
+ * Spawns the crypto engine in a dedicated module Web Worker and talks to it
+ * over an id-keyed RPC: every request carries an `id`, the worker replies with
+ * the same `id`, and a Map of pending {resolve,reject} matches replies to
+ * callers. This module is the security boundary's UI side — it sends requests
+ * and renders replies, but never reads a pad byte, key, mask, or journal: those
+ * live only in the worker and its OPFS store. Uint8Array payloads bound for the
+ * worker are transferred (detaching the UI's copy), so plaintext and source
+ * bytes do not linger on this thread.
+ *
+ * The rest is a tiny hash router, a theme controller, and a toast tray. No
+ * framework — plain TS + DOM.
+ * ========================================================================= */
+
+import "./style.css";
+import { h, icon, mount } from "./ui/dom.ts";
+import type { Ctx, Engine, Reply, Route, ToastTone } from "./ui/context.ts";
+import type { EngineRequest, EngineResponse } from "./engine/protocol.ts";
+import { renderHome } from "./ui/home.ts";
+import { renderDashboard } from "./ui/dashboard.ts";
+import { renderCreate } from "./ui/create-pair.ts";
+import { renderSend } from "./ui/send.ts";
+import { renderOpen } from "./ui/open.ts";
+import { renderDestroy } from "./ui/destroy.ts";
+import { renderSecurity } from "./ui/security-status.ts";
+
+/* ---- worker RPC client -------------------------------------------------- */
+
+type Pending = { resolve: (r: EngineResponse) => void; reject: (e: unknown) => void };
+
+function collectTransfers(value: unknown, acc: Set<ArrayBuffer>): void {
+  if (value === null || typeof value !== "object") return;
+  if (ArrayBuffer.isView(value)) {
+    acc.add((value as ArrayBufferView).buffer as ArrayBuffer);
+    return;
+  }
+  if (value instanceof ArrayBuffer) {
+    acc.add(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const v of value) collectTransfers(v, acc);
+    return;
+  }
+  for (const v of Object.values(value)) collectTransfers(v, acc);
+}
+
+class WorkerEngine implements Engine {
+  readonly #worker: Worker;
+  readonly #pending = new Map<number, Pending>();
+  #nextId = 1;
+
+  constructor() {
+    this.#worker = new Worker(new URL("./engine/worker.ts", import.meta.url), { type: "module" });
+    this.#worker.addEventListener("message", (ev: MessageEvent) => {
+      const data = ev.data as EngineResponse;
+      const pending = this.#pending.get(data.id);
+      if (!pending) return;
+      this.#pending.delete(data.id);
+      pending.resolve(data);
+    });
+    this.#worker.addEventListener("error", (ev) => this.#failAll(ev.message || "worker error"));
+    this.#worker.addEventListener("messageerror", () => this.#failAll("worker message error"));
+  }
+
+  #failAll(message: string): void {
+    for (const [, pending] of this.#pending) pending.reject(new Error(message));
+    this.#pending.clear();
+  }
+
+  #call(payload: Omit<EngineRequest, "id">): Promise<EngineResponse> {
+    const id = this.#nextId++;
+    const request = { ...payload, id } as EngineRequest;
+    const transfers = new Set<ArrayBuffer>();
+    collectTransfers(request, transfers);
+    return new Promise<EngineResponse>((resolve, reject) => {
+      this.#pending.set(id, { resolve, reject });
+      try {
+        this.#worker.postMessage(request, [...transfers]);
+      } catch (err) {
+        this.#pending.delete(id);
+        reject(err);
+      }
+    });
+  }
+
+  listPairs(): Promise<Reply<"list-pairs">> {
+    return this.#call({ op: "list-pairs" }) as Promise<Reply<"list-pairs">>;
+  }
+  status(args: { pairId: string }): Promise<Reply<"status">> {
+    return this.#call({ op: "status", ...args }) as Promise<Reply<"status">>;
+  }
+  gen(args: Parameters<Engine["gen"]>[0]): Promise<Reply<"gen">> {
+    return this.#call({ op: "gen", ...args }) as Promise<Reply<"gen">>;
+  }
+  burn(args: Parameters<Engine["burn"]>[0]): Promise<Reply<"burn">> {
+    return this.#call({ op: "burn", ...args }) as Promise<Reply<"burn">>;
+  }
+  open(args: Parameters<Engine["open"]>[0]): Promise<Reply<"open">> {
+    return this.#call({ op: "open", ...args }) as Promise<Reply<"open">>;
+  }
+  retire(args: Parameters<Engine["retire"]>[0]): Promise<Reply<"retire">> {
+    return this.#call({ op: "retire", ...args }) as Promise<Reply<"retire">>;
+  }
+  clearFreeze(args: { pairId: string }): Promise<Reply<"clear-freeze">> {
+    return this.#call({ op: "clear-freeze", ...args }) as Promise<Reply<"clear-freeze">>;
+  }
+  destroy(args: Parameters<Engine["destroy"]>[0]): Promise<Reply<"destroy">> {
+    return this.#call({ op: "destroy", ...args }) as Promise<Reply<"destroy">>;
+  }
+  exportPair(args: { pairId: string }): Promise<Reply<"export-pair">> {
+    return this.#call({ op: "export-pair", ...args }) as Promise<Reply<"export-pair">>;
+  }
+  importPair(args: Parameters<Engine["importPair"]>[0]): Promise<Reply<"import-pair">> {
+    return this.#call({ op: "import-pair", ...args }) as Promise<Reply<"import-pair">>;
+  }
+}
+
+/* ---- theme -------------------------------------------------------------- */
+
+const THEME_KEY = "truepad2:theme";
+const root = document.documentElement;
+
+function storedTheme(): "light" | "dark" | null {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    return v === "light" || v === "dark" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+const systemDark = (): boolean => window.matchMedia("(prefers-color-scheme: dark)").matches;
+const effectiveDark = (): boolean => {
+  const s = storedTheme();
+  return s ? s === "dark" : systemDark();
+};
+
+function applyTheme(themeBtn?: HTMLElement): void {
+  const s = storedTheme();
+  if (s) root.setAttribute("data-theme", s);
+  else root.removeAttribute("data-theme");
+  const dark = effectiveDark();
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", dark ? "#11100c" : "#f4f0e6");
+  if (themeBtn) {
+    mount(themeBtn, icon(dark ? "sun" : "moon"));
+    themeBtn.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+    themeBtn.setAttribute("title", dark ? "Light theme" : "Dark theme");
+  }
+}
+
+function toggleTheme(themeBtn: HTMLElement): void {
+  const next = effectiveDark() ? "light" : "dark";
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    /* the toggle still applies for this session via the attribute below */
+    root.setAttribute("data-theme", next);
+  }
+  applyTheme(themeBtn);
+}
+
+/* ---- storage persistence probe ----------------------------------------- */
+
+async function probePersistent(): Promise<boolean | null> {
+  if (!navigator.storage || !navigator.storage.persisted) return null;
+  try {
+    return await navigator.storage.persisted();
+  } catch {
+    return null;
+  }
+}
+
+async function requestPersistent(): Promise<boolean> {
+  if (!navigator.storage || !navigator.storage.persist) return false;
+  try {
+    return await navigator.storage.persist();
+  } catch {
+    return false;
+  }
+}
+
+/* ---- shell -------------------------------------------------------------- */
+
+const app = document.getElementById("app");
+if (!app) throw new Error("missing #app root");
+
+const mainEl = h("main", { class: "main", id: "app-main", attrs: { tabindex: "-1" } });
+const bannerSlot = h("div", {});
+const toastTray = h("div", { class: "toast-tray", aria: { live: "polite" }, attrs: { role: "status" } });
+
+let themeBtn!: HTMLElement;
+let navPairs!: HTMLAnchorElement;
+let navSecurity!: HTMLAnchorElement;
+
+function buildShell(navigate: (r: Route) => void): void {
+  themeBtn = h("button", { class: "icon-btn", type: "button", on: { click: () => toggleTheme(themeBtn) } });
+  navPairs = h("a", { href: "#/", on: { click: (e) => { e.preventDefault(); navigate({ name: "home" }); } } }, h("span", { text: "Pairs" })) as HTMLAnchorElement;
+  navSecurity = h("a", { href: "#/security", on: { click: (e) => { e.preventDefault(); navigate({ name: "security" }); } } }, h("span", { text: "Security" })) as HTMLAnchorElement;
+  const navLearn = h("a", { href: "learn.html" }, h("span", { text: "Learn" }), icon("external"));
+
+  const brand = h(
+    "a",
+    { class: "brand", href: "#/", on: { click: (e) => { e.preventDefault(); navigate({ name: "home" }); } } },
+    h("span", { class: "mark" }, h("span", { text: "TruePad" }), h("span", { class: "two", text: " 2" })),
+    h("span", { class: "sub", text: "authenticated one-time pad" })
+  );
+
+  const topbar = h(
+    "header",
+    { class: "topbar" },
+    brand,
+    h("div", { class: "topbar-spacer" }),
+    h("nav", { class: "topnav", aria: { label: "Primary" } }, navPairs, navSecurity, navLearn),
+    themeBtn
+  );
+
+  const footer = h(
+    "footer",
+    { class: "footer" },
+    h("span", { text: "TruePad 2 · MIT licensed · runs entirely in your browser, no backend, no accounts, no sync." }),
+    h("span", { class: "topbar-spacer" }),
+    h("a", { href: "learn.html" }, h("span", { text: "Teaching Lab" })),
+    h("a", { href: "https://github.com/systemslibrarian/TruePad", attrs: { target: "_blank", rel: "noreferrer noopener" } }, h("span", { text: "Source" })),
+    h("span", { class: "motto", text: "never spend a bit twice" })
+  );
+
+  const skip = h("a", { class: "skip-link", href: "#app-main" }, h("span", { text: "Skip to content" }));
+
+  mount(app!, skip, h("div", { class: "app" }, topbar, bannerSlot, mainEl, footer), toastTray);
+  applyTheme(themeBtn);
+}
+
+function setActiveNav(route: Route): void {
+  const isSecurity = route.name === "security";
+  navSecurity.style.color = isSecurity ? "var(--text)" : "";
+  navSecurity.style.background = isSecurity ? "var(--surface-2)" : "";
+  navPairs.style.color = isSecurity ? "" : "var(--text)";
+  navPairs.style.background = isSecurity ? "" : "";
+}
+
+/* ---- toasts ------------------------------------------------------------- */
+
+function toast(message: string, tone: ToastTone = "info"): void {
+  const node = h("div", { class: `toast ${tone}`, text: message });
+  toastTray.appendChild(node);
+  setTimeout(() => node.remove(), 4200);
+}
+
+/* ---- storage banner ----------------------------------------------------- */
+
+function showStorageBanner(persistent: boolean | null, navigate: (r: Route) => void): void {
+  if (persistent !== false) {
+    mount(bannerSlot);
+    return;
+  }
+  let dismissed = false;
+  try {
+    dismissed = sessionStorage.getItem("truepad2:banner-dismissed") === "1";
+  } catch {
+    /* ignore */
+  }
+  if (dismissed) {
+    mount(bannerSlot);
+    return;
+  }
+  mount(
+    bannerSlot,
+    h(
+      "div",
+      { class: "main", style: "padding-top:1rem;padding-bottom:0" },
+      h(
+        "div",
+        { class: "warning-banner", role: "status" },
+        h("span", { text: "This browser context may not retain storage (a private window, or an evictable store). Your pads could vanish. Keep a couriered copy, and consider requesting persistent storage." }),
+        h(
+          "span",
+          { class: "row" },
+          h("button", { class: "btn small", type: "button", on: { click: () => navigate({ name: "security" }) } }, h("span", { text: "Details" })),
+          h("button", { class: "btn small ghost", type: "button", on: { click: () => { try { sessionStorage.setItem("truepad2:banner-dismissed", "1"); } catch { /* ignore */ } mount(bannerSlot); } } }, h("span", { text: "Dismiss" }))
+        )
+      )
+    )
+  );
+}
+
+/* ---- router ------------------------------------------------------------- */
+
+function parseHash(): Route {
+  const raw = location.hash.replace(/^#\/?/, "");
+  const parts = raw.split("/").filter((p) => p.length > 0);
+  if (parts.length === 0) return { name: "home" };
+  if (parts[0] === "create") return { name: "create" };
+  if (parts[0] === "security") return { name: "security" };
+  if (parts[0] === "pair" && parts[1]) {
+    const pairId = decodeURIComponent(parts[1]);
+    if (parts[2] === "send") return { name: "send", pairId };
+    if (parts[2] === "open") return { name: "open", pairId };
+    if (parts[2] === "destroy") return { name: "destroy", pairId };
+    return { name: "pair", pairId };
+  }
+  return { name: "home" };
+}
+
+function formatHash(route: Route): string {
+  switch (route.name) {
+    case "home":
+      return "#/";
+    case "create":
+      return "#/create";
+    case "security":
+      return "#/security";
+    case "pair":
+      return `#/pair/${encodeURIComponent(route.pairId)}`;
+    case "send":
+      return `#/pair/${encodeURIComponent(route.pairId)}/send`;
+    case "open":
+      return `#/pair/${encodeURIComponent(route.pairId)}/open`;
+    case "destroy":
+      return `#/pair/${encodeURIComponent(route.pairId)}/destroy`;
+  }
+}
+
+async function bootstrap(): Promise<void> {
+  const engine = new WorkerEngine();
+
+  const navigate = (route: Route): void => {
+    const next = formatHash(route);
+    if (location.hash === next) void render();
+    else location.hash = next;
+  };
+
+  buildShell(navigate);
+
+  const persistent = await probePersistent();
+  showStorageBanner(persistent, navigate);
+
+  const ctx: Ctx = {
+    engine,
+    navigate,
+    toast,
+    storagePersistent: persistent,
+    requestPersistent
+  };
+
+  async function render(): Promise<void> {
+    const route = parseHash();
+    setActiveNav(route);
+    mount(mainEl, h("p", { class: "muted", text: "Loading…" }));
+    try {
+      switch (route.name) {
+        case "home":
+          await renderHome(ctx, mainEl);
+          break;
+        case "create":
+          await renderCreate(ctx, mainEl);
+          break;
+        case "pair":
+          await renderDashboard(ctx, mainEl, route.pairId);
+          break;
+        case "send":
+          await renderSend(ctx, mainEl, route.pairId);
+          break;
+        case "open":
+          await renderOpen(ctx, mainEl, route.pairId);
+          break;
+        case "destroy":
+          await renderDestroy(ctx, mainEl, route.pairId);
+          break;
+        case "security":
+          await renderSecurity(ctx, mainEl);
+          break;
+      }
+    } catch (err) {
+      mount(
+        mainEl,
+        h(
+          "div",
+          { class: "callout danger", role: "alert" },
+          h("div", { class: "co-title" }, h("span", { text: "Something went wrong" })),
+          h("div", { class: "co-body", text: err instanceof Error ? err.message : String(err) })
+        )
+      );
+    }
+    mainEl.focus();
+  }
+
+  window.addEventListener("hashchange", () => void render());
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(themeBtn));
+  await render();
+}
+
+void bootstrap();
