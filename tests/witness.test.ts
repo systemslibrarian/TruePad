@@ -75,7 +75,10 @@ function emptyWitness(path: string): void {
   writeFileSync(path, JSON.stringify({ formatVersion: 2, witness: {} }));
 }
 
-function readWitness(path: string): { formatVersion: number; witness: Record<string, { encryptionNextOffset: number; authenticationNextSequence: number }> } {
+function readWitness(path: string): {
+  formatVersion: number;
+  witness: Record<string, { encryptionNextOffset: number; authenticationNextSequence: number; attemptsReserved: number }>;
+} {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
@@ -114,14 +117,23 @@ describe("rollback witness end to end", { timeout: 120_000 }, () => {
 
     const burn = run("burn", a, "--as", "A", "attack at dawn"); // 14 bytes, seq 0
     expect(burn.code).toBe(0);
-    // A's witness advanced to the new high-water.
-    expect(readWitness(wa).witness[key]).toEqual({ encryptionNextOffset: 14, authenticationNextSequence: 1 });
+    // A's witness advanced to the new high-water; a burn reserves no attempt.
+    expect(readWitness(wa).witness[key]).toEqual({
+      encryptionNextOffset: 14,
+      authenticationNextSequence: 1,
+      attemptsReserved: 0
+    });
 
     const opened = run("open", b, "--as", "B", burn.stdout.trim());
     expect(opened.code).toBe(0);
     expect(opened.stdout.trim()).toBe("attack at dawn");
-    // B's own witness advanced independently, to the same position on B's copy.
-    expect(readWitness(wb).witness[key]).toEqual({ encryptionNextOffset: 14, authenticationNextSequence: 1 });
+    // B's own witness advanced independently; the successful open reserved one
+    // attempt (recorded at O3), so B's attemptsReserved is 1.
+    expect(readWitness(wb).witness[key]).toEqual({
+      encryptionNextOffset: 14,
+      authenticationNextSequence: 1,
+      attemptsReserved: 1
+    });
   });
 
   it("§9.4 (a) whole-directory restore below the witness is refused witness-regressed, nothing consumed", () => {
@@ -159,6 +171,53 @@ describe("rollback witness end to end", { timeout: 120_000 }, () => {
     expect(attempt.stdout).toBe("");
     // Nothing consumed: the journal is byte-identical to the restored snapshot.
     expect(readFileSync(join(b, "a-to-b", "journal.log")).equals(journalBefore)).toBe(true);
+  });
+
+  it("§15.1/§5.3 attempt-budget rollback: restoring the pair to refill a contested record's guesses is refused witness-regressed", () => {
+    // The attack the high-water witness alone missed: failed authentications
+    // reserve attempts WITHOUT moving the high-waters, so a witness recording
+    // only the high-waters would not notice a restore that resets
+    // perSequenceAttempts. attemptsReserved closes it.
+    const a = join(dir, "a");
+    const wit = join(dir, "wit.json");
+    // verify-attempt-limit 2 so the record contests after two guesses.
+    const source = sourceFile(2 * (64 + 32 * 8));
+    expect(
+      run(
+        "gen", a, "--source", source, "--encryption-bytes", "64", "--auth-records", "8",
+        "--verify-attempt-limit", "2",
+        "--witness-class", "separate-state-file", "--witness-path", wit
+      ).code
+    ).toBe(0);
+    emptyWitness(wit);
+    const pairId = JSON.parse(readFileSync(join(a, "a-to-b", "head.json"), "utf8")).pairId as string;
+    const forge = JSON.stringify({
+      formatVersion: 2, pairId, direction: "A->B", sequence: 0, startOffset: 0,
+      ciphertextLength: 4, ciphertext: "deadbeef", tag: "0".repeat(32)
+    });
+
+    // Back up the PAIR ONLY — the witness stays in its separate domain.
+    const backup = join(dir, "backup");
+    cpSync(a, backup, { recursive: true });
+
+    // Round 1: exhaust the 2 attempts on sequence 0; the record contests.
+    expect(run("open", a, "--as", "B", forge).stderr).toContain("refused: auth-failed");
+    expect(run("open", a, "--as", "B", forge).stderr).toContain("refused: auth-failed");
+    expect(run("open", a, "--as", "B", forge).stderr).toContain("refused: sequence-contested");
+    // The witness recorded the two reservations.
+    expect(readWitness(wit).witness[`${pairId}/A->B`].attemptsReserved).toBe(2);
+
+    // Restore the pair only; the witness (still recording attemptsReserved=2) is untouched.
+    rmSync(a, { recursive: true, force: true });
+    cpSync(backup, a, { recursive: true });
+
+    // Round 2: every attempt is refused witness-regressed — no fresh guesses.
+    for (let i = 0; i < 3; i += 1) {
+      const attempt = run("open", a, "--as", "B", forge);
+      expect(attempt.code).toBe(2);
+      expect(attempt.stderr).toContain("refused: witness-regressed");
+      expect(attempt.stderr).toContain("attempt budget");
+    }
   });
 
   it("§9.4 (b) mismatched restore of head.json+journal.log (secret.bin kept) is refused before any verification", () => {

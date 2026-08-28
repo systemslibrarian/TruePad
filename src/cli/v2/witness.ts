@@ -38,7 +38,19 @@ import { accessSync, closeSync, constants, fsyncSync, openSync, readFileSync, re
 import { dirname } from "node:path";
 import type { PadDirection } from "../../core/pad.ts";
 
-export type WitnessCounters = { encryptionNextOffset: number; authenticationNextSequence: number };
+// The three monotone quantities a witness records. The two high-waters catch
+// a restore that would REUSE material (§9.4). attemptsReserved — the total
+// verification attempts ever reserved for this (pair, direction) — catches a
+// restore that would refill the per-record attempt budget: failed
+// authentications reserve attempts without moving the high-waters, so a
+// pair backup-restore could otherwise reset perSequenceAttempts and hand the
+// attacker verifyAttemptLimit fresh guesses per restore, defeating §5's
+// finite-forgery bound. All three are non-secret counters (N17).
+export type WitnessCounters = {
+  encryptionNextOffset: number;
+  authenticationNextSequence: number;
+  attemptsReserved: number;
+};
 
 // key: `${pairId}/${direction}` — one entry per (pair, direction).
 export type WitnessFile = { formatVersion: 2; witness: Record<string, WitnessCounters> };
@@ -72,20 +84,31 @@ function validateWitnessFile(raw: unknown): { file: WitnessFile } | { why: strin
   if (!isRecord(raw.witness)) {
     return { why: "witness must be an object mapping <pairId>/<direction> to counters" };
   }
+  const allowed = new Set(["encryptionNextOffset", "authenticationNextSequence", "attemptsReserved"]);
   const witness: Record<string, WitnessCounters> = {};
   for (const [key, value] of Object.entries(raw.witness)) {
     if (!isRecord(value)) {
       return { why: `witness["${key}"] is not an object` };
     }
     const keys = Object.keys(value);
-    if (keys.length !== 2 || !isSafeCount(value.encryptionNextOffset) || !isSafeCount(value.authenticationNextSequence)) {
+    // The two high-waters are required; attemptsReserved is optional (an
+    // entry written before this field existed reads as 0). No other keys.
+    if (
+      !isSafeCount(value.encryptionNextOffset) ||
+      !isSafeCount(value.authenticationNextSequence) ||
+      (value.attemptsReserved !== undefined && !isSafeCount(value.attemptsReserved)) ||
+      keys.some((k) => !allowed.has(k))
+    ) {
       return {
-        why: `witness["${key}"] must be exactly { encryptionNextOffset, authenticationNextSequence } with safe integers >= 0`
+        why:
+          `witness["${key}"] must be { encryptionNextOffset, authenticationNextSequence[, attemptsReserved] } ` +
+          "with safe integers >= 0 and no other keys"
       };
     }
     witness[key] = {
       encryptionNextOffset: value.encryptionNextOffset,
-      authenticationNextSequence: value.authenticationNextSequence
+      authenticationNextSequence: value.authenticationNextSequence,
+      attemptsReserved: (value.attemptsReserved as number | undefined) ?? 0
     };
   }
   return { file: { formatVersion: 2, witness } };
@@ -252,13 +275,13 @@ export function advanceWitness(path: string, pairId: string, direction: PadDirec
     file = validated.file;
   }
   const key = keyOf(pairId, direction);
-  const prev = file.witness[key];
-  file.witness[key] =
-    prev === undefined
-      ? { encryptionNextOffset: counters.encryptionNextOffset, authenticationNextSequence: counters.authenticationNextSequence }
-      : {
-          encryptionNextOffset: Math.max(prev.encryptionNextOffset, counters.encryptionNextOffset),
-          authenticationNextSequence: Math.max(prev.authenticationNextSequence, counters.authenticationNextSequence)
-        };
+  const prev = file.witness[key] ?? { encryptionNextOffset: 0, authenticationNextSequence: 0, attemptsReserved: 0 };
+  // MONOTONE on every field: elementwise maximum, so an out-of-order or
+  // replayed advance never lowers a recorded position or the attempt count.
+  file.witness[key] = {
+    encryptionNextOffset: Math.max(prev.encryptionNextOffset, counters.encryptionNextOffset),
+    authenticationNextSequence: Math.max(prev.authenticationNextSequence, counters.authenticationNextSequence),
+    attemptsReserved: Math.max(prev.attemptsReserved, counters.attemptsReserved)
+  };
   writeWitnessDurably(path, JSON.stringify(file));
 }

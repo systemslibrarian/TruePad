@@ -385,20 +385,24 @@ function witnessPreflight(store: LoadedStore2): void {
     throw new Refused2(writable.reason, writable.message);
   }
   if (result.counters !== null) {
-    const { encryptionNextOffset, authenticationNextSequence } = result.counters;
+    const { encryptionNextOffset, authenticationNextSequence, attemptsReserved } = result.counters;
     if (
       store.effective.nextOffset < encryptionNextOffset ||
-      store.effective.nextSequence < authenticationNextSequence
+      store.effective.nextSequence < authenticationNextSequence ||
+      store.effective.attemptsReserved < attemptsReserved
     ) {
       throw new Refused2(
         "witness-regressed",
         `this store is behind its rollback witness: the witness at ${path} records encryptionNextOffset ` +
-          `${encryptionNextOffset} and authenticationNextSequence ${authenticationNextSequence}, but this store is ` +
-          `at nextOffset ${store.effective.nextOffset} and nextSequence ${store.effective.nextSequence}. A store ` +
-          "below its witness is the restored-store signature (FORMAT-V2.md §9.4): head.json and journal.log were " +
-          "rolled back together — whole-directory or the both-files partial restore the load-time mark check cannot " +
-          "see — while the witness, in its separate failure domain, remembers the true high-water. Refusing before " +
-          "anything is consumed. Nothing was burned."
+          `${encryptionNextOffset}, authenticationNextSequence ${authenticationNextSequence}, and attemptsReserved ` +
+          `${attemptsReserved}, but this store is ` +
+          `at nextOffset ${store.effective.nextOffset}, nextSequence ${store.effective.nextSequence}, and ` +
+          `attemptsReserved ${store.effective.attemptsReserved}. A store below its witness is the restored-store ` +
+          "signature (FORMAT-V2.md §9.4): head.json and journal.log were rolled back together — whole-directory or " +
+          "the both-files partial restore the load-time mark check cannot see — while the witness, in its separate " +
+          "failure domain, remembers the true high-water and attempt budget (a restore that only rolled back the " +
+          "attempt count would otherwise refill a contested record's guesses). Refusing before anything is " +
+          "consumed. Nothing was burned."
       );
     }
   }
@@ -464,10 +468,12 @@ function witnessReport(store: LoadedStore2): WitnessReport {
   }
   const behind =
     store.effective.nextOffset < result.counters.encryptionNextOffset ||
-    store.effective.nextSequence < result.counters.authenticationNextSequence;
+    store.effective.nextSequence < result.counters.authenticationNextSequence ||
+    store.effective.attemptsReserved < result.counters.attemptsReserved;
   const aligned =
     store.effective.nextOffset === result.counters.encryptionNextOffset &&
-    store.effective.nextSequence === result.counters.authenticationNextSequence;
+    store.effective.nextSequence === result.counters.authenticationNextSequence &&
+    store.effective.attemptsReserved === result.counters.attemptsReserved;
   return {
     witnessClass: "separate-state-file",
     path,
@@ -844,7 +850,12 @@ export function burn(args: Args2): void {
 
     // §15.3 advance — after the durable commit, before the emit. A witness
     // write failure withholds the envelope (the material is already retired).
-    witnessAdvance(store, { encryptionNextOffset: startOffset + c, authenticationNextSequence: sequence + 1 });
+    // burn reserves no verification attempt, so attemptsReserved is unchanged.
+    witnessAdvance(store, {
+      encryptionNextOffset: startOffset + c,
+      authenticationNextSequence: sequence + 1,
+      attemptsReserved: store.effective.attemptsReserved
+    });
 
     // S3 — only now does the envelope exist outside this process.
     out(encodeEnvelope2(envelope));
@@ -962,6 +973,19 @@ export function open(args: Args2): void {
     reserveAttempt(halfDir, sequence);
     const attemptsNow = attempts + 1;
 
+    // §15.3 advance the witness with the new attempt total, still BEFORE the
+    // verification — so a later backup-restore that rolls the attempt budget
+    // back is refused witness-regressed at preflight. Failed authentications
+    // do not move the high-waters, so without this the witness would never
+    // learn about the attacker's guesses. A write failure here is the §15.3
+    // loss row: the attempt is durable (consumed, the safe direction), the
+    // output is not yet reachable, and the next op refuses free.
+    witnessAdvance(store, {
+      encryptionNextOffset: effective.nextOffset,
+      authenticationNextSequence: effective.nextSequence,
+      attemptsReserved: effective.attemptsReserved + 1
+    });
+
     // O4 — verify over canonical bytes.
     const { key, mask } = readAuthRecord(halfDir, head, sequence);
     const pairIdBytes = hexToBytes(head.pairId);
@@ -1044,8 +1068,12 @@ export function open(args: Args2): void {
 
     // §15.3 advance — after the durable commit (O5), before the release (O6).
     // A witness write failure withholds the plaintext (material already
-    // retired).
-    witnessAdvance(store, { encryptionNextOffset: startOffset + c, authenticationNextSequence: sequence + 1 });
+    // retired). attemptsReserved already advanced at O3; carry it forward.
+    witnessAdvance(store, {
+      encryptionNextOffset: startOffset + c,
+      authenticationNextSequence: sequence + 1,
+      attemptsReserved: effective.attemptsReserved + 1
+    });
 
     // §16.2: on a fixed store the decrypted bytes are the frame; the length
     // prefix selects the released plaintext. A prefix past F − 4 cannot come
@@ -1279,8 +1307,13 @@ export function retire(args: Args2): void {
       at: new Date().toISOString()
     });
     // §15.3 advance — after the durable commit. A witness write failure exits
-    // 1 with the loss row; the retire is durable regardless.
-    witnessAdvance(store, { encryptionNextOffset: newNextOffset, authenticationNextSequence: newNextSequence });
+    // 1 with the loss row; the retire is durable regardless. retire reserves
+    // no verification attempt, so attemptsReserved is unchanged.
+    witnessAdvance(store, {
+      encryptionNextOffset: newNextOffset,
+      authenticationNextSequence: newNextSequence,
+      attemptsReserved: effective.attemptsReserved
+    });
     // Retired material stays physically present in secret.bin; the durable
     // counters above are the retirement (§1.2). "Destroyed" below is the
     // channel's meaning — never usable again — not physical erasure.

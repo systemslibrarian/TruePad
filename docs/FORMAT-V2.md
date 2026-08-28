@@ -476,8 +476,17 @@ P[forge any record in the
 ```
 
 finite by construction and crash-safe by the reservation invariant (a crash
-loses an attempt, never grants one — §12). These bounds are per the stated
-defaults; a store generated with different `verifyAttemptLimit` or
+loses an attempt, never grants one — §12). One honest scope note: the
+reservation invariant makes the per-record attempt count *crash*-safe, not
+*restore*-safe. A backup-restore of the pair can roll `perSequenceAttempts`
+back to an earlier value — failed authentications reserve attempts without
+moving the high-waters, so the load-time mark check cannot see the
+regression — handing an attacker `verifyAttemptLimit` fresh guesses per
+restore. This is closed for a store with a configured rollback witness,
+which records `attemptsReserved` and refuses the restored store
+`witness-regressed` (§15.1, §15.4, N18a); at `witnessClass: "none"` it is
+part of §9.4's stated backup-restore residual. These bounds are per the
+stated defaults; a store generated with different `verifyAttemptLimit` or
 `maxAuthLookahead` substitutes its own values into the same expressions.
 
 ### 5.4 What this bound does not say
@@ -840,10 +849,16 @@ domain, the two-time-pad regression above becomes the typed refusal
 `head.json`/`journal.log` — whole-directory or the both-files-together
 partial restore the load-time mark check cannot see — carries
 high-waters below what the witness recorded, and the store refuses to
-move. At the default `witnessClass: "none"` — every store that does not
-opt in — **this residual stands exactly as written above**, and the
-per-class strength caveats of §15 apply: a separate state file is only as
-unrestorable as the domain it lives in.
+move. The witness also records `attemptsReserved`, so a restore that
+rolls back ONLY the per-record attempt budget — refilling a contested
+record's guesses without regressing the high-waters — is caught the same
+way (§15.1, §5.3). At the default `witnessClass: "none"` — every store
+that does not opt in — **this residual stands exactly as written above,
+and now also covers the attempt-budget rollback**: a backup-restore resets
+`perSequenceAttempts`, so the finite-forgery bound is crash-safe but not
+restore-safe without a witness. The per-class strength caveats of §15
+apply: a separate state file is only as unrestorable as the domain it
+lives in.
 
 ---
 
@@ -1388,9 +1403,10 @@ an implementation exists; the mathematics in N6–N7 holds now.
 | N13 | Required durability ordering at gen: `secret.bin` durable before `head.json` and the `init` line exist (§12.4). After gen, no v2 operation writes `secret.bin` except `destroy`'s terminal teardown (§17.2), which overwrites then unlinks it — `burn`/`open`/`retire` never rewrite it (§1.2). | §1.2, §12.4, §17.2 |
 | N14 | `sourceDeclarations` entries in `head.json` contain no hash, checksum, fingerprint, or any other value derived from pad bytes. | §1.1 |
 | N15 | With a witness configured, `burn`/`open`/`retire` refuse `witness-unreachable` or `witness-inconsistent` before anything is consumed when the witness cannot be read or fails its shape. | §15.3 |
-| N16 | Store high-waters strictly below the witness record refuse `witness-regressed` before anything is consumed — a restored store cannot move. | §15.3, §9.4 |
-| N17 | A witness file contains only pairId, direction, and the two counters — never a pad byte, key, mask, plaintext, or ciphertext. | §15.1 |
+| N16 | Store high-waters OR `attemptsReserved` strictly below the witness record refuse `witness-regressed` before anything is consumed — a restored store cannot move, and cannot refill a contested record's attempt budget. | §15.3, §9.4 |
+| N17 | A witness file contains only pairId, direction, and the three monotone counters (two high-waters + `attemptsReserved`) — never a pad byte, key, mask, plaintext, or ciphertext. | §15.1 |
 | N18 | `witnessClass` platform-monotonic or remote-monotonic is refused `witness-unsupported` at gen and at load — never silently downgraded to a weaker class. | §15.2 |
+| N18a | With a witness configured, a restore that rolls back the per-record attempt budget (failed authentications reserve attempts without moving the high-waters) is refused `witness-regressed`, so §5's finite-forgery bound is restore-safe, not only crash-safe. | §15.1, §15.4 |
 | N19 | A fixed-record store refuses a valid-range `ciphertextLength ≠ F` structurally (`record-size-mismatch`), costing nothing durable; a `ciphertextLength > maxCiphertextBytes` is still refused first by §4's oversize check (`oversize-ciphertext`), also free. | §16.2 |
 | N20 | For a fixed-record store, the per-attempt forgery bound is exactly `(4 + F/16) · 2^-128`. | §16 |
 | N21 | `destroy` refuses without the matching confirmation (`destroy-unconfirmed`) touching nothing; after it succeeds, `secret.bin`, `head.json`, and `journal.log` are gone, the tombstone records the intent, and no erasure of the medium is claimed. | §17 |
@@ -1467,11 +1483,23 @@ non-regression.**
 Per (pair, direction), a witness holds exactly one record:
 
 ```
-WitnessRecord = { pairId, direction, encryptionNextOffset, authenticationNextSequence }
+WitnessRecord = { pairId, direction, encryptionNextOffset,
+                  authenticationNextSequence, attemptsReserved }
 ```
 
-Never pad contents, hash keys, masks, plaintext, or ciphertext — the
-witness sees counters, nothing else. That is the content-confidentiality
+Three monotone counters. The two high-waters catch a restore that would
+REUSE material (§9.4). **`attemptsReserved`** — the total verification
+attempts ever reserved for this (pair, direction) — catches a restore
+that would refill the per-record attempt budget: a failed authentication
+reserves an attempt WITHOUT moving the high-waters (§12.3 O3, O4-fail), so
+a witness recording only the high-waters would never learn about an
+attacker's guesses, and a pair backup-restore could reset
+`perSequenceAttempts` and hand the attacker `verifyAttemptLimit` fresh
+guesses per restore — defeating §5's finite-forgery bound. The witness is
+advanced with `attemptsReserved` at the reservation itself (O3, before
+verification), so a restored store below it is refused `witness-regressed`
+before anything is consumed. Still counters only: never pad contents, hash
+keys, masks, plaintext, or ciphertext — that is the content-confidentiality
 half of the claim. The metadata half is smaller and stated: any witness
 observes burn timing and counter progression; a REMOTE witness would
 observe them off-host (message timing, byte volume, message count —
@@ -1484,8 +1512,10 @@ stated tradeoff, not a hidden one.
 - `"separate-state-file"` — implemented. Config `{ "path": <absolute
   path> }`: a JSON witness file, atomic-replace + fsync per §10, 0600,
   holding `{ "formatVersion": 2, "witness": { "<pairId>/<direction>":
-  { "encryptionNextOffset": n, "authenticationNextSequence": n } } }`.
-  One file may witness several pairs. Its strength caveat, verbatim from
+  { "encryptionNextOffset": n, "authenticationNextSequence": n,
+  "attemptsReserved": n } } }`. (`attemptsReserved` is optional in a
+  parsed entry — an entry written before this field existed reads as 0 —
+  but every advance writes it.) One file may witness several pairs. Its strength caveat, verbatim from
   the architecture: an independent backup/failure domain, **NOT
   intrinsically monotonic (a second device can be restored too)** — a
   witness file restored from ITS backup regresses the witness, and an
@@ -1514,18 +1544,25 @@ but refuses nothing (it is read-only). Two touchpoints:
   (the advance below writes there, so an unwritable witness is caught
   now rather than after the store commits) → `witness-unreachable`; it
   parses but violates its own shape → `witness-inconsistent`; the
-  store's effective high-waters are strictly below the witness record's →
-  `witness-regressed`. All FAIL CLOSED and consume nothing — witness
+  store's effective high-waters OR its `attemptsReserved` are strictly
+  below the witness record's → `witness-regressed`. All FAIL CLOSED and
+  consume nothing — witness
   outage is an availability failure, never a silent downgrade. The store
   being AHEAD of the witness is the benign crash signature (§15.3's
   advance ordering below) and passes. A present-but-empty (or
   whitespace-only) witness file is the fresh bootstrap — no entry yet,
   passes — distinct from a non-empty shape-violating file, which is
   `witness-inconsistent`.
-- **ADVANCE**, after the §12 durable commit and before the emit (between
-  S2 and S3; between O5 and O6; after retire's commit): write the new
-  high-waters to the witness durably. If the write fails, the material is
-  already retired and the envelope or plaintext MUST NOT be released —
+- **ADVANCE**, at two points, each writing the witness durably (monotone,
+  elementwise maximum on all three counters). (1) **At the reservation**
+  (O3), before verification: record the incremented `attemptsReserved`.
+  This is what makes a rolled-back attempt budget detectable — the
+  witness learns of each guess as it is reserved, not only when the
+  high-waters move. (2) **After the §12 durable commit and before the
+  emit** (between S2 and S3; between O5 and O6; after retire's commit):
+  write the new high-waters. If either write fails, the material or the
+  attempt is already durable and the envelope or plaintext MUST NOT be
+  released —
   the same loss row as a crash between commit and emit (§12: material,
   never reuse). Because the preflight probes writability, an unwritable
   witness refuses free BEFORE the store commits, so the availability
@@ -1537,11 +1574,17 @@ but refuses nothing (it is read-only). Two touchpoints:
 
 ### 15.4 What this closes, and what it does not
 
-For a witnessed store, both §9.4 variants — whole-directory restore and
+For a witnessed store, both §9.4 restore variants — whole-directory and
 the mismatched per-file restore — become `witness-regressed` refusals
-before any burn. What it does not do: protect a store whose witness file
-shares the store's failure domain (the §15.2 caveat), protect at
-`witnessClass: "none"`, verify pad material content (§1.2: content never
+before any burn, and so does a restore that rolls back ONLY the attempt
+budget (a contested record's guesses cannot be refilled by restoring the
+pair): the witness's `attemptsReserved` makes §5's finite-forgery bound
+restore-safe for a witnessed store, not only crash-safe. What it does not
+do: protect a store whose witness file shares the store's failure domain
+(the §15.2 caveat — a witness restored or emptied alongside the pair
+knows nothing), protect at `witnessClass: "none"` (there, §5's bound is
+crash-safe but a backup-restore resets the attempt budget, and §9.4's
+residual stands), verify pad material content (§1.2: content never
 decides liveness), or hide the counters from whoever holds the witness.
 
 ---
