@@ -316,6 +316,28 @@ describe("destruction boundary (FORMAT-V2.md §17.3)", { timeout: 120_000 }, () 
     expect(after).toBe(secretHash);
   });
 
+  it("ceremony verify also refuses a tombstoned medium pair-destroyed (N21a, the sixth verb)", () => {
+    const a = join(dir, "a");
+    const pairId = gen(a);
+    tombstone(a, pairId);
+    const r = run2("ceremony", "verify", a);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("refused: pair-destroyed");
+  });
+
+  it("gen refuses to provision a fresh pair into a tombstoned directory (§17.3 defense-in-depth)", () => {
+    const a = join(dir, "a");
+    const pairId = gen(a);
+    // Fully destroy, leaving the tombstone.
+    expect(run2("destroy", a, "--confirm", pairId).code).toBe(0);
+    // A new gen at the same (tombstoned) path is refused, not silently created.
+    const regen = run2("gen", a, "--source", src(2 * (64 + 32 * 8)), "--encryption-bytes", "64", "--auth-records", "8");
+    expect(regen.code).toBe(2);
+    expect(regen.stderr).toContain("refused: pair-destroyed");
+    // No fresh store was written.
+    expect(existsSync(join(a, "a-to-b", "head.json"))).toBe(false);
+  });
+
   it("tombstone + PARTIALLY-ZEROED secret body: the partial secret is never consumed", () => {
     const a = join(dir, "a");
     const pairId = gen(a);

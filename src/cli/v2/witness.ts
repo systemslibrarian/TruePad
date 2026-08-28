@@ -8,10 +8,12 @@
  *
  *   <path>  a JSON witness file (§15.2), 0600, rewritten atomically per §10:
  *           { "formatVersion": 2, "witness": { "<pairId>/<direction>":
- *             { "encryptionNextOffset": n, "authenticationNextSequence": n } } }
- *           One file may witness several pairs. It holds counters and nothing
- *           else — never a pad byte, key, mask, plaintext, or ciphertext
- *           (§15.1, ledger N17).
+ *             { "encryptionNextOffset": n, "authenticationNextSequence": n,
+ *               "attemptsReserved": n } } }
+ *           The entry is FROZEN as exactly those three required counters
+ *           (§15.2). One file may witness several pairs. It holds counters
+ *           and nothing else — never a pad byte, key, mask, plaintext, or
+ *           ciphertext (§15.1, ledger N17).
  *
  * Two operations, matching §15.3's two touchpoints:
  *   readWitnessCounters — PREFLIGHT: fail closed. A missing or unreadable file

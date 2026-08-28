@@ -265,8 +265,9 @@ later operation refuses free until the witness is writable again. The strength i
 what the mechanism gives — a witness is only as monotonic as the mechanism
 enforcing its non-regression: a separate state file is an independent
 failure domain, not intrinsically monotonic, and an emptied or restored
-witness knows nothing. The witness sees only the two counters, never a pad
-byte, key, mask, plaintext, or ciphertext (§15.1); a remote witness
+witness knows nothing. The witness sees only the three counters (the two
+high-waters plus `attemptsReserved`), never a pad byte, key, mask,
+plaintext, or ciphertext (§15.1); a remote witness
 (specified, unimplemented, refused `witness-unsupported`) would in addition
 observe burn timing and byte volume off-host, which is why the local class
 is the one that ships. At the default `witnessClass: none` there is no

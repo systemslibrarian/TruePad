@@ -400,6 +400,16 @@ function metersOf(store: LoadedStore2): VerifyMeters {
 /* ---- ceremony create ------------------------------------------------------- */
 
 function requireUnprovisioned(medium: string): void {
+  // A tombstoned medium (§17.3) is past the destruction boundary: never
+  // provision a fresh pair onto it. Typed pair-destroyed like every other
+  // consuming path that meets a tombstone.
+  if (existsSync(join(medium, "destroyed.json"))) {
+    throw new Refused2(
+      "pair-destroyed",
+      `${medium} carries a durable destroyed.json: this medium held a destroyed pair (§17.3) and must not be ` +
+        "reprovisioned. Use fresh media. Nothing was written."
+    );
+  }
   for (const direction of ["A->B", "B->A"] as const) {
     const half = join(medium, SUBDIR2[direction]);
     if (existsSync(join(half, HEAD_FILE)) || existsSync(join(half, "pad.json"))) {

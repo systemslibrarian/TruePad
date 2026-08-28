@@ -573,6 +573,10 @@ function recordSpecFromFlag(recordBytes: string | undefined): RecordSpec {
 
 export function gen(args: Args2): void {
   const dir = dirArg(args, "gen");
+  // A tombstoned directory has crossed the §17.3 boundary: never provision a
+  // fresh pair into it (it would be dead on arrival, and it would spend
+  // ceremony-grade source material at a path no verb can use).
+  requireNotDestroyed(dir);
   const sourcePaths = args.flags.get("source") ?? [];
   const origins = args.flags.get("origin") ?? [];
   if (sourcePaths.length === 0) {

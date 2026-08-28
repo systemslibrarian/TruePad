@@ -69,6 +69,10 @@ describe("README v2 section: the load-bearing sentences stay", () => {
     [
       "a message may hold at most `F − 4` bytes",
       "§16.1: the fixed-record plaintext capacity, and its pad-spend price"
+    ],
+    [
+      "The witness sees only the three counters (the two high-waters plus `attemptsReserved`)",
+      "§15.1 / N17: the frozen three-counter witness shape, so the README cannot drift back to two"
     ]
   ];
 
