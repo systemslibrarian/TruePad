@@ -187,10 +187,25 @@ source files.
 service worker) with an offline application shell. **TruePad makes zero
 network requests during cryptographic operation.** No analytics, telemetry,
 remote logging, crash reporting, ad network, account, cloud pad backup,
-automatic source upload, or remote crypto/auth API. Third-party assets are
-vendored locally; a strict Content-Security-Policy is set. A CDN outage or a
-TruePad-service outage cannot make a local pair unusable, because there is no
-such service.
+automatic source upload, or remote crypto/auth API. There are no third-party
+assets — the page references no external origins.
+
+**A Content-Security-Policy ships in the document itself** (`<meta
+http-equiv>` in `index.html` and `learn.html`), because the default deploy
+target is GitHub Pages, which serves no custom response headers — so the meta
+CSP is the enforcement point, not a hosting layer. Its scope, stated exactly:
+`default-src 'self'`, `script-src 'self'`, `connect-src 'self'`,
+`object-src 'none'`, `base-uri 'none'`, `form-action 'none'`,
+`frame-ancestors 'none'` — no external origin may be reached for scripts,
+network connections, frames, or objects, so nothing can exfiltrate. `blob:`
+is permitted for the module worker and the operator's courier/plaintext
+downloads; `data:` for inline icons; `'unsafe-inline'` is scoped to **style
+only** (Vite inlines critical CSS), never to script. A stricter
+script-nonce/hash policy or an HTTP-header CSP is an **OPERATOR** step for a
+deployment that can set response headers; the default GitHub Pages deployment
+provides exactly the meta CSP above, and this ledger claims no more. A CDN
+outage or a TruePad-service outage cannot make a local pair unusable, because
+there is no such service.
 
 ---
 
