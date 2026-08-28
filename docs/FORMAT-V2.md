@@ -1366,6 +1366,7 @@ refusal-register row for comparison.
 | `frozen` | state | freeze active (§8.4) | none |
 | `sequence-contested` | state | attempts ≥ `verifyAttemptLimit` (§8.3) — permanent | none |
 | `locked` | state | lockfile held/leftover (§10.3) | none |
+| `pair-destroyed` | state | a durable `destroyed.json` marks the pair — refused before any secret is read, on `burn`/`open`/`status`/`clear-freeze`/`retire`/`ceremony verify` (§17.3, added with Phase 6) | none |
 | `record-size-mismatch` | structural | fixed-record store: envelope `ciphertextLength ≠ F`, or a plaintext longer than `F − 4` (§16, added with Phase 5) | none |
 | `witness-unreachable` | state (witness) | configured witness cannot be read (§15.3) — fail closed | none |
 | `witness-inconsistent` | state (witness) | witness file violates its own shape (§15.3) — fail closed | none |
@@ -1404,12 +1405,14 @@ an implementation exists; the mathematics in N6–N7 holds now.
 | N14 | `sourceDeclarations` entries in `head.json` contain no hash, checksum, fingerprint, or any other value derived from pad bytes. | §1.1 |
 | N15 | With a witness configured, `burn`/`open`/`retire` refuse `witness-unreachable` or `witness-inconsistent` before anything is consumed when the witness cannot be read or fails its shape. | §15.3 |
 | N16 | Store high-waters OR `attemptsReserved` strictly below the witness record refuse `witness-regressed` before anything is consumed — a restored store cannot move, and cannot refill a contested record's attempt budget. | §15.3, §9.4 |
-| N17 | A witness file contains only pairId, direction, and the three monotone counters (two high-waters + `attemptsReserved`) — never a pad byte, key, mask, plaintext, or ciphertext. | §15.1 |
+| N17 | A witness entry is exactly the three monotone counters (two high-waters + `attemptsReserved`), all required — a missing or extra field is `witness-inconsistent`, never a silent default — and contains no pad byte, key, mask, plaintext, or ciphertext. | §15.1, §15.2 |
 | N18 | `witnessClass` platform-monotonic or remote-monotonic is refused `witness-unsupported` at gen and at load — never silently downgraded to a weaker class. | §15.2 |
 | N18a | With a witness configured, a restore that rolls back the per-record attempt budget (failed authentications reserve attempts without moving the high-waters) is refused `witness-regressed`, so §5's finite-forgery bound is restore-safe, not only crash-safe. | §15.1, §15.4 |
 | N19 | A fixed-record store refuses a valid-range `ciphertextLength ≠ F` structurally (`record-size-mismatch`), costing nothing durable; a `ciphertextLength > maxCiphertextBytes` is still refused first by §4's oversize check (`oversize-ciphertext`), also free. | §16.2 |
 | N20 | For a fixed-record store, the per-attempt forgery bound is exactly `(4 + F/16) · 2^-128`. | §16 |
 | N21 | `destroy` refuses without the matching confirmation (`destroy-unconfirmed`) touching nothing; after it succeeds, `secret.bin`, `head.json`, and `journal.log` are gone, the tombstone records the intent, and no erasure of the medium is claimed. | §17 |
+| N21a | A pair with a durable `destroyed.json` is refused `pair-destroyed` by `burn`/`open`/`status`/`clear-freeze`/`retire`/`ceremony verify` before any byte of `secret.bin` is read, even when the store files still look valid; no `--force`/restore/clear reopens it. | §17.3 |
+| N21b | `destroy` is restartable: a rerun after an interrupted teardown finishes cleanup without refusing on the existing tombstone, preserves the original `destroyedAt`, never resurrects the pair, and converges (idempotent already-destroyed once complete). | §17.2, §17.3 |
 
 (`record-frame-invalid`, §16.2, is an exit-1 error on the post-commit
 path, not a refusal: nothing was refused before consumption, and the
@@ -1513,9 +1516,14 @@ stated tradeoff, not a hidden one.
   path> }`: a JSON witness file, atomic-replace + fsync per §10, 0600,
   holding `{ "formatVersion": 2, "witness": { "<pairId>/<direction>":
   { "encryptionNextOffset": n, "authenticationNextSequence": n,
-  "attemptsReserved": n } } }`. (`attemptsReserved` is optional in a
-  parsed entry — an entry written before this field existed reads as 0 —
-  but every advance writes it.) One file may witness several pairs. Its strength caveat, verbatim from
+  "attemptsReserved": n } } }`. The entry shape is FROZEN as exactly those
+  three counters, all required, all non-negative safe integers, no other
+  keys: there is no legacy two-counter form, and an entry missing
+  `attemptsReserved` (or any counter) is `witness-inconsistent` — never a
+  silent 0, which would reopen the attempt-budget rollback of §15.1. An
+  empty witness FILE, or a valid witness object with no entry yet for this
+  (pair, direction), remains the documented fresh bootstrap. One file may
+  witness several pairs. Its strength caveat, verbatim from
   the architecture: an independent backup/failure domain, **NOT
   intrinsically monotonic (a second device can be restored too)** — a
   witness file restored from ITS backup regresses the witness, and an
@@ -1660,12 +1668,14 @@ claims exactly what software can claim, and states the rest:
 
 `destroy <dir> --confirm <pairId> [--reason TEXT]`, pair-level, under the
 pair lock. `--confirm` MUST equal the pair's pairId where any half's
-header is readable; for a pair too corrupt to yield one, the literal
-confirmation `destroy-unreadable-pair` is required instead. Anything else
-is refused `destroy-unconfirmed`, and nothing is touched. A v1 store is
-refused `v1-store` (v1 material is handled by v1's own documentation).
-destroy MUST work on corrupt v2 stores — a store too damaged to load is
-still a store an operator must be able to destroy.
+header — or, on a resume, the existing tombstone — yields one; for a pair
+too corrupt to yield one, the literal confirmation `destroy-unreadable-pair`
+is required instead. Anything else is refused `destroy-unconfirmed`, and
+nothing is touched. A v1 store is refused `v1-store` (v1 material is
+handled by v1's own documentation) — unless a durable tombstone already
+marks the directory, in which case this is a destroy-resume of a v2 pair
+and proceeds. destroy MUST work on corrupt v2 stores — a store too damaged
+to load is still a store an operator must be able to destroy.
 
 ### 17.2 Order of operations (normative)
 
@@ -1673,12 +1683,18 @@ still a store an operator must be able to destroy.
 2. Write the tombstone `destroyed.json` durably (atomic replace + fsync):
    pairId where known, timestamp, operator reason, and — where readable —
    each direction's final high-waters. Non-secret only; the tombstone is
-   the recorded intent and survives the destruction.
+   the recorded intent and survives the destruction. **On a resume** (a
+   well-formed tombstone already exists), the original tombstone is
+   PRESERVED, not rewritten — its `destroyedAt`, `reason`, and
+   high-waters are the historical truth of when destruction began, and a
+   retry after a crash MUST NOT restamp them.
 3. Per half: overwrite `secret.bin` with zeros and fsync — attempted,
-   with failures reported, never claimed as erasure.
+   with failures reported, never claimed as erasure. Files already gone
+   (a resume past this point) are skipped.
 4. Unlink `secret.bin`, `head.json`, `journal.log` in each half; remove
    the half directories; fsync the pair directory. `manifest.json` and
-   the tombstone remain: they are the pair's non-secret record.
+   the tombstone remain: they are the pair's non-secret record. Already
+   missing files/directories are acceptable — the step converges.
 5. Print the storage-specific limitation, including the sentence above:
    copy-on-write filesystems (APFS among them) may preserve the
    pre-overwrite blocks; SSD wear leveling may preserve any block;
@@ -1689,7 +1705,55 @@ still a store an operator must be able to destroy.
 A configured witness is deliberately untouched: its counters are
 non-secret, monotone, and harmless for a pair that no longer exists.
 
----
+### 17.3 The tombstone is the irreversible destruction boundary
+
+`destroyed.json` is not merely historical metadata. **Once it is durable,
+the pair has crossed an irreversible line and MUST NEVER be used for a
+cryptographic operation again** — even if an interrupted teardown left
+`head.json`, `journal.log`, and a whole or partially-zeroed `secret.bin`
+behind, and even if those files still look structurally valid. The
+tombstone is authoritative over the store files.
+
+- **Normal operations refuse a tombstoned pair.** `burn`, `open`,
+  `status`, `clear-freeze`, `retire`, and `ceremony verify` MUST check for
+  a durable `destroyed.json` BEFORE loading the pair or reading any byte
+  of `secret.bin`, and refuse `pair-destroyed`. This is a known,
+  intentional condition — never `corrupt-store`. Nothing is consumed.
+- **No path reopens it.** There is no `--force`, no restore, no clear, no
+  undo, and no tombstone-removal verb that returns a tombstoned pair to an
+  active state. Deleting `destroyed.json` by hand is outside TruePad's
+  guarantees, and restoring an active state after the destruction boundary
+  is unsupported and unsafe (the secret body may be partially overwritten;
+  reusing it risks reuse of pad material).
+- **`destroy` is restartable.** A destroy interrupted after the tombstone
+  is durable is completed by rerunning `destroy`: it does not refuse
+  merely because the tombstone exists, it finishes overwriting and
+  unlinking whatever remains, and repeated invocations converge to the
+  same final state (both halves gone; `secret.bin`/`head.json`/
+  `journal.log` gone; `manifest.json` and the tombstone remaining). A
+  rerun on an already-fully-destroyed pair reports an idempotent
+  already-destroyed result and changes nothing. A rerun never resurrects
+  or reinitializes a pair.
+
+The distinction the spec keeps: the tombstone is the irreversible
+software/state decision that the pair is dead; the overwrite and unlink
+are best-effort removal of accessible copies; physical erasure is outside
+the software claim (the verbatim sentence above).
+
+### 17.4 Crash matrix (destruction)
+
+Under the §10 durability model. At every point AFTER the tombstone is
+durable, loss is acceptable; reuse or resumed cryptographic use is
+forbidden.
+
+| crash point | on-disk state | normal ops | recovery |
+| --- | --- | --- | --- |
+| before the tombstone is durable | pair unchanged; no secret overwrite has begun | continue after the ordinary stale-lock recovery (§10.3) | none needed; the pair is still active |
+| after tombstone durable, before any `secret.bin` overwrite | tombstone + intact stores | refuse `pair-destroyed` | rerun `destroy` — completes cleanup |
+| during the zero-overwrite of a `secret.bin` | tombstone + a partially-zeroed secret body | refuse `pair-destroyed` (the partial secret is NEVER read or consumed) | rerun `destroy` |
+| between the two halves | tombstone + one half torn down, one present | refuse `pair-destroyed` (no surviving half is usable) | rerun `destroy` |
+| during unlink/removal | tombstone + some files/dirs gone | refuse `pair-destroyed` | rerun `destroy` |
+| after all files removed | tombstone (+ `manifest.json`) only | refuse `pair-destroyed` | rerun is idempotent already-destroyed |
 
 ---
 

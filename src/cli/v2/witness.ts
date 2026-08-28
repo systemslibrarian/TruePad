@@ -84,31 +84,33 @@ function validateWitnessFile(raw: unknown): { file: WitnessFile } | { why: strin
   if (!isRecord(raw.witness)) {
     return { why: "witness must be an object mapping <pairId>/<direction> to counters" };
   }
-  const allowed = new Set(["encryptionNextOffset", "authenticationNextSequence", "attemptsReserved"]);
   const witness: Record<string, WitnessCounters> = {};
   for (const [key, value] of Object.entries(raw.witness)) {
     if (!isRecord(value)) {
       return { why: `witness["${key}"] is not an object` };
     }
     const keys = Object.keys(value);
-    // The two high-waters are required; attemptsReserved is optional (an
-    // entry written before this field existed reads as 0). No other keys.
+    // The frozen v2 witness entry is EXACTLY the three monotone counters, all
+    // required. There is no legacy two-counter form: a store new enough to
+    // have a witness is new enough to write attemptsReserved, so a missing
+    // one is a shape violation (fails closed), never a silent 0 (which would
+    // reopen the attempt-budget rollback §15.1 closes).
     if (
+      keys.length !== 3 ||
       !isSafeCount(value.encryptionNextOffset) ||
       !isSafeCount(value.authenticationNextSequence) ||
-      (value.attemptsReserved !== undefined && !isSafeCount(value.attemptsReserved)) ||
-      keys.some((k) => !allowed.has(k))
+      !isSafeCount(value.attemptsReserved)
     ) {
       return {
         why:
-          `witness["${key}"] must be { encryptionNextOffset, authenticationNextSequence[, attemptsReserved] } ` +
+          `witness["${key}"] must be exactly { encryptionNextOffset, authenticationNextSequence, attemptsReserved } ` +
           "with safe integers >= 0 and no other keys"
       };
     }
     witness[key] = {
       encryptionNextOffset: value.encryptionNextOffset,
       authenticationNextSequence: value.authenticationNextSequence,
-      attemptsReserved: (value.attemptsReserved as number | undefined) ?? 0
+      attemptsReserved: value.attemptsReserved
     };
   }
   return { file: { formatVersion: 2, witness } };

@@ -112,6 +112,7 @@ export type RefusalType =
   | "wrong-pair"
   | "wrong-direction"
   | "v1-store"
+  | "pair-destroyed"
   | "corrupt-head"
   | "corrupt-secret-body"
   | "corrupt-store"
@@ -312,12 +313,34 @@ function loadHalf2(dir: string, direction: PadDirection): LoadedStore2 {
 // Hold the pair lock, check the pair is whole, load BOTH halves. Both are
 // loaded even for single-direction verbs because the freeze is pair-wide
 // (§8.4): a frozen receiving store pauses sending too.
+// The destruction boundary (§17): once <dir>/destroyed.json is durable, the
+// pair has crossed an irreversible line and MUST NEVER be used for a
+// cryptographic operation again — even if an interrupted teardown left
+// head.json/journal.log/secret.bin (whole or partially zeroed) behind. The
+// tombstone is authoritative over the store files: it is checked BEFORE any
+// secret is read, and there is no --force, restore, or clear that reopens
+// the pair. Deleting the tombstone by hand is outside TruePad's guarantees.
+function requireNotDestroyed(dir: string): void {
+  if (existsSync(join(dir, TOMBSTONE_FILE))) {
+    throw new Refused2(
+      "pair-destroyed",
+      `${dir} carries a durable ${TOMBSTONE_FILE}: destruction of this pair was initiated (§17), so it is ` +
+        "permanently unusable. Its secret material may be partially overwritten or already absent, and there is no " +
+        "path back to an active state. Re-run `truepad2 destroy` to finish any interrupted cleanup. Nothing was " +
+        "touched."
+    );
+  }
+}
+
 function withPair<T>(dir: string, fn: (pair: LoadedPair) => T): T {
   const lock = acquireLock(dir);
   if (!lock.ok) {
     throw new Refused2("locked", lock.message);
   }
   try {
+    // Before anything is loaded or any secret is read: a tombstoned pair is
+    // refused outright (§17, §14.1 pair-destroyed).
+    requireNotDestroyed(dir);
     requirePair2(dir);
     const pair: LoadedPair = { "A->B": loadHalf2(dir, "A->B"), "B->A": loadHalf2(dir, "B->A") };
     return fn(pair);
@@ -1366,6 +1389,32 @@ const TOMBSTONE_FILE = "destroyed.json";
 
 type HalfSummary = { pairId: string | null; nextOffset: number | null; nextSequence: number | null };
 
+// An existing tombstone (a resume of an interrupted teardown). `record` is the
+// original parsed object when it is well-formed enough to preserve — destroy
+// keeps it rather than rewriting destroyedAt/reason as if destruction began
+// again; `pairId` is lifted for the confirmation token when head.json is gone.
+type ExistingTombstone = { exists: boolean; pairId: string | null; record: Record<string, unknown> | null };
+
+function readTombstone(dir: string): ExistingTombstone {
+  const path = join(dir, TOMBSTONE_FILE);
+  if (!existsSync(path)) {
+    return { exists: false, pairId: null, record: null };
+  }
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof parsed === "object" && parsed !== null) {
+      const obj = parsed as Record<string, unknown>;
+      const pairId = typeof obj.pairId === "string" && /^[0-9a-f]{32}$/.test(obj.pairId) ? obj.pairId : null;
+      // Preserve only a well-formed original; a corrupt tombstone still marks
+      // the boundary but its intent cannot be trusted, so it is rewritten.
+      return { exists: true, pairId, record: obj.formatVersion === 2 ? obj : null };
+    }
+  } catch {
+    /* unparseable tombstone: the boundary stands, but rewrite a clean one */
+  }
+  return { exists: true, pairId: null, record: null };
+}
+
 // Best-effort read of one half's identifying pairId and final high-waters for
 // the tombstone and the confirmation token. A clean load gives the
 // journal-reconciled effective high-waters; a store too corrupt to load often
@@ -1492,47 +1541,74 @@ export function destroy(args: Args2): void {
   }
   try {
     // §17.1: a v1 store is refused; v1 material is handled by v1's own tooling.
-    refuseIfV1Store(dir);
+    // (Only when this is NOT already a tombstoned v2 pair: a destroyed pair
+    // may have lost the head.json that distinguishes it, and a leftover
+    // pad.json must not misroute a destroy-resume to v1.)
+    const priorTombstone = readTombstone(dir);
+    if (!priorTombstone.exists) {
+      refuseIfV1Store(dir);
+    }
 
     const summaries: Record<PadDirection, HalfSummary> = {
       "A->B": readHalfSummary(join(dir, SUBDIR2["A->B"])),
       "B->A": readHalfSummary(join(dir, SUBDIR2["B->A"]))
     };
-    const pairId = summaries["A->B"].pairId ?? summaries["B->A"].pairId;
+    const pairId = summaries["A->B"].pairId ?? summaries["B->A"].pairId ?? priorTombstone.pairId;
 
     // §17.1 confirmation: --confirm MUST equal the pair's pairId where any
-    // half's head.json yields one; for a pair too corrupt to yield a pairId
-    // the literal token destroy-unreadable-pair is required instead. The
-    // expected pairId is deliberately NOT echoed — the operator confirms by
-    // knowing it (pad book / head.json), the way a destructive gesture should.
+    // half's head.json (or, on a resume, the existing tombstone) yields one;
+    // for a pair too corrupt to yield a pairId the literal token
+    // destroy-unreadable-pair is required instead. The expected pairId is
+    // deliberately NOT echoed — the operator confirms by knowing it (pad book /
+    // head.json / tombstone), the way a destructive gesture should.
     const requiredToken = pairId ?? UNREADABLE_PAIR_TOKEN;
     if (confirm !== requiredToken) {
       throw new Refused2(
         "destroy-unconfirmed",
         pairId === null
-          ? `this pair is too corrupt to confirm by pairId — no half's ${HEAD_FILE} yields one — so destroy requires ` +
-              `--confirm ${UNREADABLE_PAIR_TOKEN} for it. Re-run with that literal token. Nothing was touched.`
-          : `--confirm must equal the pair's pairId to destroy it. It is NOT echoed here — read it from the pad book ` +
-              `or a half's ${HEAD_FILE} and pass it verbatim. Nothing was touched.`
+          ? `this pair is too corrupt to confirm by pairId — no half's ${HEAD_FILE} nor the tombstone yields one — so ` +
+              `destroy requires --confirm ${UNREADABLE_PAIR_TOKEN} for it. Re-run with that literal token. Nothing was touched.`
+          : `--confirm must equal the pair's pairId to destroy it. It is NOT echoed here — read it from the pad book, ` +
+              `a half's ${HEAD_FILE}, or ${TOMBSTONE_FILE} and pass it verbatim. Nothing was touched.`
       );
+    }
+
+    // Already fully torn down (tombstone present, both halves gone): destroy is
+    // idempotent — report the existing destruction and change nothing. There
+    // is nothing to resurrect and nothing left to remove.
+    const alreadyGone =
+      priorTombstone.exists &&
+      !existsSync(join(dir, SUBDIR2["A->B"])) &&
+      !existsSync(join(dir, SUBDIR2["B->A"]));
+    if (alreadyGone) {
+      err(`${dir} was already destroyed; ${TOMBSTONE_FILE} stands and nothing remained to remove.`);
+      err(DESTROY_LIMITATION);
+      out(JSON.stringify({ destroyed: true, alreadyDestroyed: true, pairId, tombstone: join(dir, TOMBSTONE_FILE) }));
+      return;
     }
 
     // §17.2 order is normative.
     // 2 — the tombstone: non-secret recorded intent, durable, survives the
-    // destruction. pairId (or null), timestamp, reason, per-direction final
-    // high-waters where readable, and the verbatim limitation sentence.
-    const tombstone = {
-      formatVersion: 2,
-      pairId,
-      destroyedAt: new Date().toISOString(),
-      reason,
-      finalHighWaters: {
-        "A->B": highWatersOrNull(summaries["A->B"]),
-        "B->A": highWatersOrNull(summaries["B->A"])
-      },
-      limitation: DESTROY_LIMITATION
-    };
-    writeFileDurablyAt(dir, TOMBSTONE_FILE, JSON.stringify(tombstone, null, 2));
+    // destruction. On a RESUME (a well-formed tombstone already exists) it is
+    // PRESERVED, not rewritten — its original destroyedAt/reason/high-waters
+    // are the historical truth, and a retry after a crash must not restamp
+    // them as if destruction began later. Otherwise it is written fresh.
+    if (priorTombstone.record !== null) {
+      err(`resuming an interrupted destroy: ${TOMBSTONE_FILE} already records the intent; finishing cleanup.`);
+    } else {
+      const tombstone = {
+        formatVersion: 2,
+        pairId,
+        destroyedAt: new Date().toISOString(),
+        reason,
+        finalHighWaters: {
+          "A->B": highWatersOrNull(summaries["A->B"]),
+          "B->A": highWatersOrNull(summaries["B->A"])
+        },
+        limitation: DESTROY_LIMITATION
+      };
+      writeFileDurablyAt(dir, TOMBSTONE_FILE, JSON.stringify(tombstone, null, 2));
+    }
 
     // 3 — per half: best-effort zero-overwrite of secret.bin + fsync.
     for (const direction of ["A->B", "B->A"] as const) {

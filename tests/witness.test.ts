@@ -294,6 +294,44 @@ describe("rollback witness end to end", { timeout: 120_000 }, () => {
     expect(run("burn", a2, "--as", "A", "hello").code).toBe(0);
   });
 
+  it("the witness entry shape is FROZEN as exactly three counters, all required (§15.2)", () => {
+    const a = join(dir, "a");
+    const wa = join(dir, "wa.json");
+    const gen = genWitnessed(a, 64, 8, wa);
+    expect(gen.code).toBe(0);
+    const pairId = JSON.parse(gen.stdout).pairId as string;
+    const key = `${pairId}/A->B`;
+    const entry = (e: Record<string, unknown>): string => JSON.stringify({ formatVersion: 2, witness: { [key]: e } });
+    const valid = { encryptionNextOffset: 0, authenticationNextSequence: 0, attemptsReserved: 0 };
+
+    // Valid exact three-counter entry: a burn proceeds.
+    writeFileSync(wa, entry(valid));
+    expect(run("burn", a, "--as", "A", "ok").code).toBe(0);
+
+    // Every malformed entry fails closed as witness-inconsistent, nothing consumed.
+    const bad: Record<string, unknown>[] = [
+      { encryptionNextOffset: 0, authenticationNextSequence: 0 }, // missing attemptsReserved (the old two-counter form)
+      { authenticationNextSequence: 0, attemptsReserved: 0 }, // missing a high-water
+      { encryptionNextOffset: 0, attemptsReserved: 0 }, // missing the other high-water
+      { ...valid, extra: 1 }, // extra field
+      { ...valid, attemptsReserved: -1 }, // negative
+      { ...valid, attemptsReserved: 1.5 } // non-integer
+    ];
+    for (const e of bad) {
+      writeFileSync(wa, entry(e));
+      const journalBefore = readFileSync(join(a, "a-to-b", "journal.log"));
+      const r = run("burn", a, "--as", "A", "x");
+      expect(r.code, JSON.stringify(e)).toBe(2);
+      expect(r.stderr, JSON.stringify(e)).toContain("refused: witness-inconsistent");
+      expect(readFileSync(join(a, "a-to-b", "journal.log")).equals(journalBefore)).toBe(true);
+    }
+
+    // A valid witness object with no entry for this pair yet is the fresh
+    // bootstrap — accepted, not inconsistent.
+    writeFileSync(wa, JSON.stringify({ formatVersion: 2, witness: {} }));
+    expect(run("burn", a, "--as", "A", "fresh").code).toBe(0);
+  });
+
   it("a malformed or mis-shaped witness file is refused witness-inconsistent", () => {
     const a = join(dir, "a");
     const wa = join(dir, "wa.json");

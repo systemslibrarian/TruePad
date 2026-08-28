@@ -297,7 +297,21 @@ expected value); a pair too corrupt to yield a pairId is destroyed with the
 literal token `destroy-unreadable-pair`, and any other value is refused
 `destroy-unconfirmed` with nothing touched. destroy works on a corrupt store —
 a store too damaged to load is still one an operator must be able to remove —
-and refuses a v1 store (`v1-store`). What it does NOT claim is erasure of the
+and refuses a v1 store (`v1-store`).
+
+**`destroyed.json` is the irreversible destruction boundary.** Once the
+tombstone is durable, the pair has crossed a line it never comes back from:
+`burn`, `open`, `status`, `clear-freeze`, `retire`, and `ceremony verify` all
+refuse it `pair-destroyed` before reading a byte of `secret.bin`, even if an
+interrupted teardown left valid-looking store files (and a partially-zeroed
+secret) behind. There is no `--force`, restore, clear, or undo that reopens a
+tombstoned pair; deleting `destroyed.json` by hand is outside TruePad's
+guarantees, and returning a pair to active use after the boundary is
+unsupported and unsafe. If a teardown is interrupted, rerunning `destroy`
+safely finishes the cleanup — it preserves the original tombstone, never
+resurrects the pair, and converges to the same final state.
+
+What destroy does NOT claim is erasure of the
 medium: Software can forget its reference to pad material; it cannot prove that
 flash forgot the bytes. The zero-overwrite is best-effort and proves nothing
 about the storage — a copy-on-write filesystem (APFS among them) may preserve
