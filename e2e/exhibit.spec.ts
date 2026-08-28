@@ -18,7 +18,8 @@ async function generate(page: Page, mode: "letters" | "bytes", size: number): Pr
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.goto("/");
+  // The exhibit now lives at /learn (index.html is the Browser Edition).
+  await page.goto("/learn.html");
 });
 
 test("the full path against the built dist: generate → encrypt → decrypt → verdict shows COMBINER and SOURCE", async ({ page }) => {

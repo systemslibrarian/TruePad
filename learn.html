@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Same self-contained CSP as the app (GitHub Pages sets no headers). -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; child-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TruePad — a true one-time pad</title>
+    <meta
+      name="description"
+      content="A one-time pad whose combiner satisfies all three Shannon conditions, with its entropy source graded honestly — the honest sibling of DeckBook. Watch the pad burn, hit the wall when it runs out, and see crib-dragging fail."
+    />
+    <meta name="theme-color" content="#11100c" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="apple-touch-icon" href="./pwa-192.png" />
+    <meta property="og:title" content="TruePad — a true one-time pad" />
+    <meta
+      property="og:description"
+      content="Watch the pad burn, hit the wall when it runs out, and see crib-dragging fail against a true one-time pad."
+    />
+    <meta property="og:type" content="website" />
+  </head>
+  <body>
+    <header class="masthead">
+      <nav
+        class="lab-crossnav"
+        aria-label="Editions"
+        style="display:flex;gap:0.75rem;align-items:baseline;flex-wrap:wrap;margin-bottom:1rem;font-size:0.95rem"
+      >
+        <a href="index.html" style="font-weight:600">&larr; TruePad 2 app</a>
+        <span style="opacity:0.7">You are in the teaching Lab — an in-browser exhibit of the cipher. The app is the operational Browser Edition.</span>
+      </nav>
+      <h1>True<span class="accent">Pad</span></h1>
+      <p class="tagline">
+        A true one-time pad — the honest sibling of
+        <a href="https://github.com/systemslibrarian/DeckBook">DeckBook</a>.
+        Every claim about the cipher on this page is enforced by the
+        <a href="https://github.com/systemslibrarian/TruePad">open, unit-tested core</a>
+        running live in your browser; the claims about the world around it are stated, not
+        enforced. Nothing leaves this page.
+      </p>
+      <ul class="conditions" aria-label="The three Shannon conditions">
+        <li>
+          <strong>1 · Key ≥ message</strong>
+          <span>Encryption refuses outright when the surviving pad is shorter than the message. No wraparound, no borrowing.</span>
+        </li>
+        <li>
+          <strong>2 · Independent uniform symbols</strong>
+          <span>Every pad symbol is one draw, range-reduced by rejection sampling — never <code>Math.random()</code>. The draws come from <code>crypto.getRandomValues()</code>, a deterministic generator, so this condition holds computationally; station 4 grades that separately.</span>
+        </li>
+        <li>
+          <strong>3 · Used exactly once</strong>
+          <span>Consuming a symbol <em>deletes</em> it from this page's pad, and the receiver refuses anything at or below its high-water mark. Across crashes and copies that job needs a durable mark — the repo's CLI keeps one; this in-memory exhibit does not.</span>
+        </li>
+      </ul>
+    </header>
+
+    <main>
+      <!-- ================================================================ -->
+      <section class="station" id="station-pad" aria-labelledby="pad-title">
+        <h2 id="pad-title"><span class="step">1</span> Generate the pad pair</h2>
+        <p class="lede">
+          The whole pad exists <em>before</em> any encryption starts — that is what lets the
+          cipher refuse up front instead of running out mid-message. The pad travels out of
+          band; only the envelope — pad page, offsets, ciphertext — ever touches the public channel.
+          Generation produces a pair, one pad per direction; this page shows the A→B half.
+        </p>
+        <form class="controls" id="pad-controls">
+          <label>
+            Mode
+            <select id="pad-mode">
+              <option value="letters" selected>Letters — add mod 26 (≈4.700 bits/symbol)</option>
+              <option value="bytes">Bytes — XOR (8 bits/symbol)</option>
+            </select>
+          </label>
+          <label>
+            Pad size
+            <input id="pad-size" type="number" min="8" max="512" step="1" value="64" />
+          </label>
+          <button type="submit" class="primary" id="pad-generate">Generate a fresh pair</button>
+        </form>
+        <div class="pad-identity">
+          <span id="pad-label" class="pad-label">—</span>
+          <span id="pad-summary" class="pad-summary"></span>
+        </div>
+        <div id="pad-grid" class="pad-grid" aria-label="Pad symbols; burned symbols are struck out"></div>
+        <dl class="ledger" id="ledger" aria-label="Pad material ledger">
+          <div><dt>Material generated</dt><dd id="ledger-generated">—</dd></div>
+          <div><dt>Material spent</dt><dd id="ledger-spent">—</dd></div>
+          <div><dt>Material remaining</dt><dd id="ledger-remaining">—</dd></div>
+          <div class="motto"><dt>Ledger rule</dt><dd id="ledger-motto">—</dd></div>
+        </dl>
+      </section>
+
+      <!-- ================================================================ -->
+      <section class="station" id="station-send" aria-labelledby="send-title">
+        <h2 id="send-title"><span class="step">2</span> Encrypt — watch the pad burn</h2>
+        <p class="lede">
+          Each plaintext symbol consumes one pad symbol, forever. The meter races your
+          message against what survives; when the pad is too short, encryption refuses
+          before burning anything.
+        </p>
+        <label class="field">
+          Plaintext
+          <textarea
+            id="plaintext"
+            rows="3"
+            spellcheck="false"
+            placeholder="Type a message… (letter mode keeps A–Z only)"
+          ></textarea>
+        </label>
+        <div class="meter" id="meter" aria-live="polite">
+          <div class="meter-row">
+            <span class="meter-name">Message needs</span>
+            <div class="meter-track"><div class="meter-fill message" id="meter-message"></div></div>
+            <span class="meter-value" id="meter-message-count">0</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-name">Pad remaining</span>
+            <div class="meter-track"><div class="meter-fill pad" id="meter-pad"></div></div>
+            <span class="meter-value" id="meter-pad-count">0</span>
+          </div>
+          <p class="meter-status" id="meter-status"></p>
+        </div>
+        <button type="button" class="primary" id="encrypt">Encrypt &amp; burn</button>
+        <div class="refusal" id="refusal" role="alert" hidden></div>
+        <div class="wire" id="wire" hidden>
+          <h3>On the public channel</h3>
+          <p class="wire-note">
+            This card is the envelope — everything an eavesdropper sees. The pad itself never
+            touches this channel.
+          </p>
+          <dl>
+            <div><dt>Pad page</dt><dd id="wire-label"></dd></div>
+            <div><dt>Offsets burned</dt><dd id="wire-offsets"></dd></div>
+            <div class="wire-cipher"><dt>Ciphertext (payload only)</dt><dd id="wire-ciphertext"></dd></div>
+            <div class="wire-cipher"><dt>Wire form</dt><dd id="wire-envelope"></dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <!-- ================================================================ -->
+      <section class="station" id="station-receive" aria-labelledby="receive-title">
+        <h2 id="receive-title"><span class="step">3</span> Decrypt with the courier's copy</h2>
+        <p class="lede">
+          When the pad was generated, an identical copy was “delivered out of band” to the
+          receiver (via <code>serialize()</code>, taken before any burn; a copy taken later
+          would carry no burned offset in any form, so it could no more reuse one than the
+          original could). Generation
+          actually produces a <em>pair</em> — one pad per direction, so by declared role
+          neither side encrypts with the pad the other encrypts with; this station opens the
+          A→B half. The envelope names the pad page and the offsets it used; the copy
+          <em>seeks</em> to that offset,
+          burning everything it skips, and refuses any envelope at or below what it has
+          already burned. Decrypt the same non-empty envelope twice to see a replay refused;
+          encrypt twice and take only the second to see a seek. The envelope is not
+          authenticated: edit its <code>startOffset</code> upward and the copy will burn that
+          far forward — pad can be destroyed from the channel, never reused.
+        </p>
+        <p class="receiver-state">
+          Courier copy of <span id="receiver-label" class="pad-label">—</span> —
+          <span id="receiver-remaining">0</span> symbols remaining
+        </p>
+        <label class="field">
+          Envelope from the wire
+          <textarea id="ciphertext-in" rows="2" spellcheck="false" placeholder="Paste the envelope from the wire…"></textarea>
+        </label>
+        <div class="controls">
+          <button type="button" id="take-wire">Take latest from the wire</button>
+          <button type="button" class="primary" id="decrypt">Decrypt &amp; burn the copy</button>
+        </div>
+        <div class="refusal" id="receive-refusal" role="alert" hidden></div>
+        <p class="recovered" id="recovered" hidden>
+          <span class="recovered-title">Recovered plaintext</span>
+          <output id="recovered-text"></output>
+        </p>
+      </section>
+
+      <!-- ================================================================ -->
+      <section class="station" id="station-verdict" aria-labelledby="verdict-title">
+        <h2 id="verdict-title"><span class="step">4</span> The Shannon verdict</h2>
+        <p class="lede">
+          One grader, two exhibits, two lines each. Shannon's perfect-secrecy theorem needs all
+          three conditions; the grader below checks your live pad and a DeckBook-style shuffled
+          deck against the same message. The <strong>combiner</strong> line is the theorem: given
+          the three conditions it is unconditional. The <strong>source</strong> line is where the
+          symbols came from — and <code>crypto.getRandomValues()</code> is a deterministic generator,
+          so a pad can pass all three conditions and still rest on a computational assumption.
+          That is the honest common case, and this page says so rather than rounding it up.
+        </p>
+        <div class="verdict-controls">
+          <span>Grade against a message of <output id="verdict-length">0</output> symbols (from station 2)</span>
+          <label class="deck-uses">
+            Deck has encrypted
+            <select id="deck-uses">
+              <option value="1" selected>1 message</option>
+              <option value="2">2 messages (reuse!)</option>
+            </select>
+          </label>
+        </div>
+        <div class="verdict-grid">
+          <article class="verdict-card" id="verdict-pad" aria-label="TruePad verdict"></article>
+          <article class="verdict-card" id="verdict-deck" aria-label="DeckBook deck verdict"></article>
+        </div>
+      </section>
+
+      <!-- ================================================================ -->
+      <section class="station" id="station-attack" aria-labelledby="attack-title">
+        <h2 id="attack-title"><span class="step">5</span> The attack that tells them apart</h2>
+        <p class="lede">
+          Crib dragging: guess a fragment of plaintext (a “crib”) and slide it across the
+          ciphertext. Below, the <em>same</em> attack engine runs against a true-OTP
+          ciphertext and against two messages that reused one DeckBook keystream. Two
+          secret messages were encrypted behind the scenes — try to read them.
+        </p>
+        <div class="controls">
+          <label>
+            Crib (your guess at a plaintext fragment)
+            <input id="crib" type="text" value="THE" spellcheck="false" maxlength="12" />
+          </label>
+          <button type="button" id="attack-rebuild">New secret messages &amp; keys</button>
+        </div>
+        <div class="attack-grid">
+          <article class="attack-card" aria-labelledby="attack-otp-title">
+            <h3 id="attack-otp-title">Target A — true one-time pad <span class="chip safe" id="attack-otp-chip">nothing leaks</span></h3>
+            <p class="cipher-line">c = <code id="attack-otp-cipher"></code></p>
+            <p class="attack-explain" id="attack-otp-explain"></p>
+            <div class="candidates" id="attack-otp-candidates" aria-label="Crib-drag candidates against the one-time pad"></div>
+          </article>
+          <article class="attack-card" aria-labelledby="attack-reuse-title">
+            <h3 id="attack-reuse-title">Target B — one keystream, two messages <span class="chip" id="attack-reuse-chip"></span></h3>
+            <p class="cipher-line">c₁ = <code id="attack-reuse-c1"></code></p>
+            <p class="cipher-line">c₂ = <code id="attack-reuse-c2"></code></p>
+            <p class="attack-explain" id="attack-reuse-explain"></p>
+            <div class="candidates" id="attack-reuse-candidates" aria-label="Crib-drag candidates against the reused keystream"></div>
+          </article>
+        </div>
+        <details class="attack-reveal">
+          <summary>Reveal the two secret plaintexts</summary>
+          <p>p₁ = <code id="attack-p1"></code></p>
+          <p>p₂ = <code id="attack-p2"></code></p>
+        </details>
+      </section>
+
+      <!-- ================================================================ -->
+      <section class="station" id="station-tamper" aria-labelledby="tamper-title">
+        <h2 id="tamper-title"><span class="step">6</span> Perfect secrecy is not integrity</h2>
+        <p class="lede">
+          A one-time pad is perfectly <em>malleable</em>: adding a delta to a ciphertext
+          letter adds the same delta to what the receiver decrypts, because the key drops
+          out of the difference. Below, a sender has encrypted
+          <code>PAY BOB TEN DOLLARS NOW</code>. The attacker cannot read a single letter —
+          but knows the message format, and that the amount sits at letters 7–9.
+        </p>
+        <div class="controls">
+          <button type="button" class="primary" id="tamper-forge">
+            Forge TEN → SIX (no key needed)
+          </button>
+          <button type="button" id="tamper-reset">Deliver untampered</button>
+          <button type="button" id="tamper-rebuild">New pad, same message</button>
+        </div>
+        <p class="cipher-line">
+          On the wire (click any letter to nudge it +1):
+          <span id="tamper-cipher" class="clickable-cipher"></span>
+        </p>
+        <div class="recovered tamper-received" id="tamper-received">
+          <span class="recovered-title">What the receiver decrypts</span>
+          <output id="tamper-plain"></output>
+          <p class="tamper-verdict" id="tamper-verdict" aria-live="polite"></p>
+        </div>
+        <p class="attack-explain">
+          Detecting this costs extra key: an information-theoretic MAC must spend pad
+          symbols of its own. Secrecy and integrity are separate purchases, and the
+          material ledger bills for each.
+        </p>
+      </section>
+
+      <!-- ================================================================ -->
+      <section class="station honest" aria-labelledby="honest-title">
+        <h2 id="honest-title">What this exhibit is not</h2>
+        <p class="lede">
+          Everything above is a correct, bias-free, structurally enforced one-time-pad
+          <em>combiner</em> over a computational source — the strongest claim a browser demo
+          can truthfully make. It is still an <em>exhibit</em>, not a secure messaging tool:
+        </p>
+        <ul class="honest-list">
+          <li>
+            <strong>The courier is simulated.</strong> Sender and receiver pads live in the
+            same browser tab. Real one-time-pad security is mostly key logistics — the
+            physical, out-of-band delivery this page can only gesture at. There is no key
+            exchange, no KEM, nothing post-quantum here: the pad travels out of band, and
+            that is the thesis, not a gap.
+          </li>
+          <li>
+            <strong>Burned is burned at the API level, not the physical level.</strong>
+            JavaScript cannot zeroize memory; a deleted value lingers until garbage
+            collection. The gold standard destroys the physical pad page.
+          </li>
+          <li>
+            <strong>You are trusting the delivered code and the platform CSPRNG.</strong>
+            A compromised server or browser is a compromised pad. And a CSPRNG is a
+            deterministic generator: the whole pad is bounded by its state entropy, so the
+            "independent uniform" condition holds computationally, not information-theoretically.
+            Station 4 says so on every verdict. The real gold standard is an air-gapped
+            machine — dice and paper qualify.
+          </li>
+          <li>
+            <strong>Nothing here persists, on purpose.</strong> The pad lives in this tab's
+            memory and dies with it. Real pads need a durable burn and a high-water mark
+            that survives crashes — the repository's CLI does that on disk; a browser must
+            not (IndexedDB syncs, profiles get backed up, JavaScript strings cannot be
+            zeroed).
+          </li>
+          <li>
+            <strong>Metadata still leaks.</strong> Ciphertext length equals message length,
+            and the pad label plus burned offsets reveal traffic volume. Standard for OTP,
+            but worth knowing.
+          </li>
+          <li>
+            <strong>The envelope is unauthenticated.</strong> Station 6 is live proof that a
+            payload can be rewritten without alarm; a rewritten <code>startOffset</code> makes
+            the receiver burn forward through its pad — destroyed, never reused. Authenticating
+            the envelope (Wegman–Carter) is the extension seam and costs additional pad.
+            Perfect secrecy and tamper-evidence are separate properties with separate costs.
+          </li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="colophon">
+      <p>
+        TruePad · MIT licensed ·
+        <a href="https://github.com/systemslibrarian/TruePad">source &amp; unit suites on GitHub</a>
+        · pure core, no dependencies, all crypto via <code>crypto.getRandomValues()</code>
+      </p>
+      <p class="motto-line">never spend a bit twice</p>
+    </footer>
+
+    <script type="module" src="/src/exhibit/main.ts"></script>
+  </body>
+</html>

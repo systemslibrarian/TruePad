@@ -4,15 +4,31 @@ import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig({
   base: "./",
+  // Multi-page build: the Browser Edition is the main product at index.html;
+  // the original teaching exhibit lives at /learn (learn.html). Both share
+  // one service worker so the whole app installs and runs offline.
+  build: {
+    rollupOptions: {
+      input: {
+        main: "index.html",
+        learn: "learn.html"
+      }
+    }
+  },
+  // The engine runs in a dedicated ES-module Web Worker (secrets never touch
+  // the UI thread); build it as a module worker.
+  worker: {
+    format: "es"
+  },
   plugins: [
     VitePWA({
       registerType: "autoUpdate",
-      injectRegister: false,
+      injectRegister: "auto",
       manifest: {
-        name: "TruePad — a true one-time pad",
+        name: "TruePad 2 — authenticated one-time pad",
         short_name: "TruePad",
         description:
-          "A one-time pad whose combiner satisfies all three Shannon conditions, with its entropy source graded honestly — the honest sibling of DeckBook. Watch the pad burn, hit the wall when it runs out, and see crib-dragging fail.",
+          "Authenticated one-time-pad handling with explicit one-time state — the frozen TruePad 2 protocol, running entirely in your browser. No backend, no accounts, no sync.",
         start_url: "./",
         scope: "./",
         theme_color: "#11100c",
