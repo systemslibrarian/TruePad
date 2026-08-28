@@ -31,12 +31,21 @@ Every statement below carries one classification:
 
 **BROWSER-OP.** The cryptographic engine and the entire store — pad material,
 Wegman–Carter keys `K` and masks `R`, the secret body, the journal, the
-witness, the tombstone — run inside a dedicated **Web Worker** and its OPFS
-directory. The UI thread communicates with the worker only through the narrow
-RPC of `src/browser/engine/protocol.ts`. What crosses to the UI is exactly
-what the frozen protocol allows to leave the store: wire-public envelopes,
-non-secret meters, and — on a successful `open` — the plaintext the operator
-asked to see. No pad byte, key, mask, or pad-derived value ever crosses.
+browser-local witness, the tombstone — run inside a dedicated **Web Worker**
+and its OPFS directory. The UI thread communicates with the worker only through
+the narrow RPC of `src/browser/engine/protocol.ts`. **Pad material remains
+confined to the worker and its OPFS store EXCEPT during an explicit
+operator-requested courier export or import.** In ordinary operation what
+crosses to the UI is only what the frozen protocol allows to leave the store:
+wire-public envelopes, non-secret meters, and — on a successful `open` — the
+plaintext the operator asked to see. The one deliberate exception is the
+courier step (§7 of `create-pair`): on **export**, the worker packs the pair's
+store into one byte container and transfers it out for the operator to save to
+a file they choose; on **import**, the operator-selected bytes are transferred
+in and unpacked inside the worker. That container **is** the pad — the UI never
+base64-encodes or reassembles pad material on its own thread, and the transfer
+detaches the buffer it hands over. Outside that explicit step, no pad byte,
+key, mask, or pad-derived value crosses.
 
 Secrets are **never** placed in: `localStorage`, `sessionStorage`, URLs,
 query strings, fragment identifiers, the browser history, `console`,
@@ -53,9 +62,16 @@ reached in the worker via `navigator.storage.getDirectory()`. Reads and
 writes use **`FileSystemSyncAccessHandle`** (worker-only), whose `write`,
 `read`, `truncate`, `getSize`, and **`flush()`** give the strongest
 file-like primitives a browser offers. The store keeps the **exact
-FORMAT-V2 files** per pair — `head.json`, `secret.bin`, `journal.log`, plus
-the `witness` and `destroyed.json` — so a browser store is the same logical
-shape as a CLI store (see `docs/INTEROPERABILITY.md`).
+FORMAT-V2 files** per pair — `head.json`, `secret.bin`, `journal.log` — so a
+browser store is byte-for-byte the same store a CLI opens (see
+`docs/INTEROPERABILITY.md`). Two browser-only files sit *alongside* the frozen
+store, never inside it and never in the courier bundle: `pair.json` (a display
+label plus which rollback-witness kind applies, §4) and `destroyed.json` (the
+§17 tombstone). The rollback witness itself is a **separate** OPFS store
+(`witness/<pairId>.log`, §4). `head.json` is replaced with an atomic
+temp-and-`move` where the OPFS build supports it, else a durable in-place
+rewrite whose torn write every reader refuses closed (`corrupt-head`) — never a
+silently-accepted partial.
 
 **What "durable" means in this edition — stated precisely, because it is
 weaker than the CLI:**
@@ -101,31 +117,67 @@ not.**
 
 ---
 
-## 4. Rollback witness — browser classes, named honestly
+## 4. Rollback witness — a browser-local layer, named honestly and crash-safe
 
-The CLI's `separate-state-file` witness assumes a file in an **independent
-host failure domain**. A browser page has no such reach, so this edition does
-**not** offer it and does **not** relabel browser-local state as its
-equivalent. Two honest classes:
+The rollback witness is a **browser-product layer, not a fork of the frozen
+store.** A browser store's `head.json` always serialises the CLI's
+`rollback:{ witnessClass:"none", config:{} }` — byte-identical to a CLI store,
+so the courier bundle carries no browser-only header vocabulary (§2). Whether a
+pair *also* carries a browser-local witness is recorded in the browser-only
+`pair.json`, outside the frozen bytes. That `pair.json` field is load-bearing:
+a present-but-corrupt `pair.json` fails **closed** (`corrupt-pair-meta`) rather
+than silently assume no witness. Two honest kinds:
 
 - **`browser-none`** — no witness. `FORMAT-V2.md` §9.4's backup-restore
   residual stands in full: restoring the OPFS store (via profile backup)
   regresses it, and — without a witness — resets the per-record attempt
-  budget. Stated, not hidden.
-- **`browser-independent-store`** — the witness counters are kept in a
-  **second, separately-cleared OPFS store** (a distinct directory the pair's
-  own export/backup does not include). This gives a *partial* failure-domain
-  distinction: it catches a restore that rolls back the pair's store while the
-  witness store is untouched. Its honest caveat, in the register of §15.2:
-  **it is only as independent as the two stores' clearing/backup are
-  independent** — both live under the same origin, and "clear site data"
-  removes both, so a witness cleared alongside the pair knows nothing. It is
-  weaker than the CLI's cross-medium witness, and the UI says so verbatim:
+  budget. Stated, not hidden. A bare FORMAT-V2 store placed directly (e.g. a
+  CLI store) that the browser never provisioned is `browser-none`.
+- **`browser-local-witness`** — the three counters are kept in a **second,
+  separately-cleared OPFS store** (`witness/<pairId>.log`, a distinct directory
+  the pair's own export/backup does not include). Named honestly: it is
+  browser-**LOCAL**, *not* an independent host failure domain, and does not
+  imply the CLI's `separate-state-file` reach. It gives a *partial*
+  failure-domain distinction — it catches a restore that rolls back the pair's
+  store while the witness store is untouched — with the §15.2 caveat: **it is
+  only as independent as the two stores' clearing/backup are independent.**
+  Both live under the same origin, and "clear site data" removes both. The UI
+  says so verbatim:
 
   > Rollback protection: browser-local only. This does not provide the same
   > independent rollback witness guarantee as Operational TruePad.
 
-**PROTOCOL.** Whatever the class, the witness records exactly the three
+**BROWSER-OP — crash safety.** The witness is an **append-only journal**, never
+truncated, with each record **leading-newline framed** (`\n<json>`). `appendFile`
+gives no record boundary, so a crash mid-append can leave a partial at the end
+of the file — but leading framing bounds every record by its own `\n` and the
+next record's `\n`, so a torn partial is always an **isolated** line, never fused
+with the record before or after it. The read **drops any line that does not
+parse** and folds the surviving records into the per-direction max. So only a
+**torn** advance loses its own value; every advance whose append **completed** is
+preserved. And because a torn advance's operation **errors and withholds its
+output** — a burn emits its envelope, an open releases its plaintext, only
+*after* a successful advance — **the witness never under-reports below a state
+whose output was released**: a rollback below any released-output high-water is
+still caught `witness-regressed`, and the very next clean advance re-records the
+current high-water. Because a provisioned journal is never emptied by an advance,
+**an established witness never reads as fresh**: a pair whose `pair.json` says
+`browser-local-witness` but whose journal is missing, empty, all-corrupt, or
+missing a direction fails **closed** as `witness-inconsistent`. Provisioning is
+an explicit event at generation or a successful import — never inferred from an
+unexpectedly empty file — so the old truncate-then-crash hole (an advanced
+witness silently becoming "fresh") is closed.
+
+The one honestly-stated residual: a crash **exactly during** the durable-attempt
+advance of an `open` (before verification) can lose that single `attemptsReserved`
+increment, so a subsequent targeted backup-restore to the pre-attempt state could
+refill **one** verification guess on that sequence. Each guess is bounded by the
+one-time tag (~2⁻¹²⁸), so the effect on the §8.4 forgery bound is negligible, and
+it is the same **browser-local** limitation as above (a witness in the same origin
+as the store it guards). No released ciphertext's keystream, and no released
+plaintext, is ever reusable this way.
+
+**PROTOCOL.** Whatever the kind, the witness records exactly the three
 frozen monotone counters — `encryptionNextOffset`,
 `authenticationNextSequence`, `attemptsReserved` — and refuses a regressed
 store `witness-regressed` before anything is consumed. It holds counters and
@@ -166,11 +218,18 @@ independent of the others."*
 **OPERATOR / platform caveat.** One file is one source. The browser File API
 exposes **no reliable filesystem identity** (no inode), so the edition
 **cannot** detect that two selected files are hardlink/alias copies of one
-underlying file the way the CLI does. It de-duplicates by the handle the
-picker returns and by content-length + a full byte comparison of *declared*
-sources, and it **states the limitation** rather than inventing identity
-from a pad-derived hash. No pad-derived hash, checksum, or fingerprint is
-ever written to metadata (N14).
+underlying file the way the CLI does — and it **states that limitation** rather
+than inventing identity from a pad-derived hash. Crucially, the combiner does
+**no content-dependent deduplication and never inspects the combined bytes by
+value**: it does not reject a source because its bytes equal another's, and it
+does not reject an all-zero combined result. If at least one declared source is
+uniform and independent of the others, the XOR is exactly uniform over the
+**full** space, and every combined value — all-zeros included — is a legitimate
+draw; refusing any specific value would condition the accepted distribution
+(the same mistake as the retired all-zero tripwire). Refusing a literal
+same-object re-selection is a UI concern (the picker may compare handles); the
+engine sees only bytes and never judges source content. No pad-derived hash,
+checksum, or fingerprint is ever written to metadata (N14).
 
 **PROTOCOL / labelled.** If the edition offers *generated* pad material from
 `crypto.getRandomValues()`, it is labelled **"computational random material
@@ -193,19 +252,39 @@ assets — the page references no external origins.
 **A Content-Security-Policy ships in the document itself** (`<meta
 http-equiv>` in `index.html` and `learn.html`), because the default deploy
 target is GitHub Pages, which serves no custom response headers — so the meta
-CSP is the enforcement point, not a hosting layer. Its scope, stated exactly:
-`default-src 'self'`, `script-src 'self'`, `connect-src 'self'`,
-`object-src 'none'`, `base-uri 'none'`, `form-action 'none'`,
-`frame-ancestors 'none'` — no external origin may be reached for scripts,
-network connections, frames, or objects, so nothing can exfiltrate. `blob:`
-is permitted for the module worker and the operator's courier/plaintext
-downloads; `data:` for inline icons; `'unsafe-inline'` is scoped to **style
-only** (Vite inlines critical CSS), never to script. A stricter
-script-nonce/hash policy or an HTTP-header CSP is an **OPERATOR** step for a
-deployment that can set response headers; the default GitHub Pages deployment
-provides exactly the meta CSP above, and this ledger claims no more. A CDN
-outage or a TruePad-service outage cannot make a local pair unusable, because
-there is no such service.
+CSP is the enforcement point for the directives a **meta** CSP can enforce. Its
+scope, stated exactly: `default-src 'self'`, `script-src 'self'`, `connect-src
+'self'`, `object-src 'none'`, `base-uri 'none'`, `form-action 'none'`,
+`frame-src 'none'`. `blob:` is permitted for the module worker and the
+operator's courier/plaintext downloads; `data:` for inline icons;
+`'unsafe-inline'` is scoped to **style only** (Vite inlines critical CSS),
+never to script.
+
+**What this CSP is, and what it is not.** It **restricts script, style,
+connection, object and frame loading to this origin** — defense in depth that
+narrows what a future edit or an injected script could reach. It is **not**
+itself a proof that data can never leave the browser, and this ledger does not
+claim that. Two precise limits:
+
+- **`frame-src 'none'`** stops **this** page from *loading* child frames. It is
+  **NOT** the same as **`frame-ancestors`**, which controls who may *embed*
+  this page. `frame-ancestors` (and `X-Frame-Options`) are **ignored in a meta
+  CSP** and can only be set as an **HTTP response header** by a hosting layer —
+  which the default GitHub Pages deployment cannot do. So the earlier ledger's
+  `frame-ancestors 'none'` was removed from the meta CSP rather than left as a
+  directive that was silently not enforced.
+- Anti-embedding is instead enforced at **runtime**: `src/browser/main.ts`
+  refuses to start the worker or render the operational UI if the page is not
+  the top-level document (`window.self !== window.top`, and a cross-origin
+  parent that throws on the check is treated as framed). A deployment that can
+  set response headers **should still** add `frame-ancestors 'none'` /
+  `X-Frame-Options: DENY` as belt-and-braces — an **OPERATOR** step. A stricter
+  script-nonce/hash policy or a full HTTP-header CSP is likewise an OPERATOR
+  step; the default GitHub Pages deployment provides exactly the meta CSP above
+  plus the runtime gate, and this ledger claims no more.
+
+A CDN outage or a TruePad-service outage cannot make a local pair unusable,
+because there is no such service.
 
 ---
 
@@ -214,7 +293,7 @@ there is no such service.
 - **NOT** native `fsync`/power-loss durability — that is Linux-ext4 CLI
   territory (`FORMAT-V2.md` §10), not verified here.
 - **NOT** an independent external rollback witness — only the browser-local
-  classes of §4.
+  kinds of §4.
 - **NOT** physical erasure on `destroy` (§5).
 - **NOT** verification of source physical provenance or uniformity (§6).
 - **NOT** protection against "clear site data", profile restore, or an
@@ -234,7 +313,7 @@ sees the browser's scope, not a borrowed one.
 | Store Format v2 files, canonical bytes, POLYVAL, `wc-one-time-v1`, four-slice partition, fixed-record frame, strict envelope grammar | PROTOCOL | `src/core` reused byte-for-byte; the §11 vectors and adversarial fixtures pass in the browser build |
 | commit-before-emit; loss not reuse | BROWSER-OP | OPFS `flush()` + the §12 order preserved in the worker verbs |
 | one mutator per pair | BROWSER-OP | Web Locks (not a UI flag) |
-| three-counter witness, `witness-regressed` | PROTOCOL + BROWSER-OP | recorded in the witness store; browser classes per §4 |
+| three-counter witness, `witness-regressed` | PROTOCOL + BROWSER-OP | recorded in a crash-safe append-only witness store, keyed by pair.json; browser-local kind per §4; established witness fails closed, never fresh |
 | irreversible `destroyed.json` boundary; restartable destroy | PROTOCOL + BROWSER-OP | tombstone in OPFS; every verb gates on it |
 | no downgrade; v1 refused | PROTOCOL | the browser engine has no `--legacy`/`--no-auth`/`--force` and no v1 path |
 | power-loss durability | NATIVE-ONLY / UNVERIFIED | not claimed (§2) |

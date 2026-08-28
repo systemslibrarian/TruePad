@@ -24,10 +24,14 @@
 export interface Vfs {
   // Read a whole file, or null if it does not exist.
   readFile(path: string): Promise<Uint8Array | null>;
-  // Replace a file's entire contents durably (write-in-full then flush). The
-  // browser sense of atomic: a crash leaves either the old bytes or the new,
-  // never a torn mix, on backings that give per-file replace; where a backing
-  // cannot, this is documented in BROWSER-SECURITY.md, never papered over.
+  // Replace a file's entire contents durably. Backings that offer an atomic
+  // replace do so — NodeVfs writes a temp file then renames; MemoryVfs swaps a
+  // value; OpfsVfs writes a temp file then move()s it over the target where the
+  // OPFS implementation supports move. Where a backing cannot (OpfsVfs's move()
+  // fallback), it is a durable in-place rewrite whose torn write leaves a
+  // partial file every reader in this engine detects and refuses CLOSED, never
+  // a silently-accepted mix (BROWSER-SECURITY.md §2). The rollback witness does
+  // NOT depend on this atomicity — it is an append-only journal (witness.ts).
   writeFileAtomic(path: string, data: Uint8Array): Promise<void>;
   // Append to a file (creating it if absent) and flush. The journal's only
   // write shape (§12.1).

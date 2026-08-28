@@ -1,41 +1,62 @@
 /* ============================================================================
- * TruePad Browser Edition — browser rollback witness classes (§15, §BROWSER-
- * SECURITY.md §4)
+ * TruePad Browser Edition — the crash-safe browser rollback witness (§15,
+ * §BROWSER-SECURITY.md §4)
  * ----------------------------------------------------------------------------
  * The rollback witness remembers how far a store has advanced, so a store
- * rolled back by a backup/profile restore refuses to move (`witness-
- * regressed`) instead of reusing retired positions or refilling a contested
- * record's attempt budget. It records EXACTLY the three frozen monotone
- * counters and nothing else (ledger N17):
+ * rolled back by a backup/profile restore refuses to move (`witness-regressed`)
+ * instead of reusing retired positions or refilling a contested record's
+ * attempt budget. It records EXACTLY the three frozen monotone counters and
+ * nothing else (ledger N17):
  *
  *   { encryptionNextOffset, authenticationNextSequence, attemptsReserved }
  *
- * The CLI's `separate-state-file` class assumes a file in an INDEPENDENT host
- * failure domain. A browser page has no such reach, so this edition does NOT
- * offer it and does NOT relabel browser-local state as its equivalent. Two
- * honest classes:
+ * This is a browser-PRODUCT layer, NOT a class of the frozen store. The store's
+ * head.json always carries the CLI's rollback:{witnessClass:"none"} (store.ts);
+ * whether a pair also carries a browser-local witness is recorded in the
+ * browser-only pair.json (`witness`), and the two kinds are:
  *
- *   browser-none               — no witness. A no-op. Restoring the OPFS store
- *                                regresses it and resets the per-record attempt
- *                                budget; §BROWSER-SECURITY.md §4 states this.
- *   browser-independent-store  — counters in a SECOND OPFS store, a directory
- *                                distinct from the pair dir (root
- *                                `witness/<pairId>.json`). This is only as
- *                                independent as the two stores' clearing/backup
- *                                are: both live under the same origin, and
- *                                "clear site data" removes both. Weaker than the
- *                                CLI's cross-medium witness — the UI says so.
+ *   browser-none          — no witness. A no-op. Restoring the OPFS store
+ *                           regresses it and resets the per-record attempt
+ *                           budget; §BROWSER-SECURITY.md §4 states this. A bare
+ *                           FORMAT-V2 store placed directly (e.g. a CLI store)
+ *                           that the browser never provisioned is browser-none.
+ *   browser-local-witness — an APPEND-ONLY journal in a SECOND OPFS store
+ *                           (`witness/<pairId>.log`, a directory distinct from
+ *                           the pair dir). Named honestly: browser-LOCAL, not an
+ *                           independent host failure domain. Both stores live
+ *                           under one origin; "clear site data" removes both.
  *
- * Because both stores live under one origin, an emptied or cleared witness
- * "knows nothing" (§4): an absent witness file reads as FRESH, not as an
- * outage. This is the honest browser behaviour and is deliberately NOT the
- * CLI's fail-closed-on-a-missing-configured-file. A witness that PARSES but
- * violates its own three-counter shape is `witness-inconsistent`.
+ * CRASH SAFETY (the §3 fix). The journal is APPEND-ONLY and is NEVER truncated,
+ * so no write interruption can shrink it, and records are LEADING-newline framed
+ * (`\n<json>`, encodeRecord). `appendFile` gives no record boundary, so a crash
+ * mid-append can leave a newline-free partial at EOF — but leading framing bounds
+ * every record by its own `\n` and the next record's `\n`, so a torn partial is
+ * always an isolated line, never fused with the record before or after it. The
+ * read DROPS any line that does not parse and folds the SURVIVING records into
+ * the per-direction max. So only a TORN advance loses its own value; every
+ * advance whose append COMPLETED is preserved. Crucially, a torn advance's
+ * operation ERRORED and WITHHELD its output (burn emits the envelope / open
+ * releases the plaintext only AFTER a successful advance), so the witness never
+ * under-reports below a state whose output was RELEASED — a rollback below any
+ * released-output high-water is still caught `witness-regressed`, and the very
+ * next clean advance re-records the current high-water (self-heal). Because a
+ * provisioned journal is never emptied by an advance, an established
+ * browser-local witness NEVER reads as "fresh": a provisioned pair (pair.json
+ * says browser-local-witness) whose journal is missing, empty, all-corrupt, or
+ * missing a direction fails CLOSED as `witness-inconsistent`. Bootstrap — the
+ * explicit provisioning event — is the only writer that creates the first
+ * records, at gen or a successful import, never inferred from an empty file.
+ * (Skipping — not failing closed on — a malformed line is safe: the witness
+ * cannot defend against an attacker who can already rewrite same-origin OPFS,
+ * the §4 browser-local limitation; its jobs are crash-safety and detecting a
+ * rollback of the PAIR store.)
  * ========================================================================= */
 
 import type { PadDirection } from "../../core/pad.ts";
-import type { BrowserWitnessClass } from "./protocol.ts";
 import type { Vfs } from "./vfs.ts";
+
+// The browser-product witness kind, as recorded in pair.json.
+export type BrowserWitnessKind = "browser-none" | "browser-local-witness";
 
 export type WitnessCounters = {
   encryptionNextOffset: number;
@@ -44,19 +65,19 @@ export type WitnessCounters = {
 };
 
 // The non-secret comparison of a store against its witness, for status (§15.3).
-export type WitnessState = "n/a" | "fresh" | "aligned" | "ahead" | "regressed" | "unreachable" | "inconsistent";
+export type WitnessState = "n/a" | "aligned" | "ahead" | "regressed" | "inconsistent";
 
 export type WitnessPreflight =
-  | { ok: true; state: "n/a" | "fresh" | "aligned" | "ahead" }
+  | { ok: true; state: "n/a" | "aligned" | "ahead" }
   | { ok: false; reason: "witness-regressed" | "witness-inconsistent"; message: string };
 
-type WitnessFile = { formatVersion: 2; witness: Record<string, WitnessCounters> };
+// The store's effective high-waters, for the preflight/report comparison.
+export type StoreHighWaters = { nextOffset: number; nextSequence: number; attemptsReserved: number };
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-const witnessPath = (pairId: string): string => `witness/${pairId}.json`;
-const keyOf = (pairId: string, direction: PadDirection): string => `${pairId}/${direction}`;
+const witnessLogPath = (pairId: string): string => `witness/${pairId}.log`;
 
 function isSafeCount(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -66,103 +87,116 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// Validate a parsed witness file against the §15.2 shape. Returns a freshly
-// constructed WitnessFile, or the reason it fails — a missing, extra or
-// negative counter field is a shape violation (fails closed), never a silent 0.
-function validateWitnessFile(raw: unknown): { file: WitnessFile } | { why: string } {
+/* ---- the append-only journal --------------------------------------------- */
+
+// One physical record on the witness journal. The three counters are stored
+// under short keys so the file stays small; the shape is validated strictly.
+type WitnessRecord = { direction: PadDirection; counters: WitnessCounters };
+
+// Each record is framed with a LEADING newline (`\n<json>`), NOT a trailing one.
+// This is what makes a torn append harmless to its neighbours: `appendFile`
+// writes at EOF with no boundary, so a crash mid-append can leave a newline-free
+// partial. With leading framing, every record — the torn one included — is
+// bounded on the LEFT by its own `\n` and on the RIGHT by the NEXT record's `\n`,
+// so a torn partial is always an isolated line that the reader drops, and it can
+// never fuse into and destroy the record before OR after it. (Trailing framing
+// would let a torn partial swallow the following clean record — the flaw this
+// framing fixes.)
+function encodeRecord(direction: PadDirection, counters: WitnessCounters): Uint8Array {
+  const line = JSON.stringify({
+    d: direction,
+    eno: counters.encryptionNextOffset,
+    ans: counters.authenticationNextSequence,
+    ar: counters.attemptsReserved
+  });
+  return enc.encode(`\n${line}`);
+}
+
+function parseRecord(raw: unknown): WitnessRecord | null {
   if (!isRecord(raw)) {
-    return { why: "not a JSON object" };
+    return null;
   }
-  if (raw.formatVersion !== 2) {
-    return { why: `formatVersion must be the integer 2 (found ${JSON.stringify(raw.formatVersion)})` };
+  if (Object.keys(raw).length !== 4) {
+    return null;
   }
-  if (!isRecord(raw.witness)) {
-    return { why: "witness must be an object mapping <pairId>/<direction> to counters" };
+  if (raw.d !== "A->B" && raw.d !== "B->A") {
+    return null;
   }
-  const witness: Record<string, WitnessCounters> = {};
-  for (const [key, value] of Object.entries(raw.witness)) {
-    if (!isRecord(value)) {
-      return { why: `witness["${key}"] is not an object` };
-    }
-    const keys = Object.keys(value);
-    if (
-      keys.length !== 3 ||
-      !isSafeCount(value.encryptionNextOffset) ||
-      !isSafeCount(value.authenticationNextSequence) ||
-      !isSafeCount(value.attemptsReserved)
-    ) {
-      return {
-        why:
-          `witness["${key}"] must be exactly { encryptionNextOffset, authenticationNextSequence, attemptsReserved } ` +
-          `with safe integers >= 0 and no other keys`
-      };
-    }
-    witness[key] = {
-      encryptionNextOffset: value.encryptionNextOffset,
-      authenticationNextSequence: value.authenticationNextSequence,
-      attemptsReserved: value.attemptsReserved
-    };
+  if (!isSafeCount(raw.eno) || !isSafeCount(raw.ans) || !isSafeCount(raw.ar)) {
+    return null;
   }
-  return { file: { formatVersion: 2, witness } };
-}
-
-type ReadResult =
-  | { ok: true; counters: WitnessCounters | null } // null = no entry / fresh witness
-  | { ok: false; reason: "witness-inconsistent"; message: string };
-
-async function readWitness(vfs: Vfs, pairId: string, direction: PadDirection): Promise<ReadResult> {
-  const bytes = await vfs.readFile(witnessPath(pairId));
-  if (bytes === null || dec.decode(bytes).trim() === "") {
-    // Absent / empty: a fresh (or cleared) witness — it knows nothing (§4).
-    return { ok: true, counters: null };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(dec.decode(bytes));
-  } catch (error) {
-    return {
-      ok: false,
-      reason: "witness-inconsistent",
-      message: `the rollback witness at ${witnessPath(pairId)} does not parse as JSON (${(error as Error).message}). Nothing was burned.`
-    };
-  }
-  const validated = validateWitnessFile(parsed);
-  if ("why" in validated) {
-    return {
-      ok: false,
-      reason: "witness-inconsistent",
-      message: `the rollback witness at ${witnessPath(pairId)} violates its own shape — ${validated.why} (§15.2). Nothing was burned.`
-    };
-  }
-  return { ok: true, counters: validated.file.witness[keyOf(pairId, direction)] ?? null };
-}
-
-// ADVANCE: read-modify-write the entry, MONOTONE (elementwise maximum), atomic
-// replace + flush. Creates the file if absent. Throws only on I/O failure.
-async function advanceWitness(vfs: Vfs, pairId: string, direction: PadDirection, counters: WitnessCounters): Promise<void> {
-  const bytes = await vfs.readFile(witnessPath(pairId));
-  let file: WitnessFile;
-  if (bytes === null || dec.decode(bytes).trim() === "") {
-    file = { formatVersion: 2, witness: {} };
-  } else {
-    const validated = validateWitnessFile(JSON.parse(dec.decode(bytes)));
-    if ("why" in validated) {
-      throw new Error(`the rollback witness at ${witnessPath(pairId)} is inconsistent (${validated.why}); refusing to advance over it`);
-    }
-    file = validated.file;
-  }
-  const key = keyOf(pairId, direction);
-  const prev = file.witness[key] ?? { encryptionNextOffset: 0, authenticationNextSequence: 0, attemptsReserved: 0 };
-  file.witness[key] = {
-    encryptionNextOffset: Math.max(prev.encryptionNextOffset, counters.encryptionNextOffset),
-    authenticationNextSequence: Math.max(prev.authenticationNextSequence, counters.authenticationNextSequence),
-    attemptsReserved: Math.max(prev.attemptsReserved, counters.attemptsReserved)
+  return {
+    direction: raw.d,
+    counters: { encryptionNextOffset: raw.eno, authenticationNextSequence: raw.ans, attemptsReserved: raw.ar }
   };
-  await vfs.writeFileAtomic(witnessPath(pairId), enc.encode(JSON.stringify(file)));
 }
 
-// The store's effective high-waters, for the preflight/report comparison.
-export type StoreHighWaters = { nextOffset: number; nextSequence: number; attemptsReserved: number };
+type ReadEffective =
+  | { present: false } // absent / empty / no surviving record — no provisioned high-water
+  | { present: true; byDirection: Map<PadDirection, WitnessCounters> };
+
+// Read the append-only journal and fold the SURVIVING records into the
+// per-direction elementwise maximum. This is what makes the journal crash-safe
+// WITHOUT relying on any atomic replace:
+//
+//   * Records are LEADING-newline framed (encodeRecord: `\n<json>`), so every
+//     record is bounded by its own `\n` and the next record's `\n`. A torn
+//     append (a crash mid-append) leaves an isolated partial line, never one
+//     fused with the record before or after it. Any unparseable / malformed
+//     line is skipped, wherever it sits.
+//   * Only a TORN advance loses its own value; every advance whose append
+//     COMPLETED is on its own clean line and is always folded in. Because a
+//     torn advance's operation ERRORED (its output was withheld — burn's
+//     envelope / open's plaintext is emitted only AFTER a successful advance),
+//     the witness never under-reports below a state whose output was released:
+//     a rollback below any released-output high-water is still caught
+//     witness-regressed. The very next CLEAN advance re-records the current
+//     high-water, so the witness self-heals immediately.
+//
+// Skipping (rather than failing closed on) a malformed line is safe here
+// precisely because the witness cannot defend against an attacker who can
+// already rewrite same-origin OPFS — that is the §4 browser-local limitation,
+// not this layer's job. Its jobs are crash-safety and detecting a rollback of
+// the PAIR store, both of which the max-of-survivors delivers. `present:false`
+// (nothing parsed) is turned into `witness-inconsistent` by a provisioned
+// caller — an established witness is never read as fresh.
+async function readEffective(vfs: Vfs, pairId: string): Promise<ReadEffective> {
+  const bytes = await vfs.readFile(witnessLogPath(pairId));
+  if (bytes === null) {
+    return { present: false };
+  }
+  const byDirection = new Map<PadDirection, WitnessCounters>();
+  for (const line of dec.decode(bytes).split("\n")) {
+    if (line === "") {
+      continue;
+    }
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue; // torn / corrupt / fused record — drop it, keep scanning
+    }
+    const record = parseRecord(parsed);
+    if (record === null) {
+      continue; // not a well-formed witness record — drop it
+    }
+    const prev = byDirection.get(record.direction);
+    byDirection.set(
+      record.direction,
+      prev === undefined
+        ? record.counters
+        : {
+            encryptionNextOffset: Math.max(prev.encryptionNextOffset, record.counters.encryptionNextOffset),
+            authenticationNextSequence: Math.max(prev.authenticationNextSequence, record.counters.authenticationNextSequence),
+            attemptsReserved: Math.max(prev.attemptsReserved, record.counters.attemptsReserved)
+          }
+    );
+  }
+  if (byDirection.size === 0) {
+    return { present: false };
+  }
+  return { present: true, byDirection };
+}
 
 function belowWitness(store: StoreHighWaters, w: WitnessCounters): boolean {
   return (
@@ -180,18 +214,23 @@ function alignedWith(store: StoreHighWaters, w: WitnessCounters): boolean {
   );
 }
 
-/* ---- the witness classes -------------------------------------------------- */
+/* ---- the witness contract ------------------------------------------------- */
 
 export type BrowserWitness = {
-  readonly witnessClass: BrowserWitnessClass;
-  // Provision the witness at gen (browser-independent-store only).
-  bootstrap(pairId: string): Promise<void>;
+  readonly kind: BrowserWitnessKind;
+  // Provision the witness — the explicit event at gen or a successful import.
+  // `initial` seeds each direction (gen: {0,0,0}; import: the imported store's
+  // high-waters, so a mid-life import is not spuriously refused witness-
+  // regressed). browser-none is a no-op.
+  bootstrap(pairId: string, initial?: { "A->B": WitnessCounters; "B->A": WitnessCounters }): Promise<void>;
   // §15.3 PREFLIGHT: a free state gate before anything is consumed. A store
-  // below its witness refuses `witness-regressed`; a broken witness refuses
-  // `witness-inconsistent`.
+  // below its witness refuses `witness-regressed`; a missing/empty/torn/absent-
+  // direction PROVISIONED witness refuses `witness-inconsistent` (fail closed —
+  // an established witness never reads as fresh).
   preflight(pairId: string, direction: PadDirection, store: StoreHighWaters): Promise<WitnessPreflight>;
-  // §15.3 ADVANCE: after the durable §12 commit, before the emit. Throws on an
-  // I/O failure — the caller has already committed, so the output is withheld.
+  // §15.3 ADVANCE: after the durable §12 commit, before the emit. Appends one
+  // record. Throws on an I/O failure — the caller has already committed, so the
+  // output is withheld.
   advance(pairId: string, direction: PadDirection, counters: WitnessCounters): Promise<void>;
   // §15.3 status: read-only comparison; refuses nothing.
   report(pairId: string, direction: PadDirection, store: StoreHighWaters): Promise<WitnessState>;
@@ -200,7 +239,7 @@ export type BrowserWitness = {
 // browser-none: no witness. Every touchpoint is a no-op; status reports "n/a".
 function browserNoneWitness(): BrowserWitness {
   return {
-    witnessClass: "browser-none",
+    kind: "browser-none",
     async bootstrap(): Promise<void> {
       /* no witness to provision */
     },
@@ -216,26 +255,39 @@ function browserNoneWitness(): BrowserWitness {
   };
 }
 
-// browser-independent-store: counters in the separate `witness/<pairId>.json`.
-function browserIndependentStoreWitness(vfs: Vfs): BrowserWitness {
+function inconsistent(message: string): { ok: false; reason: "witness-inconsistent"; message: string } {
+  return { ok: false, reason: "witness-inconsistent", message: `${message} Nothing was burned.` };
+}
+
+// browser-local-witness: the append-only journal at `witness/<pairId>.log`.
+function browserLocalWitness(vfs: Vfs): BrowserWitness {
+  const ZERO: WitnessCounters = { encryptionNextOffset: 0, authenticationNextSequence: 0, attemptsReserved: 0 };
   return {
-    witnessClass: "browser-independent-store",
-    async bootstrap(pairId: string): Promise<void> {
-      // Provision both directions at {0,0,0}; protection begins here.
-      const zero: WitnessCounters = { encryptionNextOffset: 0, authenticationNextSequence: 0, attemptsReserved: 0 };
-      await advanceWitness(vfs, pairId, "A->B", zero);
-      await advanceWitness(vfs, pairId, "B->A", zero);
+    kind: "browser-local-witness",
+    async bootstrap(pairId: string, initial?: { "A->B": WitnessCounters; "B->A": WitnessCounters }): Promise<void> {
+      // Provision both directions; protection begins here. Append-only: the two
+      // records are the journal's first durable content.
+      const seed = initial ?? { "A->B": ZERO, "B->A": ZERO };
+      await vfs.appendFile(witnessLogPath(pairId), encodeRecord("A->B", seed["A->B"]));
+      await vfs.appendFile(witnessLogPath(pairId), encodeRecord("B->A", seed["B->A"]));
     },
     async preflight(pairId: string, direction: PadDirection, store: StoreHighWaters): Promise<WitnessPreflight> {
-      const result = await readWitness(vfs, pairId, direction);
-      if (!result.ok) {
-        return { ok: false, reason: result.reason, message: result.message };
+      const eff = await readEffective(vfs, pairId);
+      if (!eff.present) {
+        return inconsistent(
+          `this pair is provisioned with a browser-local rollback witness, but its journal ${witnessLogPath(pairId)} ` +
+            `is missing, empty, or holds no surviving record. An established witness is never treated as fresh: a ` +
+            `vanished witness is a possible rollback, so this fails closed.`
+        );
       }
-      if (result.counters === null) {
-        return { ok: true, state: "fresh" };
+      const w = eff.byDirection.get(direction);
+      if (w === undefined) {
+        return inconsistent(
+          `the browser-local rollback witness ${witnessLogPath(pairId)} carries no record for ${direction}: its ` +
+            `provisioning record for this direction is gone, so it fails closed rather than assume a fresh store.`
+        );
       }
-      if (belowWitness(store, result.counters)) {
-        const w = result.counters;
+      if (belowWitness(store, w)) {
         return {
           ok: false,
           reason: "witness-regressed",
@@ -249,29 +301,29 @@ function browserIndependentStoreWitness(vfs: Vfs): BrowserWitness {
             `budget. Refusing before anything is consumed. Nothing was burned.`
         };
       }
-      return { ok: true, state: alignedWith(store, result.counters) ? "aligned" : "ahead" };
+      return { ok: true, state: alignedWith(store, w) ? "aligned" : "ahead" };
     },
     async advance(pairId: string, direction: PadDirection, counters: WitnessCounters): Promise<void> {
-      await advanceWitness(vfs, pairId, direction, counters);
+      await vfs.appendFile(witnessLogPath(pairId), encodeRecord(direction, counters));
     },
     async report(pairId: string, direction: PadDirection, store: StoreHighWaters): Promise<WitnessState> {
-      const result = await readWitness(vfs, pairId, direction);
-      if (!result.ok) {
+      const eff = await readEffective(vfs, pairId);
+      if (!eff.present) {
         return "inconsistent";
       }
-      if (result.counters === null) {
-        return "fresh";
+      const w = eff.byDirection.get(direction);
+      if (w === undefined) {
+        return "inconsistent";
       }
-      if (belowWitness(store, result.counters)) {
+      if (belowWitness(store, w)) {
         return "regressed";
       }
-      return alignedWith(store, result.counters) ? "aligned" : "ahead";
+      return alignedWith(store, w) ? "aligned" : "ahead";
     }
   };
 }
 
-// Build the witness for a store's declared rollback class. The head serialises
-// browser-none as the CLI's { witnessClass:"none" }, so map that back here.
-export function witnessFor(vfs: Vfs, rollbackClass: "none" | "browser-independent-store"): BrowserWitness {
-  return rollbackClass === "browser-independent-store" ? browserIndependentStoreWitness(vfs) : browserNoneWitness();
+// Build the witness for a pair's browser-product witness kind (from pair.json).
+export function witnessFor(vfs: Vfs, kind: BrowserWitnessKind): BrowserWitness {
+  return kind === "browser-local-witness" ? browserLocalWitness(vfs) : browserNoneWitness();
 }

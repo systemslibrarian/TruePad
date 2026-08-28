@@ -9,9 +9,11 @@
  * src/core for every byte of crypto and never reimplements it.
  *
  *   <prefix>/head.json    non-secret header (§1.1). No secret ever appears
- *                         here. Rewritten via Vfs.writeFileAtomic (write-in-
- *                         full then flush): a crash leaves old bytes or new,
- *                         never a torn mix.
+ *                         here. Rewritten via Vfs.writeFileAtomic (atomic
+ *                         temp+move where the backing supports it, else a
+ *                         durable in-place rewrite). A torn rewrite leaves a
+ *                         partial header that loadStore refuses as corrupt-head
+ *                         — fail-closed, never a silently-accepted mix.
  *   <prefix>/secret.bin   the secret body (§1.2): E + 32·N bytes,
  *                         [encryption slice E][per sequence: K(16) then R(16)].
  *                         Written durably at gen BEFORE head.json or any
@@ -76,20 +78,21 @@ export class EngineRefused extends Error {
 }
 
 /* ---- header shape (§1.1) --------------------------------------------------
- * Mirrors FORMAT-V2.md §1.1 and the CLI's HeadV2 byte-for-byte, EXCEPT the
- * rollback field's vocabulary: the browser cannot reach an independent host
- * failure domain, so it names its witness classes honestly (§BROWSER-
- * SECURITY.md §4) rather than relabelling browser-local state as the CLI's
- * separate-state-file. `browser-none` serialises to the CLI's { witnessClass:
- * "none", config:{} } — byte-identical, so a browser-none store is CLI-
- * readable — while `browser-independent-store` is a browser-only class.
+ * Mirrors FORMAT-V2.md §1.1 and the CLI's HeadV2 byte-for-byte. The rollback
+ * field is NOT forked: a browser store's head.json ALWAYS serialises
+ * rollback:{ witnessClass:"none", config:{} } — byte-identical to a CLI store,
+ * so every browser-generated store is CLI-readable and the courier bundle
+ * carries no browser-only header vocabulary (§BROWSER-SECURITY.md §2/§4). The
+ * browser's own rollback witness is a PRODUCT layer keyed by the browser-only
+ * pair.json (`witness`), living OUTSIDE the frozen store; it never touches
+ * these bytes. A CLI store whose frozen witnessClass the browser cannot honour
+ * (separate-state-file / platform-monotonic / remote-monotonic) is REFUSED on
+ * load, never silently downgraded.
  */
 
 export type SourceDeclaration = { name: string; declaredOrigin: string; lengthBytes: number };
 
-export type BrowserRollback =
-  | { witnessClass: "none"; config: Record<string, never> }
-  | { witnessClass: "browser-independent-store"; config: Record<string, never> };
+export type BrowserRollback = { witnessClass: "none"; config: Record<string, never> };
 
 export type RecordSpec = { kind: "variable" } | { kind: "fixed"; bytes: number };
 
@@ -356,23 +359,27 @@ function validateHead(raw: unknown): { head: HeadV2 } | { why: string } {
   if (!isRecord(raw.rollback.config)) {
     return { why: "rollback.config is not an object" };
   }
-  // §BROWSER-SECURITY.md §4: exactly the two honest browser classes. `none`
-  // (byte-identical to the CLI's, so a browser-none store is CLI-readable) and
-  // `browser-independent-store` (a browser-only class). Both carry an empty
-  // config. A CLI store using separate-state-file / platform / remote is
-  // refused: the browser cannot honour those, and it will not fake them.
+  // §BROWSER-SECURITY.md §2/§4: the frozen head carries EXACTLY the CLI's
+  // { witnessClass:"none", config:{} } and nothing else — the browser does not
+  // fork the format with a browser-only witness vocabulary. Its own rollback
+  // witness lives in the browser-only pair.json, outside these bytes. A CLI
+  // store whose frozen witnessClass the browser cannot honour (separate-state-
+  // file / platform-monotonic / remote-monotonic) is REFUSED here, never
+  // silently downgraded to none.
   const witnessClass = raw.rollback.witnessClass;
   let rollback: BrowserRollback;
-  if (witnessClass === "none" || witnessClass === "browser-independent-store") {
+  if (witnessClass === "none") {
     if (Object.keys(raw.rollback.config).length !== 0) {
-      return { why: `rollback.config must be {} for witnessClass "${witnessClass}"` };
+      return { why: 'rollback.config must be {} for witnessClass "none"' };
     }
-    rollback = { witnessClass, config: {} };
+    rollback = { witnessClass: "none", config: {} };
   } else {
     return {
       why:
-        `rollback.witnessClass must be "none" or "browser-independent-store" in the Browser Edition ` +
-        `(the CLI's separate-state-file/platform/remote classes are not honoured here) (found ${JSON.stringify(witnessClass)})`
+        `rollback.witnessClass must be "none": the Browser Edition keeps its rollback witness outside the frozen ` +
+        `store (pair.json), so a store's head.json carries the CLI's { witnessClass:"none" }. A frozen witness class ` +
+        `this edition cannot honour (separate-state-file / platform-monotonic / remote-monotonic) is refused, not ` +
+        `downgraded (found ${JSON.stringify(witnessClass)})`
     };
   }
 

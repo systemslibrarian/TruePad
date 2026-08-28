@@ -47,7 +47,7 @@ export function localRoleLabel(role: "A" | "B"): string {
 }
 
 export function witnessClassLabel(cls: BrowserWitnessClass): string {
-  return cls === "browser-none" ? "None" : "Independent store";
+  return cls === "browser-none" ? "None" : "Browser-local witness";
 }
 
 export function witnessStateView(state: DirectionMeters["witness"]["state"]): { label: string; tone: Tone } {

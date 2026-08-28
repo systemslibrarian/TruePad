@@ -19,10 +19,14 @@ import type { PadDirection } from "../../core/pad.ts";
 
 export type RecordPolicy = { kind: "variable" } | { kind: "fixed"; bytes: number };
 
-// Browser rollback-witness classes (§BROWSER-SECURITY.md). Deliberately NOT
-// the CLI's external separate-state-file: the browser cannot reach an
-// independent host-level failure domain, so the classes are named honestly.
-export type BrowserWitnessClass = "browser-none" | "browser-independent-store";
+// Browser rollback-witness kinds (§BROWSER-SECURITY.md §4). This is a
+// browser-PRODUCT choice recorded in the browser-only pair.json — NOT a class
+// of the frozen store (a browser store's head.json always serialises
+// rollback:{witnessClass:"none",config:{}}, byte-identical to the CLI, §2).
+// Named honestly: `browser-local-witness` is a second OPFS store under the same
+// origin, NOT an independent host failure domain — it does not imply the CLI's
+// separate-state-file reach.
+export type BrowserWitnessClass = "browser-none" | "browser-local-witness";
 
 // Non-secret per-direction meters — the numbers the dashboard shows. No
 // counter here is a secret; all are already visible via the CLI's `status`.
@@ -78,20 +82,17 @@ export type EngineRequest =
   | { id: number; op: "retire"; pairId: string; direction: PadDirection; throughSequence: number; throughOffset?: number; reason?: string }
   | { id: number; op: "clear-freeze"; pairId: string }
   | { id: number; op: "destroy"; pairId: string; confirm: string; reason?: string }
-  // Export a pair's whole store as a courier bundle (the FORMAT-V2 files) for
-  // out-of-band delivery to the peer. Secrets DO leave here — deliberately,
-  // to the operator's chosen destination — this is the pad courier step, and
-  // the UI must present it as such (never an automatic upload).
+  // Export a pair's whole store as a courier container for out-of-band delivery
+  // to the peer. Secrets DO leave here — deliberately, to the operator's chosen
+  // destination — this is the pad courier step, and the UI must present it as
+  // such (never an automatic upload). The worker packs the container and returns
+  // ONE transferred byte buffer (§4): no pad material is ever base64-stringified
+  // or JSON-assembled on the UI thread.
   | { id: number; op: "export-pair"; pairId: string }
-  | { id: number; op: "import-pair"; label: string; bundle: PairBundle };
-
-// A courier bundle: the exact FORMAT-V2 files, base64-free (raw bytes), per
-// direction, plus the manifest. This is pad material — the UI treats it like
-// the physical pad it is.
-export type PairBundle = {
-  pairId: string;
-  files: { path: string; bytes: Uint8Array }[]; // e.g. "a-to-b/head.json", "a-to-b/secret.bin", ...
-};
+  // Import a couriered pad. The UI reads the operator-selected file and TRANSFERS
+  // its bytes into the worker (detaching the UI's ArrayBuffer); the worker parses
+  // and validates the whole container before any pair becomes active (§6).
+  | { id: number; op: "import-pair"; label: string; container: Uint8Array; witnessClass?: BrowserWitnessClass };
 
 /* ---- responses (worker → UI) ----------------------------------------------- */
 
@@ -104,7 +105,9 @@ export type EngineOk =
   | { id: number; ok: true; op: "retire"; meters: PairSummary }
   | { id: number; ok: true; op: "clear-freeze"; cleared: number; meters: PairSummary }
   | { id: number; ok: true; op: "destroy"; alreadyDestroyed: boolean; limitation: string }
-  | { id: number; ok: true; op: "export-pair"; bundle: PairBundle }
+  // The packed courier container, as one transferred byte buffer (§4). This IS
+  // pad material; the UI hands it straight to a file the operator names.
+  | { id: number; ok: true; op: "export-pair"; container: Uint8Array; fileCount: number }
   | { id: number; ok: true; op: "import-pair"; pair: PairSummary };
 
 export type EngineResponse = EngineOk | ((EngineRefusal | EngineError) & { id: number; op: EngineRequest["op"] });

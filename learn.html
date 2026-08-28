@@ -2,10 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- Same self-contained CSP as the app (GitHub Pages sets no headers). -->
+    <!--
+      Same self-contained CSP as the app (GitHub Pages sets no headers). It is
+      defense in depth restricting loads to this origin, not a proof nothing can
+      leave. `frame-ancestors` is omitted because it is ignored in a meta CSP;
+      controlling who may embed a page needs an HTTP header from a hosting layer.
+      This is a static teaching page with no pad material.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; child-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; child-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TruePad — a true one-time pad</title>
