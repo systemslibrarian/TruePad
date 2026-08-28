@@ -479,7 +479,9 @@ export function ceremonyCreate(args: Args2): void {
     "auth-records",
     "verify-attempt-limit",
     "max-auth-lookahead",
-    "freeze-threshold"
+    "freeze-threshold",
+    "witness-class",
+    "witness-path"
   ]) {
     const list = args.flags.get(name);
     if (list !== undefined) {

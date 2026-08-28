@@ -230,19 +230,80 @@ advances that copy's own auth high-water, so opening your own envelope
 there is refused `sequence-retired`; the copy step is part of the protocol,
 not a convenience.) Restoring the whole pair directory from a backup still
 regresses the counters and the journal together — the v2 format does not
-fix backup, and that residual is STILL OPEN until a Phase-4 rollback
-witness exists — and v2 adds a named operator assumption of its own: a
-pair directory is restored as all three files together or not at all
-(FORMAT-V2.md §9.4; retired material stays physically present in
-secret.bin — retirement is the counters' doing, never the file's — so
-counters restored to an earlier state offer that material for two-time-pad
-reuse, and only a restore the journal survives is caught at load as
-regressed-below-mark). Durability is verified on
+fix backup: a configured rollback witness (`--witness-class
+separate-state-file`) closes the restore hole for that store, and at the
+default `witnessClass: none` the residual is STILL OPEN — and v2 keeps a
+named operator assumption of its own: a pair directory is restored as all
+three files together or not at all (FORMAT-V2.md §9.4; retired material
+stays physically present in secret.bin — retirement is the counters'
+doing, never the file's — so counters restored to an earlier state offer
+that material for two-time-pad reuse, and only a restore the journal
+survives is caught at load as regressed-below-mark). Durability is verified on
 Linux ext4 only (FORMAT-V2.md §10); Windows, network filesystems, and
 macOS power-loss durability are unverified. And this tool still cannot
 verify that source material came from a physical source: it records the
 operator's declaration. This repository still does not recommend one-time
 pads for real traffic.
+
+**The rollback witness (optional).** `gen --witness-class
+separate-state-file --witness-path <absolute path>` records, outside the
+pair directory, how far each store has advanced, so a store rolled back by
+a restore refuses `witness-regressed` before anything is consumed instead
+of reusing retired positions — closing the §9.4 restore hole for that
+store, whole-directory or the both-state-files partial restore that the
+load-time mark check cannot see. The path travels verbatim in the header,
+and each peer maintains its own witness file at that path on its host; an
+empty file accepts a fresh pair, and protection begins at the first
+witnessed commit. It fails closed: a witness that cannot be read or whose
+medium is not writable (`witness-unreachable`), or that violates its own
+shape (`witness-inconsistent`), refuses burn, open, and retire rather than
+downgrading silently. The preflight probes writability, so a read-only
+witness medium refuses free before the store commits; only a write that
+fails in the race between that probe and the advance withholds one
+in-flight record (its material lost, never reused), after which every
+later operation refuses free until the witness is writable again. The strength is only
+what the mechanism gives — a witness is only as monotonic as the mechanism
+enforcing its non-regression: a separate state file is an independent
+failure domain, not intrinsically monotonic, and an emptied or restored
+witness knows nothing. The witness sees only the two counters, never a pad
+byte, key, mask, plaintext, or ciphertext (§15.1); a remote witness
+(specified, unimplemented, refused `witness-unsupported`) would in addition
+observe burn timing and byte volume off-host, which is why the local class
+is the one that ships. At the default `witnessClass: none` there is no
+witness and no such claim.
+
+**Fixed-size records (optional).** `gen --record-bytes F` freezes every
+record's ciphertext at `F` bytes (a multiple of 16, `32 ≤ F ≤ 1 MiB`). The
+message length moves inside the encrypted-and-authenticated frame — a u32
+prefix ahead of the plaintext, zero-padded to `F` (FORMAT-V2.md §16) — so a
+fixed store's wire ciphertext is always `F` bytes and the channel observes
+record count and timing but never message length. That length-hiding has a
+stated price: every send spends `F` encryption bytes and one auth record
+however short the message, and a message may hold at most `F − 4` bytes.
+Fixing `F` also narrows §4's cap for that store, so its per-attempt forgery
+bound is exactly `(4 + F/16) · 2^-128` — smaller than the variable store's
+`65540 · 2^-128`, and no stronger than that number. The default stays
+variable: sizing each record to its message spends less pad, and the format
+does not make the fixed spend a silent default.
+
+**Destroying a pair.** `destroy <dir> --confirm <pairId> [--reason TEXT]`
+tears one pair down for good: under the pair lock it writes a non-secret
+tombstone (`destroyed.json` — pairId, timestamp, reason, final high-waters),
+best-effort zero-overwrites each half's `secret.bin`, then unlinks the three
+store files and removes the half directories, leaving `manifest.json` and the
+tombstone as the pair's non-secret record. `--confirm` must equal the pair's
+pairId (read it from the pad book or `head.json`; the tool does not echo the
+expected value); a pair too corrupt to yield a pairId is destroyed with the
+literal token `destroy-unreadable-pair`, and any other value is refused
+`destroy-unconfirmed` with nothing touched. destroy works on a corrupt store —
+a store too damaged to load is still one an operator must be able to remove —
+and refuses a v1 store (`v1-store`). What it does NOT claim is erasure of the
+medium: Software can forget its reference to pad material; it cannot prove that
+flash forgot the bytes. The zero-overwrite is best-effort and proves nothing
+about the storage — a copy-on-write filesystem (APFS among them) may preserve
+the pre-overwrite blocks, SSD wear leveling may preserve any block, and backups
+are outside this tool's reach. Physical destruction of the medium is a ceremony
+step (`docs/CEREMONY.md`), not a software claim (FORMAT-V2.md §17).
 
 **v1 coexistence.** v1 pads keep working with `truepad-pad`, unchanged. v2
 tooling refuses every v1 store (`v1-store` — letters or bytes) and every
@@ -253,11 +314,14 @@ to generate a fresh v2 pair and retire the v1 pair on its own terms.
 ```sh
 node bin/truepad2.mjs gen          <dir> --source FILE [--source FILE ...] [--origin TEXT ...] --encryption-bytes E --auth-records N
                                    [--verify-attempt-limit 8] [--max-auth-lookahead 64] [--freeze-threshold 32]
+                                   [--witness-class separate-state-file --witness-path ABSOLUTE-PATH]  # optional rollback witness (§15)
+                                   [--record-bytes F]                                                  # optional fixed-size records (§16)
 node bin/truepad2.mjs burn         <dir> --as A|B (TEXT | --in FILE)           # encrypt + tag with YOUR sending store, print a v2 envelope
 node bin/truepad2.mjs open         <dir> --as A|B (ENVELOPE-JSON | --in FILE)  # verify the tag FIRST, then burn, then print plaintext
 node bin/truepad2.mjs status       <dir>                                       # both meters + CHANNEL CAPACITY LIMITED BY
 node bin/truepad2.mjs clear-freeze <dir>                                       # reversible operator brake; never resets attempt counters
 node bin/truepad2.mjs retire       <dir> --direction a-to-b|b-to-a --through-sequence S [--through-offset O] [--reason TEXT]
+node bin/truepad2.mjs destroy      <dir> --confirm PAIRID|destroy-unreadable-pair [--reason TEXT]  # tear the pair down (§17)
 node bin/truepad2.mjs ceremony     create|verify ...                           # operator ceremony; see docs/CEREMONY.md
 ```
 

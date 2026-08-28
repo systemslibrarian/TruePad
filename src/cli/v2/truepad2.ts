@@ -13,6 +13,7 @@
  *   clear-freeze <dir>
  *   retire       <dir> --direction a-to-b|b-to-a --through-sequence S
  *                      [--through-offset O] [--reason TEXT]
+ *   destroy      <dir> --confirm PAIRID|destroy-unreadable-pair [--reason TEXT]
  *   ceremony     create | verify — Phase 3 (src/cli/v2/ceremony.ts; docs/CEREMONY.md)
  *
  * The transactions here ARE FORMAT-V2.md §12: burn is SEND (S0..S3), open is
@@ -25,8 +26,20 @@
  * the exit-code convention.
  * ========================================================================= */
 
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeSync
+} from "node:fs";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { bytesToHex, hexToBytes } from "../../core/hex.ts";
 import type { PadDirection, Party } from "../../core/pad.ts";
@@ -41,20 +54,27 @@ import {
   type CanonicalFields
 } from "../../core/wc-one-time.ts";
 import { decodeEnvelope2, encodeEnvelope2, type EnvelopeV2 } from "../../core/envelope2.ts";
+import { buildFrame, frameCapacity, parseFrame } from "../../core/frame2.ts";
 import { combineSources, partition, requiredSourceLength } from "../../core/partition2.ts";
 import { acquireLock } from "../lock.ts";
 import {
   commitAdvance,
+  HEAD_FILE,
   initStore2,
+  JOURNAL_FILE,
   loadStore2,
   persistAuthFail,
   readAuthRecord,
   readEncryption,
   reserveAttempt,
+  SECRET_FILE,
   type HeadV2,
   type LoadedStore2,
+  type RecordSpec,
+  type Rollback,
   type SourceDeclaration
 } from "./store2.ts";
+import { advanceWitness, readWitnessCounters, witnessWritable, type WitnessCounters } from "./witness.ts";
 import { CEREMONY_ASSERTIONS, ceremonyCreate, ceremonyVerify } from "./ceremony.ts";
 
 export const BANNER2 =
@@ -66,11 +86,13 @@ export const BANNER2 =
 export const USAGE2 = `usage:
   truepad2 gen          <dir> --source FILE [--source FILE ...] [--origin TEXT ...] --encryption-bytes E --auth-records N
                         [--verify-attempt-limit 8] [--max-auth-lookahead 64] [--freeze-threshold 32]
+                        [--witness-class separate-state-file --witness-path ABSOLUTE-PATH] [--record-bytes F]
   truepad2 burn         <dir> --as A|B (TEXT | --in FILE)
   truepad2 open         <dir> --as A|B (ENVELOPE-JSON | --in FILE)
   truepad2 status       <dir>
   truepad2 clear-freeze <dir>
   truepad2 retire       <dir> --direction a-to-b|b-to-a --through-sequence S [--through-offset O] [--reason TEXT]
+  truepad2 destroy      <dir> --confirm PAIRID|destroy-unreadable-pair [--reason TEXT]
   truepad2 ceremony create <workspace> --medium-a DIR --medium-b DIR --source F --source F [--origin TEXT ...]
                         --encryption-bytes E --auth-records N [gen knobs] --assert-offline --assert-distinct-physics
                         --assert-tmpfs-workspace --assert-no-persistent-copy
@@ -108,7 +130,13 @@ export type RefusalType =
   | "locked"
   | "auth-failed"
   | "source-too-short"
-  | "ceremony-incomplete";
+  | "ceremony-incomplete"
+  | "record-size-mismatch"
+  | "witness-unreachable"
+  | "witness-inconsistent"
+  | "witness-regressed"
+  | "witness-unsupported"
+  | "destroy-unconfirmed";
 
 export class Refused2 extends Error {
   readonly type: RefusalType;
@@ -241,9 +269,9 @@ function readInputText(args: Args2, index: number): string {
 
 type LoadedPair = { "A->B": LoadedStore2; "B->A": LoadedStore2 };
 
-// A pair directory must hold BOTH v2 halves. A lone half is a crashed gen;
-// a v1 pad.json anywhere in the pair is a v1 store, refused with no bridge.
-function requirePair2(dir: string): void {
+// A v1 pad.json where a v2 half should be is a v1 store, refused with no
+// bridge (§9.1). Shared by requirePair2 and destroy (§17.1): both refuse v1.
+function refuseIfV1Store(dir: string): void {
   for (const direction of ["A->B", "B->A"] as const) {
     const half = join(dir, SUBDIR2[direction]);
     if (existsSync(join(half, "pad.json"))) {
@@ -254,6 +282,12 @@ function requirePair2(dir: string): void {
       );
     }
   }
+}
+
+// A pair directory must hold BOTH v2 halves. A lone half is a crashed gen;
+// a v1 pad.json anywhere in the pair is a v1 store, refused with no bridge.
+function requirePair2(dir: string): void {
+  refuseIfV1Store(dir);
   const missing = (["A->B", "B->A"] as const).filter((d) => !existsSync(join(dir, SUBDIR2[d], "head.json")));
   if (missing.length === 2) {
     throw new Refused2("no-store", `${dir} holds no v2 pad pair (no a-to-b/ or b-to-a/ head.json); run gen first`);
@@ -311,6 +345,138 @@ function requireNotFrozen(pair: LoadedPair): void {
   }
 }
 
+/* ---- rollback witness (§15) ------------------------------------------------
+ * The witness participates in exactly the verbs that advance high-waters —
+ * burn, open, retire — at two touchpoints. PREFLIGHT is a free state gate,
+ * run for the store's OWN direction after the store loads and before anything
+ * is consumed; ADVANCE runs after the §12 durable commit and before the emit.
+ * status reads and reports the witness but refuses nothing (§15.3).
+ */
+
+// §15.3 PREFLIGHT. none is a no-op; platform/remote are refused
+// (witness-unsupported, never silently downgraded); separate-state-file reads
+// the witness and refuses a store that sits strictly below it
+// (witness-regressed — the restored-store signature of §9.4). All refusals
+// are free: no byte of secret.bin is touched and no journal line is appended.
+function witnessPreflight(store: LoadedStore2): void {
+  const rollback = store.head.rollback;
+  if (rollback.witnessClass === "none") {
+    return;
+  }
+  if (rollback.witnessClass !== "separate-state-file") {
+    // platform-monotonic / remote-monotonic: specified, unimplemented.
+    throw new Refused2(
+      "witness-unsupported",
+      `rollback.witnessClass "${rollback.witnessClass}" is specified by FORMAT-V2.md §15.2 but is UNIMPLEMENTED in ` +
+        "this build: it is refused, never silently downgraded to a weaker class (§15.2). Nothing was burned."
+    );
+  }
+  const path = rollback.config.path;
+  const result = readWitnessCounters(path, store.head.pairId, store.head.direction);
+  if (!result.ok) {
+    throw new Refused2(result.reason, result.message);
+  }
+  // The advance (post-commit) writes the witness; probe now so an unwritable
+  // witness refuses free here instead of losing a record per operation
+  // (§15.3). This keeps the stated bound — at most the one in-flight record —
+  // honest.
+  const writable = witnessWritable(path);
+  if (!writable.ok) {
+    throw new Refused2(writable.reason, writable.message);
+  }
+  if (result.counters !== null) {
+    const { encryptionNextOffset, authenticationNextSequence } = result.counters;
+    if (
+      store.effective.nextOffset < encryptionNextOffset ||
+      store.effective.nextSequence < authenticationNextSequence
+    ) {
+      throw new Refused2(
+        "witness-regressed",
+        `this store is behind its rollback witness: the witness at ${path} records encryptionNextOffset ` +
+          `${encryptionNextOffset} and authenticationNextSequence ${authenticationNextSequence}, but this store is ` +
+          `at nextOffset ${store.effective.nextOffset} and nextSequence ${store.effective.nextSequence}. A store ` +
+          "below its witness is the restored-store signature (FORMAT-V2.md §9.4): head.json and journal.log were " +
+          "rolled back together — whole-directory or the both-files partial restore the load-time mark check cannot " +
+          "see — while the witness, in its separate failure domain, remembers the true high-water. Refusing before " +
+          "anything is consumed. Nothing was burned."
+      );
+    }
+  }
+  // A null entry is a fresh witness: protection begins at the first witnessed
+  // commit (§15.2), so this passes and the advance below writes the entry.
+}
+
+// §15.3 ADVANCE. Runs after the durable commit and before the emit. On any
+// failure the store is already committed (the material is retired) and the
+// output MUST be withheld: this rethrows as a plain Error (exit 1), stating
+// the §15.3 loss row so the operator knows the record is lost and that every
+// later operation will refuse free at preflight until the witness returns.
+function witnessAdvance(store: LoadedStore2, counters: WitnessCounters): void {
+  const rollback = store.head.rollback;
+  if (rollback.witnessClass !== "separate-state-file") {
+    // none: no witness to advance. platform/remote never reach here — their
+    // preflight already refused witness-unsupported.
+    return;
+  }
+  try {
+    advanceWitness(rollback.config.path, store.head.pairId, store.head.direction, counters);
+  } catch (error) {
+    throw new Error(
+      `the durable state commit succeeded but the rollback witness at ${rollback.config.path} could not be ` +
+        `advanced (${(error as Error).message}). This record's pad material is already retired and is LOST; the ` +
+        "output was withheld and never released (FORMAT-V2.md §15.3, the same loss row as a crash between commit " +
+        "and emit) — this is the race between the preflight writability probe and the advance. Every later " +
+        "operation refuses free at preflight (witness-unreachable) until the witness is reachable and writable again."
+    );
+  }
+}
+
+// §15.3 status: read-only report of the witness state for one direction.
+// Refuses nothing. For separate-state-file it names reachability, the entry's
+// counters (or null for a fresh witness), and how the store compares.
+type WitnessReport =
+  | { witnessClass: "none" }
+  | { witnessClass: "platform-monotonic" | "remote-monotonic"; supported: false }
+  | {
+      witnessClass: "separate-state-file";
+      path: string;
+      reachable: boolean;
+      reason?: "witness-unreachable" | "witness-inconsistent";
+      counters: WitnessCounters | null;
+      comparison?: "fresh" | "aligned" | "ahead" | "regressed";
+    };
+
+function witnessReport(store: LoadedStore2): WitnessReport {
+  const rollback = store.head.rollback;
+  if (rollback.witnessClass === "none") {
+    return { witnessClass: "none" };
+  }
+  if (rollback.witnessClass !== "separate-state-file") {
+    return { witnessClass: rollback.witnessClass, supported: false };
+  }
+  const path = rollback.config.path;
+  const result = readWitnessCounters(path, store.head.pairId, store.head.direction);
+  if (!result.ok) {
+    return { witnessClass: "separate-state-file", path, reachable: false, reason: result.reason, counters: null };
+  }
+  if (result.counters === null) {
+    return { witnessClass: "separate-state-file", path, reachable: true, counters: null, comparison: "fresh" };
+  }
+  const behind =
+    store.effective.nextOffset < result.counters.encryptionNextOffset ||
+    store.effective.nextSequence < result.counters.authenticationNextSequence;
+  const aligned =
+    store.effective.nextOffset === result.counters.encryptionNextOffset &&
+    store.effective.nextSequence === result.counters.authenticationNextSequence;
+  return {
+    witnessClass: "separate-state-file",
+    path,
+    reachable: true,
+    counters: result.counters,
+    comparison: behind ? "regressed" : aligned ? "aligned" : "ahead"
+  };
+}
+
 /* ---- gen (Phase 1: multi-source generation, FORMAT-V2.md §7) -------------- */
 
 function positiveInt(value: string | undefined, flag: string): number {
@@ -319,6 +485,61 @@ function positiveInt(value: string | undefined, flag: string): number {
     throw new Error(`--${flag} must be a positive integer`);
   }
   return parsed;
+}
+
+// Resolve the two gen witness flags into a §1.1 rollback header field.
+// Neither flag → the default { witnessClass: "none", config: {} } (§15.2). One
+// without the other is a usage error. platform/remote are the typed
+// witness-unsupported refusal; only separate-state-file is written, and its
+// path must be absolute.
+function witnessRollbackFromFlags(witnessClass: string | undefined, witnessPath: string | undefined): Rollback {
+  if (witnessClass === undefined && witnessPath === undefined) {
+    return { witnessClass: "none", config: {} };
+  }
+  if (witnessClass === undefined || witnessPath === undefined) {
+    throw new Error("--witness-class and --witness-path must be given together, or neither");
+  }
+  if (witnessClass === "platform-monotonic" || witnessClass === "remote-monotonic") {
+    throw new Refused2(
+      "witness-unsupported",
+      `--witness-class ${witnessClass} is specified by FORMAT-V2.md §15.2 but is UNIMPLEMENTED in this build: it is ` +
+        "refused, never silently downgraded to a weaker class. Use --witness-class separate-state-file, or none. " +
+        "Nothing was written."
+    );
+  }
+  if (witnessClass !== "separate-state-file") {
+    throw new Error(
+      `--witness-class must be separate-state-file (platform-monotonic/remote-monotonic are refused as unsupported); ` +
+        `found ${JSON.stringify(witnessClass)}`
+    );
+  }
+  if (!isAbsolute(witnessPath)) {
+    throw new Error(
+      `--witness-path must be an absolute path — it travels verbatim in the header and each peer maintains its own ` +
+        `witness file at that path on its host (found ${JSON.stringify(witnessPath)})`
+    );
+  }
+  return { witnessClass: "separate-state-file", config: { path: witnessPath } };
+}
+
+// Resolve --record-bytes into a §1.1 recordPolicy.record field. No flag → the
+// argued default { kind: "variable" } (§16.2: fixed spends F pad bytes per
+// message however short, so the spec never makes that spend silent). With the
+// flag, F is validated per §16 here, before any file is written, so a bad F
+// costs nothing. F <= capacity is NOT required — a store with F larger than
+// its budget simply exhausts on the first send.
+function recordSpecFromFlag(recordBytes: string | undefined): RecordSpec {
+  if (recordBytes === undefined) {
+    return { kind: "variable" };
+  }
+  const f = Number(recordBytes);
+  if (!Number.isSafeInteger(f) || f < 32 || f > MAX_CIPHERTEXT_BYTES || f % 16 !== 0) {
+    throw new Error(
+      `--record-bytes must be a multiple of 16 with 32 <= F <= ${MAX_CIPHERTEXT_BYTES} (FORMAT-V2.md §16); ` +
+        `found ${JSON.stringify(recordBytes)}`
+    );
+  }
+  return { kind: "fixed", bytes: f };
 }
 
 export function gen(args: Args2): void {
@@ -348,6 +569,20 @@ export function gen(args: Args2): void {
     single(args, "freeze-threshold") === undefined
       ? FREEZE_THRESHOLD_DEFAULT
       : positiveInt(single(args, "freeze-threshold"), "freeze-threshold");
+
+  // §15.2 rollback witness: both flags together or neither. Only
+  // separate-state-file is implemented; platform/remote are refused
+  // witness-unsupported (never silently downgraded), anything else is a usage
+  // error. The path travels verbatim in the header and each peer maintains
+  // its own witness file at that path on its host — so it MUST be absolute.
+  // Checked here, before any file is written, so a bad witness flag costs
+  // nothing.
+  const rollback = witnessRollbackFromFlags(single(args, "witness-class"), single(args, "witness-path"));
+
+  // §16 fixed-size records: --record-bytes F freezes every ciphertext at F.
+  // No flag writes { kind: "variable" } explicitly into the new header — the
+  // default is argued, not silent (§16.2).
+  const record = recordSpecFromFlag(single(args, "record-bytes"));
 
   // One file is one source: the same file declared twice — by repeated path,
   // symlink, or hardlink — is one physical origin counted twice, which the
@@ -415,8 +650,8 @@ export function gen(args: Args2): void {
       maxCiphertextBytes: MAX_CIPHERTEXT_BYTES,
       maxAuthLookahead
     },
-    recordPolicy: { authenticated: "required", downgradeAllowed: false },
-    rollback: { witnessClass: "none", config: {} },
+    recordPolicy: { authenticated: "required", downgradeAllowed: false, record },
+    rollback,
     verification: {
       failurePolicy: { kind: "freeze", threshold: freezeThreshold },
       failureCount: 0,
@@ -512,7 +747,31 @@ export function burn(args: Args2): void {
     const store = pair[direction];
     const { head, effective } = store;
     const halfDir = join(dir, SUBDIR2[direction]);
-    const c = plaintext.length;
+    // §15.3 preflight, free and for this direction's store only: a store below
+    // its rollback witness refuses before anything is consumed.
+    witnessPreflight(store);
+    // §16.2: on a fixed store the plaintext is framed to exactly F bytes
+    // (length prefix hides the message length on the wire), and C = F flows
+    // through the unchanged §12.2 path. A plaintext past F − 4 is refused
+    // record-size-mismatch here, free, before anything is staged. On a
+    // variable store the payload IS the plaintext.
+    const record = head.recordPolicy.record;
+    let payload: Uint8Array;
+    if (record.kind === "fixed") {
+      const capacity = frameCapacity(record.bytes);
+      if (plaintext.length > capacity) {
+        throw new Refused2(
+          "record-size-mismatch",
+          `this store fixes every record at ${record.bytes} ciphertext bytes, so a message holds at most ` +
+            `${capacity} bytes (F − 4); this one is ${plaintext.length}. Split it, or generate a store with a ` +
+            "larger --record-bytes. Nothing was burned."
+        );
+      }
+      payload = buildFrame(plaintext, record.bytes);
+    } else {
+      payload = plaintext;
+    }
+    const c = payload.length;
     if (c > head.authentication.maxCiphertextBytes) {
       throw new Refused2(
         "oversize-ciphertext",
@@ -544,7 +803,7 @@ export function burn(args: Args2): void {
     const pad = readEncryption(halfDir, head, startOffset, c);
     const ciphertext = new Uint8Array(c);
     for (let i = 0; i < c; i += 1) {
-      ciphertext[i] = plaintext[i] ^ pad[i];
+      ciphertext[i] = payload[i] ^ pad[i];
     }
     const pairIdBytes = hexToBytes(head.pairId);
     if (pairIdBytes === null || pairIdBytes.length !== 16) {
@@ -583,9 +842,14 @@ export function burn(args: Args2): void {
       at: new Date().toISOString()
     });
 
+    // §15.3 advance — after the durable commit, before the emit. A witness
+    // write failure withholds the envelope (the material is already retired).
+    witnessAdvance(store, { encryptionNextOffset: startOffset + c, authenticationNextSequence: sequence + 1 });
+
     // S3 — only now does the envelope exist outside this process.
     out(encodeEnvelope2(envelope));
     plaintext.fill(0); // in-memory hygiene only; no erasure claim
+    payload.fill(0); // the frame, when fixed (else the same buffer as plaintext)
     pad.fill(0);
     key.fill(0);
     mask.fill(0);
@@ -625,6 +889,18 @@ export function open(args: Args2): void {
     const sequence = envelope.sequence;
     const startOffset = envelope.startOffset;
     const c = envelope.ciphertextLength;
+
+    // O0 (§16.2): a fixed store accepts only F-byte ciphertexts. A wrong size
+    // is structurally not one of this store's records — refused here, before
+    // the window checks, costing nothing durable.
+    const record = head.recordPolicy.record;
+    if (record.kind === "fixed" && c !== record.bytes) {
+      throw new Refused2(
+        "record-size-mismatch",
+        `this store fixes every record at ${record.bytes} ciphertext bytes, but this envelope declares ` +
+          `ciphertextLength ${c}. It cannot be one of this store's records. Nothing was burned.`
+      );
+    }
 
     // O1 — window, free.
     if (sequence < effective.nextSequence) {
@@ -668,6 +944,9 @@ export function open(args: Args2): void {
 
     // O2 — state gates, free.
     requireNotFrozen(pair);
+    // §15.3 preflight, before any verification: a store below its rollback
+    // witness refuses here, so no attempt reservation is ever written.
+    witnessPreflight(store);
     const attempts = effective.attempts.get(sequence) ?? 0;
     if (attempts >= head.authentication.verifyAttemptLimit) {
       throw new Refused2(
@@ -763,6 +1042,33 @@ export function open(args: Args2): void {
     // The retired ranges — used and skipped alike — stay physically present
     // in secret.bin; the durable counters above are what retire them (§1.2).
 
+    // §15.3 advance — after the durable commit (O5), before the release (O6).
+    // A witness write failure withholds the plaintext (material already
+    // retired).
+    witnessAdvance(store, { encryptionNextOffset: startOffset + c, authenticationNextSequence: sequence + 1 });
+
+    // §16.2: on a fixed store the decrypted bytes are the frame; the length
+    // prefix selects the released plaintext. A prefix past F − 4 cannot come
+    // from a conforming sender and cannot be forged below the §5 bound — but
+    // if it occurs the material is already retired (O5) and the tool reports
+    // record-frame-invalid and EXITS 1. This is an error, not a refusal:
+    // nothing was refused before consumption, and nothing is released — the
+    // same loss row as a crash after O5. On a variable store the frame is the
+    // plaintext.
+    let released: Uint8Array = plaintext;
+    if (record.kind === "fixed") {
+      const parsed = parseFrame(plaintext);
+      if (parsed === null) {
+        throw new Error(
+          `record-frame-invalid: the decrypted frame's length prefix exceeds this store's ${frameCapacity(record.bytes)}-` +
+            `byte capacity (F − 4 for F=${record.bytes}). A conforming sender never writes such a frame, and it cannot ` +
+            "be forged into existence below the FORMAT-V2.md §5 bound. The record's pad material is already retired " +
+            "(O5) and is LOST; no plaintext was released (§16.2, the same loss row as a crash after O5)."
+        );
+      }
+      released = parsed;
+    }
+
     // O6 — only now is the plaintext released, byte-exact.
     if (skippedBytes > 0 || skippedRecords > 0) {
       err(
@@ -770,8 +1076,9 @@ export function open(args: Args2): void {
           "unused to reach this record (lost-message material is burned as surely as used material)."
       );
     }
-    writeAllBytes(1, plaintext);
-    plaintext.fill(0); // in-memory hygiene only; no erasure claim
+    writeAllBytes(1, released);
+    released.fill(0); // in-memory hygiene only; no erasure claim
+    plaintext.fill(0); // the frame, when fixed (else the same buffer as released)
     pad.fill(0);
     key.fill(0);
     mask.fill(0);
@@ -783,6 +1090,7 @@ export function open(args: Args2): void {
 type Meters = {
   pairId: string;
   direction: PadDirection;
+  record: RecordSpec;
   encryption: { capacity: number; nextOffset: number; remainingBytes: number };
   authentication: { capacityRecords: number; nextSequence: number; remainingRecords: number; contestedLive: number };
   verification: { failureCount: number; clearedAtFailureCount: number; frozen: boolean };
@@ -809,6 +1117,7 @@ function meters(store: LoadedStore2): Meters {
   return {
     pairId: head.pairId,
     direction: head.direction,
+    record: head.recordPolicy.record,
     encryption: { capacity: head.encryption.capacity, nextOffset: effective.nextOffset, remainingBytes },
     authentication: {
       capacityRecords: head.authentication.capacityRecords,
@@ -828,9 +1137,17 @@ function meters(store: LoadedStore2): Meters {
 
 export function status(args: Args2): void {
   const dir = dirArg(args, "status");
-  const snapshot = withPair(dir, (pair) => ({ "A->B": meters(pair["A->B"]), "B->A": meters(pair["B->A"]) }));
+  // §15.3: status reads and reports the witness state per direction but
+  // refuses nothing for witness reasons. The witness read happens under the
+  // pair lock alongside the meters.
+  const snapshot = withPair(dir, (pair) => ({
+    "A->B": { meters: meters(pair["A->B"]), witness: witnessReport(pair["A->B"]) },
+    "B->A": { meters: meters(pair["B->A"]), witness: witnessReport(pair["B->A"]) }
+  }));
+  const machine: Record<PadDirection, unknown> = { "A->B": undefined, "B->A": undefined };
   for (const direction of ["A->B", "B->A"] as const) {
-    const m = snapshot[direction];
+    const m = snapshot[direction].meters;
+    const w = snapshot[direction].witness;
     err(
       `${direction}: encryption ${m.encryption.remainingBytes}/${m.encryption.capacity} bytes · authentication ` +
         `${m.authentication.remainingRecords}/${m.authentication.capacityRecords} records · maximum remaining ` +
@@ -840,8 +1157,22 @@ export function status(args: Args2): void {
     if (m.verification.frozen) {
       err(`${direction}: FROZEN (failureCount ${m.verification.failureCount}; clear with truepad2 clear-freeze)`);
     }
+    if (w.witnessClass === "separate-state-file") {
+      if (!w.reachable) {
+        err(
+          `${direction}: WITNESS UNREACHABLE (${w.reason}) at ${w.path} — a configured witness that cannot be read ` +
+            "fails closed at burn/open/retire; status reports it but refuses nothing (§15.3)."
+        );
+      } else if (w.comparison === "regressed") {
+        err(
+          `${direction}: WITNESS REGRESSED — this store is behind its witness at ${w.path}; burn/open/retire will ` +
+            "refuse witness-regressed (a restored store, §9.4). status refuses nothing."
+        );
+      }
+    }
+    machine[direction] = { ...m, witness: w };
   }
-  out(JSON.stringify(snapshot));
+  out(JSON.stringify(machine));
 }
 
 /* ---- clear-freeze (§8.4) --------------------------------------------------- */
@@ -899,6 +1230,9 @@ export function retire(args: Args2): void {
     const store = pair[direction];
     const { head, effective } = store;
     const halfDir = join(dir, SUBDIR2[direction]);
+    // §15.3 preflight, free and before anything is consumed: retire advances
+    // high-waters, so a store below its witness refuses here too.
+    witnessPreflight(store);
     if (throughSequence >= head.authentication.capacityRecords) {
       throw new Refused2(
         "sequence-malformed",
@@ -944,6 +1278,9 @@ export function retire(args: Args2): void {
       reason,
       at: new Date().toISOString()
     });
+    // §15.3 advance — after the durable commit. A witness write failure exits
+    // 1 with the loss row; the retire is durable regardless.
+    witnessAdvance(store, { encryptionNextOffset: newNextOffset, authenticationNextSequence: newNextSequence });
     // Retired material stays physically present in secret.bin; the durable
     // counters above are the retirement (§1.2). "Destroyed" below is the
     // channel's meaning — never usable again — not physical erasure.
@@ -962,6 +1299,249 @@ function positiveIntOrZero(value: string | undefined, flag: string): number {
     throw new Error(`--${flag} must be a non-negative integer`);
   }
   return parsed;
+}
+
+/* ---- destroy (§17 destruction) ---------------------------------------------
+ * `destroy` tears one pair down for good: it removes the pair's accessible
+ * material and writes a non-secret tombstone recording the intent. It is
+ * deliberately tolerant of a corrupt store — a store too damaged for
+ * loadStore2 is still a store an operator must be able to destroy (§17.1) —
+ * so it runs under the pair lock WITHOUT going through withPair (which would
+ * refuse a corrupt or half store before destruction could begin).
+ *
+ * The zero-overwrite of secret.bin below (§17.2 step 3) is a DELIBERATE
+ * one-time destruction of a pair being retired for good: the whole store is
+ * torn down and its files unlinked immediately after. It is NOT the
+ * per-operation active-store zeroization that Phase 3.5 removed. That one
+ * overwrote a newly retired range of a still-LIVE secret.bin after every
+ * burn/open, and was removed because an in-place write to a live file can
+ * tear the sector at the retired/live boundary and corrupt LIVE material
+ * beside it (§1.2). Here nothing beside it is live and the file is about to
+ * be unlinked, so that tear risk is moot — but the overwrite still proves
+ * nothing about the medium and claims no erasure (§17.2). The two must never
+ * be confused: one advances a store, this one ends it.
+ */
+
+const UNREADABLE_PAIR_TOKEN = "destroy-unreadable-pair";
+
+// The verbatim §17 sentence — pinned identically in the README, in the
+// tombstone's `limitation` field, and in the stderr limitation block.
+const DESTROY_LIMITATION =
+  "Software can forget its reference to pad material; it cannot prove that flash forgot the bytes.";
+
+const TOMBSTONE_FILE = "destroyed.json";
+
+type HalfSummary = { pairId: string | null; nextOffset: number | null; nextSequence: number | null };
+
+// Best-effort read of one half's identifying pairId and final high-waters for
+// the tombstone and the confirmation token. A clean load gives the
+// journal-reconciled effective high-waters; a store too corrupt to load often
+// still has a head.json that parses, from which the pairId (and its raw
+// counters) can be lifted. Everything fails soft to null — destroy proceeds on
+// a corrupt store (§17.1), it never requires a clean load.
+function readHalfSummary(halfDir: string): HalfSummary {
+  const loaded = loadStore2(halfDir);
+  if (loaded.ok) {
+    return {
+      pairId: loaded.head.pairId,
+      nextOffset: loaded.effective.nextOffset,
+      nextSequence: loaded.effective.nextSequence
+    };
+  }
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(halfDir, HEAD_FILE), "utf8"));
+    if (typeof parsed === "object" && parsed !== null) {
+      const obj = parsed as Record<string, unknown>;
+      const pairId = typeof obj.pairId === "string" && /^[0-9a-f]{32}$/.test(obj.pairId) ? obj.pairId : null;
+      return { pairId, nextOffset: safeCountField(obj.encryption, "nextOffset"), nextSequence: safeCountField(obj.authentication, "nextSequence") };
+    }
+  } catch {
+    /* head.json missing or unparseable — the pairId stays unreadable */
+  }
+  return { pairId: null, nextOffset: null, nextSequence: null };
+}
+
+function safeCountField(container: unknown, field: string): number | null {
+  if (typeof container !== "object" || container === null) {
+    return null;
+  }
+  const value = (container as Record<string, unknown>)[field];
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function highWatersOrNull(summary: HalfSummary): { nextOffset: number; nextSequence: number } | null {
+  return summary.nextOffset !== null && summary.nextSequence !== null
+    ? { nextOffset: summary.nextOffset, nextSequence: summary.nextSequence }
+    : null;
+}
+
+// fsync a directory handle where the platform allows it (skipped otherwise),
+// mirroring store2's private primitive rather than widening its surface.
+function fsyncDir(dir: string): void {
+  let fd: number;
+  try {
+    fd = openSync(dir, "r");
+  } catch {
+    return; // this platform cannot open a directory handle
+  }
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Atomic-replace + fsync of one file at <dir>/<name>, 0600 — the §10 durable
+// write, reimplemented here (store2's writeFileDurably is not exported) for
+// the tombstone alone.
+function writeFileDurablyAt(dir: string, name: string, data: string): void {
+  const tmp = join(dir, `${name}.tmp.${process.pid}`);
+  const fd = openSync(tmp, "w", 0o600);
+  try {
+    writeAllBytes(fd, new TextEncoder().encode(data));
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(tmp, join(dir, name));
+  fsyncDir(dir);
+}
+
+// §17.2 step 3: best-effort zero-overwrite of one half's secret.bin, then
+// fsync. Failures are reported and swallowed — the file is unlinked regardless
+// (step 4), and the overwrite is never claimed as erasure. See the section
+// comment: this is a torn-down store, not the removed per-op zeroize.
+function overwriteSecretWithZeros(halfDir: string): void {
+  const secretPath = join(halfDir, SECRET_FILE);
+  let size: number;
+  try {
+    size = statSync(secretPath).size;
+  } catch {
+    return; // no secret.bin on this (corrupt or partial) half — nothing to overwrite
+  }
+  try {
+    const fd = openSync(secretPath, "r+");
+    try {
+      const chunk = new Uint8Array(Math.min(size, 1 << 16));
+      let pos = 0;
+      while (pos < size) {
+        const want = Math.min(chunk.length, size - pos);
+        let off = 0;
+        while (off < want) {
+          const written = writeSync(fd, chunk, off, want - off, pos + off);
+          if (written <= 0) {
+            throw new Error(`short write at offset ${pos + off}`);
+          }
+          off += written;
+        }
+        pos += want;
+      }
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  } catch (error) {
+    err(
+      `note: could not zero-overwrite ${secretPath} before unlink (${(error as Error).message}); the file is ` +
+        "removed regardless. The overwrite is best-effort and proves nothing about the medium (§17.2)."
+    );
+  }
+}
+
+export function destroy(args: Args2): void {
+  const dir = dirArg(args, "destroy");
+  const confirm = single(args, "confirm");
+  const reason = single(args, "reason") ?? "operator destroy";
+
+  const lock = acquireLock(dir);
+  if (!lock.ok) {
+    throw new Refused2("locked", lock.message);
+  }
+  try {
+    // §17.1: a v1 store is refused; v1 material is handled by v1's own tooling.
+    refuseIfV1Store(dir);
+
+    const summaries: Record<PadDirection, HalfSummary> = {
+      "A->B": readHalfSummary(join(dir, SUBDIR2["A->B"])),
+      "B->A": readHalfSummary(join(dir, SUBDIR2["B->A"]))
+    };
+    const pairId = summaries["A->B"].pairId ?? summaries["B->A"].pairId;
+
+    // §17.1 confirmation: --confirm MUST equal the pair's pairId where any
+    // half's head.json yields one; for a pair too corrupt to yield a pairId
+    // the literal token destroy-unreadable-pair is required instead. The
+    // expected pairId is deliberately NOT echoed — the operator confirms by
+    // knowing it (pad book / head.json), the way a destructive gesture should.
+    const requiredToken = pairId ?? UNREADABLE_PAIR_TOKEN;
+    if (confirm !== requiredToken) {
+      throw new Refused2(
+        "destroy-unconfirmed",
+        pairId === null
+          ? `this pair is too corrupt to confirm by pairId — no half's ${HEAD_FILE} yields one — so destroy requires ` +
+              `--confirm ${UNREADABLE_PAIR_TOKEN} for it. Re-run with that literal token. Nothing was touched.`
+          : `--confirm must equal the pair's pairId to destroy it. It is NOT echoed here — read it from the pad book ` +
+              `or a half's ${HEAD_FILE} and pass it verbatim. Nothing was touched.`
+      );
+    }
+
+    // §17.2 order is normative.
+    // 2 — the tombstone: non-secret recorded intent, durable, survives the
+    // destruction. pairId (or null), timestamp, reason, per-direction final
+    // high-waters where readable, and the verbatim limitation sentence.
+    const tombstone = {
+      formatVersion: 2,
+      pairId,
+      destroyedAt: new Date().toISOString(),
+      reason,
+      finalHighWaters: {
+        "A->B": highWatersOrNull(summaries["A->B"]),
+        "B->A": highWatersOrNull(summaries["B->A"])
+      },
+      limitation: DESTROY_LIMITATION
+    };
+    writeFileDurablyAt(dir, TOMBSTONE_FILE, JSON.stringify(tombstone, null, 2));
+
+    // 3 — per half: best-effort zero-overwrite of secret.bin + fsync.
+    for (const direction of ["A->B", "B->A"] as const) {
+      overwriteSecretWithZeros(join(dir, SUBDIR2[direction]));
+    }
+
+    // 4 — unlink the three files, remove the half dirs, fsync the pair dir.
+    // manifest.json and the tombstone at the pair root remain: the pair's
+    // non-secret record.
+    for (const direction of ["A->B", "B->A"] as const) {
+      const halfDir = join(dir, SUBDIR2[direction]);
+      for (const name of [SECRET_FILE, HEAD_FILE, JOURNAL_FILE]) {
+        try {
+          unlinkSync(join(halfDir, name));
+        } catch {
+          /* already gone on a corrupt or partial store */
+        }
+      }
+      try {
+        rmSync(halfDir, { recursive: true, force: true });
+      } catch (error) {
+        err(`note: could not remove ${halfDir} (${(error as Error).message}); its files were unlinked first.`);
+      }
+    }
+    fsyncDir(dir);
+
+    // 5 — the §17.2 limitation block, verbatim sentence first, then the
+    // storage-specific caveats. A configured witness is deliberately untouched
+    // (§17.2): its counters are non-secret, monotone, and harmless for a pair
+    // that no longer exists.
+    err(DESTROY_LIMITATION);
+    err(
+      "The zero-overwrite above is best-effort and proves nothing about the medium: a copy-on-write filesystem " +
+        "(APFS among them) may preserve the pre-overwrite blocks; SSD wear leveling may preserve any block; and " +
+        "backups are outside this tool's reach. Physical destruction of the medium is a ceremony step " +
+        "(docs/CEREMONY.md), not a software claim. A configured rollback witness is left untouched."
+    );
+
+    out(JSON.stringify({ destroyed: true, pairId, tombstone: join(dir, TOMBSTONE_FILE), reason }));
+  } finally {
+    lock.release();
+  }
 }
 
 /* ---- ceremony (Phase 3; the verbs live in ceremony.ts) ---------------------- */
@@ -988,7 +1568,10 @@ const GEN_FLAGS = [
   "auth-records",
   "verify-attempt-limit",
   "max-auth-lookahead",
-  "freeze-threshold"
+  "freeze-threshold",
+  "witness-class",
+  "witness-path",
+  "record-bytes"
 ] as const;
 
 // Every flag each verb consumes; anything else is refused in main().
@@ -999,6 +1582,7 @@ const ALLOWED_FLAGS: Record<string, readonly string[]> = {
   status: [],
   "clear-freeze": [],
   retire: ["direction", "through-sequence", "through-offset", "reason"],
+  destroy: ["confirm", "reason"],
   ceremony: [...GEN_FLAGS, "medium-a", "medium-b", ...CEREMONY_ASSERTIONS.map((assertion) => assertion.flag)]
 };
 
@@ -1047,6 +1631,7 @@ export function main(argv: string[]): number {
     status,
     "clear-freeze": clearFreeze,
     retire,
+    destroy,
     ceremony
   };
   if (command === undefined || !Object.hasOwn(commands, command)) {

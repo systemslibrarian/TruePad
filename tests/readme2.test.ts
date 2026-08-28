@@ -39,12 +39,16 @@ describe("README v2 section: the load-bearing sentences stay", () => {
       "§8.4: bounded, surfaced, never silent — the price of a finite forgery bound"
     ],
     [
-      "the v2 format does not fix backup, and that residual is STILL OPEN until a Phase-4 rollback witness exists",
-      "§9.4: the whole-directory restore residual stands until a witness lands"
+      "the v2 format does not fix backup: a configured rollback witness (`--witness-class separate-state-file`) closes the restore hole for that store, and at the default `witnessClass: none` the residual is STILL OPEN",
+      "§9.4/§15: a witness closes the restore hole for that store; at witnessClass none the residual stands"
     ],
     [
       "a pair directory is restored as all three files together or not at all",
       "§9.4: the v2-specific named operator assumption"
+    ],
+    [
+      "Software can forget its reference to pad material; it cannot prove that flash forgot the bytes",
+      "§17: destroy claims what software can claim and states the rest; erasure of the medium is not claimed"
     ],
     [
       "This repository still does not recommend one-time pads for real traffic",
@@ -53,6 +57,18 @@ describe("README v2 section: the load-bearing sentences stay", () => {
     [
       "There is no conversion, in either direction, ever — no `--legacy`, no `--no-auth`, no `--force`",
       "§9.2: refusals, not bridges"
+    ],
+    [
+      "the channel observes record count and timing but never message length",
+      "§16: the length-hiding property of a fixed-record store"
+    ],
+    [
+      "its per-attempt forgery bound is exactly `(4 + F/16) · 2^-128`",
+      "§16 / N20: the fixed-store ε, stated as the number, not stronger"
+    ],
+    [
+      "a message may hold at most `F − 4` bytes",
+      "§16.1: the fixed-record plaintext capacity, and its pad-spend price"
     ]
   ];
 

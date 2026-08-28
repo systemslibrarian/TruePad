@@ -135,9 +135,18 @@ Field rules:
   be `false`. A header saying anything else is refused (`corrupt-head`).
   No flag, environment variable, or config may relax this (§13).
 - `rollback.witnessClass` is one of `"none"`, `"separate-state-file"`,
-  `"platform-monotonic"`, `"remote-monotonic"`. Phase 0 defines only
-  `"none"`; the other classes are Phase 4's, named here so the field exists
-  from the first v2 store. `config` is class-specific and `{}` for `"none"`.
+  `"platform-monotonic"`, `"remote-monotonic"`. Phase 0 defined only
+  `"none"`; Phase 4 defines the classes normatively in §15 —
+  `"separate-state-file"` is implemented (config `{ "path": <absolute
+  path> }`), while `"platform-monotonic"` and `"remote-monotonic"` are
+  specified with their assumptions and REFUSED by this build
+  (`witness-unsupported`, fail closed — never a silent downgrade).
+  `config` is class-specific and `{}` for `"none"`.
+- `recordPolicy.record` (added with Phase 5, §16) is
+  `{ "kind": "variable" }` or `{ "kind": "fixed", "bytes": F }`. A header
+  without the field — every store generated before Phase 5 — is variable;
+  that compatibility rule is normative, and load-time validation accepts
+  exactly these three shapes.
 - `verification.failurePolicy` is `{ "kind": "freeze", "threshold": T }`,
   T default 32 (PROPOSED default; operator-settable at gen). `failureCount`
   and `clearedAtFailureCount` implement the reversible freeze (§8.4);
@@ -823,6 +832,19 @@ restore that leaves the journal behind is caught. That whole-directory
 residual stays OPEN; the Phase-4 witness is what retires the assumption,
 and until then it stands, stated.
 
+**Phase-4 status of this residual.** §15 (added with Phase 4) delivers
+the witness. For a store with `witnessClass: "separate-state-file"`
+configured and its witness file in a genuinely independent failure
+domain, the two-time-pad regression above becomes the typed refusal
+`witness-regressed` before anything is consumed: a restored
+`head.json`/`journal.log` — whole-directory or the both-files-together
+partial restore the load-time mark check cannot see — carries
+high-waters below what the witness recorded, and the store refuses to
+move. At the default `witnessClass: "none"` — every store that does not
+opt in — **this residual stands exactly as written above**, and the
+per-class strength caveats of §15 apply: a separate state file is only as
+unrestorable as the domain it lives in.
+
 ---
 
 ## 10. Durability & concurrency model
@@ -1329,6 +1351,12 @@ refusal-register row for comparison.
 | `frozen` | state | freeze active (§8.4) | none |
 | `sequence-contested` | state | attempts ≥ `verifyAttemptLimit` (§8.3) — permanent | none |
 | `locked` | state | lockfile held/leftover (§10.3) | none |
+| `record-size-mismatch` | structural | fixed-record store: envelope `ciphertextLength ≠ F`, or a plaintext longer than `F − 4` (§16, added with Phase 5) | none |
+| `witness-unreachable` | state (witness) | configured witness cannot be read (§15.3) — fail closed | none |
+| `witness-inconsistent` | state (witness) | witness file violates its own shape (§15.3) — fail closed | none |
+| `witness-regressed` | state (witness) | store high-waters below the witness record (§15.3, §9.4) — a restored store, refused before any burn | none |
+| `witness-unsupported` | structural | `witnessClass` platform-monotonic/remote-monotonic in this build (§15.2) — refused, never silently downgraded | none |
+| `destroy-unconfirmed` | structural | destroy without the matching confirmation (§17.1) — nothing touched | none |
 | `auth-failed` | verification | tag mismatch (§12.3 O4) | one reservation + one failure record; **no secret burned** |
 
 ### 14.2 Claims ledger
@@ -1357,26 +1385,38 @@ an implementation exists; the mathematics in N6–N7 holds now.
 | N10 | Accepting sequence `s` durably sets `nextSequence = s+1` and `nextOffset = startOffset + C` before any plaintext is released. | §12.3 |
 | N11 | `nextOffset`, `nextSequence`, per-sequence attempt counts, and `failureCount` never decrease across any sequence of v2 operations, crashes, and reloads — absent external replacement of the store's files (§9.4) — given §10's platform scope. | §12.1, §13 |
 | N12 | A store generated per §7 required exactly `2·(E + 32·N)` bytes from every declared source, and gen refused (`source-too-short`) any source supplying less. | §7 |
-| N13 | Required durability ordering at gen: `secret.bin` durable before `head.json` and the `init` line exist (§12.4). After gen, no v2 operation writes `secret.bin` (§1.2). | §1.2, §12.4 |
+| N13 | Required durability ordering at gen: `secret.bin` durable before `head.json` and the `init` line exist (§12.4). After gen, no v2 operation writes `secret.bin` except `destroy`'s terminal teardown (§17.2), which overwrites then unlinks it — `burn`/`open`/`retire` never rewrite it (§1.2). | §1.2, §12.4, §17.2 |
 | N14 | `sourceDeclarations` entries in `head.json` contain no hash, checksum, fingerprint, or any other value derived from pad bytes. | §1.1 |
+| N15 | With a witness configured, `burn`/`open`/`retire` refuse `witness-unreachable` or `witness-inconsistent` before anything is consumed when the witness cannot be read or fails its shape. | §15.3 |
+| N16 | Store high-waters strictly below the witness record refuse `witness-regressed` before anything is consumed — a restored store cannot move. | §15.3, §9.4 |
+| N17 | A witness file contains only pairId, direction, and the two counters — never a pad byte, key, mask, plaintext, or ciphertext. | §15.1 |
+| N18 | `witnessClass` platform-monotonic or remote-monotonic is refused `witness-unsupported` at gen and at load — never silently downgraded to a weaker class. | §15.2 |
+| N19 | A fixed-record store refuses a valid-range `ciphertextLength ≠ F` structurally (`record-size-mismatch`), costing nothing durable; a `ciphertextLength > maxCiphertextBytes` is still refused first by §4's oversize check (`oversize-ciphertext`), also free. | §16.2 |
+| N20 | For a fixed-record store, the per-attempt forgery bound is exactly `(4 + F/16) · 2^-128`. | §16 |
+| N21 | `destroy` refuses without the matching confirmation (`destroy-unconfirmed`) touching nothing; after it succeeds, `secret.bin`, `head.json`, and `journal.log` are gone, the tombstone records the intent, and no erasure of the medium is claimed. | §17 |
 
-**Promised by later phases (the format makes them expressible; it does not
-enforce them):**
+(`record-frame-invalid`, §16.2, is an exit-1 error on the post-commit
+path, not a refusal: nothing was refused before consumption, and the
+material is already retired when it fires.)
+
+**Later-phase claims — originally promised, now delivered where marked:**
 
 | # | claim | phase |
 | --- | --- | --- |
-| L1 | Multi-source gen: repeatable `--source`, equal lengths, bytewise XOR, one-file-one-source, the verbatim verdict line "Uniform if at least one declared source was uniform and independent of the others.", and a manifest with nothing derived from pad bytes. | Phase 1 |
-| L2 | Live authentication: the SEND and OPEN transactions of §12 actually executed by `burn`/`open`; the forged-`startOffset` burn attack becoming the typed refusals of §14.1; the freeze and window brakes operating; the `status` meters and `CHANNEL CAPACITY LIMITED BY:` display of §13; this ledger's N-claims wired into the claims-test suite. | Phase 2 |
-| L3 | Ceremony as code: `ceremony create/verify`, offline gen with ≥2 sources of distinct physics, tmpfs workspace, two peer media, printed operator assertions, retirement ceremony (including auth-exhausted pairs, contested-record retirement, destruction of stranded encryption material). | Phase 3 |
-| L4 | Rollback witness classes beyond `none`; fail-closed on unreachable/inconsistent witness; closure of the §9.4 OPEN V1 RESIDUAL; the confidentiality/metadata-privacy split for remote witnesses. | Phase 4 |
-| L5 | Fixed-size records ≤ `maxCiphertextBytes`, narrowing §4's maximum and fixing the block count in §5's expression. | Phase 5 |
-| L6 | `destroy` semantics and the verbatim README destruction sentence ("Software can forget its reference to pad material; it cannot prove that flash forgot the bytes."). | Phase 6 |
+| L1 | Multi-source gen: repeatable `--source`, equal lengths, bytewise XOR, one-file-one-source, the verbatim verdict line "Uniform if at least one declared source was uniform and independent of the others.", and a manifest with nothing derived from pad bytes. | Phase 1 — DELIVERED |
+| L2 | Live authentication: the SEND and OPEN transactions of §12 actually executed by `burn`/`open`; the forged-`startOffset` burn attack becoming the typed refusals of §14.1; the freeze and window brakes operating; the `status` meters and `CHANNEL CAPACITY LIMITED BY:` display of §13; this ledger's N-claims wired into the claims-test suite. | Phase 2 — DELIVERED |
+| L3 | Ceremony as code: `ceremony create/verify`, offline gen with ≥2 sources of distinct physics, tmpfs workspace, two peer media, printed operator assertions, retirement ceremony (including auth-exhausted pairs, contested-record retirement, destruction of stranded encryption material). | Phase 3 — DELIVERED |
+| L4 | Rollback witness (§15): `separate-state-file` live with fail-closed semantics and the §9.4 closure for witnessed stores; the confidentiality/metadata split stated. `platform-monotonic`/`remote-monotonic` specified, unimplemented, refused `witness-unsupported`. | Phase 4 — DELIVERED (two classes specified-only) |
+| L5 | Fixed-size records ≤ `maxCiphertextBytes` (§16), narrowing §4's maximum per store and fixing the block count in §5's expression. | Phase 5 — DELIVERED |
+| L6 | `destroy` semantics (§17) and the verbatim README destruction sentence ("Software can forget its reference to pad material; it cannot prove that flash forgot the bytes."). | Phase 6 — DELIVERED |
 
 **Standing residual, restated:** §9.4's whole-directory-restore regression
-is open until L4 lands; §1.2's retirement is logical, not physical —
-retired bytes remain present in `secret.bin`, and destruction stays
-unclaimed until L6 states its limits; and every durability claim above is
-scoped by §10 to verified-on-Linux-ext4.
+is closed only for stores with a configured witness (§15, with its
+per-class caveats); at the default `witnessClass: "none"` it stands as
+written. §1.2's retirement is logical, not physical — retired bytes remain
+present in `secret.bin`, and §17 states destruction's limits and claims no
+erasure of the medium. Every durability claim above is scoped by §10 to
+verified-on-Linux-ext4.
 
 ### 14.3 Open questions
 
@@ -1412,6 +1452,206 @@ Stated, not answered by invention:
 
 ---
 
-*End of binding specification. Changes to this document are format
-changes: they require regenerating §11's vectors with the single named
-command and re-deriving §5's ε if §4 or §6 moved.*
+## 15. Rollback witness (added with Phase 4)
+
+The witness is an authority OUTSIDE the pair directory's failure domain
+that remembers how far a store has advanced, so a store rolled back by a
+restore refuses to move instead of reusing retired positions. It is
+optional (`witnessClass: "none"` is the default and claims nothing), and
+its classes differ in strength — the docs say so rather than flattening
+them: **a witness is only as monotonic as the mechanism enforcing its
+non-regression.**
+
+### 15.1 The record, and what a witness never sees
+
+Per (pair, direction), a witness holds exactly one record:
+
+```
+WitnessRecord = { pairId, direction, encryptionNextOffset, authenticationNextSequence }
+```
+
+Never pad contents, hash keys, masks, plaintext, or ciphertext — the
+witness sees counters, nothing else. That is the content-confidentiality
+half of the claim. The metadata half is smaller and stated: any witness
+observes burn timing and counter progression; a REMOTE witness would
+observe them off-host (message timing, byte volume, message count —
+traffic analysis). Local and platform classes are preferred; remote is a
+stated tradeoff, not a hidden one.
+
+### 15.2 The classes
+
+- `"none"` — no witness, no claim. §9.4's residual stands as written.
+- `"separate-state-file"` — implemented. Config `{ "path": <absolute
+  path> }`: a JSON witness file, atomic-replace + fsync per §10, 0600,
+  holding `{ "formatVersion": 2, "witness": { "<pairId>/<direction>":
+  { "encryptionNextOffset": n, "authenticationNextSequence": n } } }`.
+  One file may witness several pairs. Its strength caveat, verbatim from
+  the architecture: an independent backup/failure domain, **NOT
+  intrinsically monotonic (a second device can be restored too)** — a
+  witness file restored from ITS backup regresses the witness, and an
+  emptied witness file knows nothing. The operator assumption is that the
+  path lives in a different failure domain (another medium, not covered
+  by the same backup) and is never restored. Protection begins at the
+  first witnessed commit; an entry-less witness accepts a fresh pair.
+- `"platform-monotonic"` — a TPM or platform monotonic counter. Specified
+  by this section's semantics with the assumption stated (the platform
+  enforces non-regression; the host is trusted to talk to the real
+  counter), but UNIMPLEMENTED in this build: gen and load refuse it,
+  `witness-unsupported`, fail closed.
+- `"remote-monotonic"` — a service enforcing forward-only state. Same
+  semantics, assumption stated (the service is honest and available),
+  same `witness-unsupported` refusal in this build, plus the metadata
+  tradeoff of §15.1.
+
+### 15.3 Semantics (normative for every implemented class)
+
+The witness participates in exactly the verbs that advance high-waters:
+`burn`, `open`, `retire`. `status` reads and reports the witness state
+but refuses nothing (it is read-only). Two touchpoints:
+
+- **PREFLIGHT**, before anything is consumed, with the free refusals of
+  §14.1: the witness cannot be read, OR its directory is not writable
+  (the advance below writes there, so an unwritable witness is caught
+  now rather than after the store commits) → `witness-unreachable`; it
+  parses but violates its own shape → `witness-inconsistent`; the
+  store's effective high-waters are strictly below the witness record's →
+  `witness-regressed`. All FAIL CLOSED and consume nothing — witness
+  outage is an availability failure, never a silent downgrade. The store
+  being AHEAD of the witness is the benign crash signature (§15.3's
+  advance ordering below) and passes. A present-but-empty (or
+  whitespace-only) witness file is the fresh bootstrap — no entry yet,
+  passes — distinct from a non-empty shape-violating file, which is
+  `witness-inconsistent`.
+- **ADVANCE**, after the §12 durable commit and before the emit (between
+  S2 and S3; between O5 and O6; after retire's commit): write the new
+  high-waters to the witness durably. If the write fails, the material is
+  already retired and the envelope or plaintext MUST NOT be released —
+  the same loss row as a crash between commit and emit (§12: material,
+  never reuse). Because the preflight probes writability, an unwritable
+  witness refuses free BEFORE the store commits, so the availability
+  price of a severed witness link is bounded to at most the one record
+  in flight when the medium first fails, then clean free refusals at
+  every subsequent preflight. Only a witness that fails to write in the
+  race between the preflight probe and the advance (a quota hit, a medium
+  yanked mid-operation) costs that one in-flight record.
+
+### 15.4 What this closes, and what it does not
+
+For a witnessed store, both §9.4 variants — whole-directory restore and
+the mismatched per-file restore — become `witness-regressed` refusals
+before any burn. What it does not do: protect a store whose witness file
+shares the store's failure domain (the §15.2 caveat), protect at
+`witnessClass: "none"`, verify pad material content (§1.2: content never
+decides liveness), or hide the counters from whoever holds the witness.
+
+---
+
+## 16. Fixed-size authenticated records (added with Phase 5)
+
+A store MAY freeze every record at one ciphertext size `F`, chosen at gen
+and never revisable: `recordPolicy.record = { "kind": "fixed",
+"bytes": F }`, with `F` a multiple of 16, `32 ≤ F ≤ maxCiphertextBytes`.
+This narrows §4's maximum for that store — it does not introduce the
+first bound (§4 did) — and thereby fixes the block count in §5's exact
+expression:
+
+```
+d(F) = 4 + F/16          per-attempt ε = (4 + F/16) · 2^-128
+```
+
+(for the suggested `F = 1024`: `d = 68`, ε = 68·2^-128 < 2^-121.9). The
+§5.2 statement at `d_max = 65540` remains the format-wide maximum, which
+a variable store at the 1 MiB cap can reach.
+
+### 16.1 The frame
+
+The plaintext length moves INSIDE the encrypted-and-authenticated region:
+
+```
+frame = plaintextLength (u32 LE) || plaintext || 0x00 padding, exactly F bytes
+```
+
+Plaintext capacity per record is `F − 4`. The wire `ciphertextLength` of
+every record from a fixed store is exactly `F`, so the channel observes
+record count and timing, never message length — that is the point, and
+its price is stated: every send consumes `F` encryption bytes and one
+auth record regardless of message size.
+
+### 16.2 Rules
+
+- gen: `--record-bytes F` creates a fixed store; the default remains
+  `{ "kind": "variable" }`. The default is argued, not assumed: fixed is
+  the recommended posture where message length is sensitive, but it
+  spends `F` pad bytes per message however short the message, and the
+  spec does not make that spend a silent default. A header without
+  `recordPolicy.record` (pre-Phase-5) is variable (§1.1).
+- SEND on a fixed store: a plaintext longer than `F − 4` is refused
+  `record-size-mismatch` (free, before anything is staged). Otherwise
+  the frame is built, encrypted over exactly `F` pad bytes, and §12.2
+  proceeds unchanged with `C = F`.
+- OPEN on a fixed store: an envelope whose `ciphertextLength ≠ F` is
+  refused `record-size-mismatch` structurally — before the window
+  checks, costing nothing durable — except a `ciphertextLength >
+  maxCiphertextBytes`, which §4's oversize check (`oversize-ciphertext`)
+  refuses first, also free. §12.3 then proceeds unchanged; after
+  the tag verifies and O5 commits, the frame is parsed and the
+  `plaintextLength` prefix selects the released bytes.
+- A decrypted frame whose length field exceeds `F − 4` cannot come from
+  a conforming sender and cannot be forged into existence below the §5
+  probability; if it occurs, the material is already retired (O5) and
+  the tool reports `record-frame-invalid` and exits 1 — an error, not a
+  refusal, in the same loss row as a crash after O5: material lost,
+  never reused, no output released.
+
+---
+
+## 17. Destruction (added with Phase 6)
+
+`destroy` removes a pair's accessible material and records the intent. It
+claims exactly what software can claim, and states the rest:
+
+> Software can forget its reference to pad material; it cannot prove
+> that flash forgot the bytes.
+
+### 17.1 The verb
+
+`destroy <dir> --confirm <pairId> [--reason TEXT]`, pair-level, under the
+pair lock. `--confirm` MUST equal the pair's pairId where any half's
+header is readable; for a pair too corrupt to yield one, the literal
+confirmation `destroy-unreadable-pair` is required instead. Anything else
+is refused `destroy-unconfirmed`, and nothing is touched. A v1 store is
+refused `v1-store` (v1 material is handled by v1's own documentation).
+destroy MUST work on corrupt v2 stores — a store too damaged to load is
+still a store an operator must be able to destroy.
+
+### 17.2 Order of operations (normative)
+
+1. Acquire the pair lock; validate the confirmation.
+2. Write the tombstone `destroyed.json` durably (atomic replace + fsync):
+   pairId where known, timestamp, operator reason, and — where readable —
+   each direction's final high-waters. Non-secret only; the tombstone is
+   the recorded intent and survives the destruction.
+3. Per half: overwrite `secret.bin` with zeros and fsync — attempted,
+   with failures reported, never claimed as erasure.
+4. Unlink `secret.bin`, `head.json`, `journal.log` in each half; remove
+   the half directories; fsync the pair directory. `manifest.json` and
+   the tombstone remain: they are the pair's non-secret record.
+5. Print the storage-specific limitation, including the sentence above:
+   copy-on-write filesystems (APFS among them) may preserve the
+   pre-overwrite blocks; SSD wear leveling may preserve any block;
+   backups are outside this tool's reach. Physical destruction of
+   exhausted or destroyed media is a ceremony step (`docs/CEREMONY.md`),
+   not a software claim.
+
+A configured witness is deliberately untouched: its counters are
+non-secret, monotone, and harmless for a pair that no longer exists.
+
+---
+
+---
+
+*End of binding specification. §15–§17 were added with Phases 4–6; the
+Phase-0 obligation (the fourteen sections above them) is unchanged.
+Changes to this document are format changes: they require regenerating
+§11's vectors with the single named command and re-deriving §5's ε if §4,
+§6, or a store's §16 record size moved.*
