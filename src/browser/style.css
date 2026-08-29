@@ -6,11 +6,8 @@
  * its own vocabulary (green / amber / red), so "gold" can never be mistaken
  * for "warning", and a screen has at most one obviously-next thing to do.
  *
- * Both themes are authored, not inverted. The light palette lives on bare
- * :root; the dark palette is redefined under prefers-color-scheme AND under an
- * explicit [data-theme] so a manual toggle wins in both directions. Every
- * colour is a semantic token: a role can flip between themes without any
- * component rule changing.
+ * One theme, dark, authored rather than inverted. Every colour is a semantic
+ * token, so a role can be retuned without any component rule changing.
  *
  * Accessibility is load-bearing, not decoration: AA text contrast throughout,
  * a visible focus ring on every control, >=44px touch targets, and NO motion on
@@ -18,56 +15,69 @@
  * open). What motion exists is 140ms and disappears under reduced-motion.
  * ========================================================================= */
 
-/* ---- tokens: light (default) -------------------------------------------- */
+/* ---- tokens --------------------------------------------------------------
+ * One theme, authored. TruePad is dark, and only dark: a light palette that
+ * merely inverts the roles looks like a different, worse product, so it is not
+ * offered rather than shipped badly. `color-scheme: dark` makes the browser's
+ * own furniture — scrollbars, form controls, the canvas behind the page —
+ * match, so there is no white flash and no light-mode widget anywhere.
+ *
+ * The brass accent carries ACTION and identity only, never state. State has
+ * its own vocabulary (green / amber / red), so gold can never be misread as a
+ * warning.
+ * ------------------------------------------------------------------------- */
 
 :root {
+  color-scheme: dark;
+
   /* surfaces */
-  --bg: #f7f8fa;
-  --surface: #ffffff;
-  --surface-2: #f1f3f6;
-  --surface-3: #e7eaef;
-  --inset: #f4f6f9;
-  --edge: #e3e6ec;
-  --edge-strong: #cdd3dc;
+  --bg: #0c0d10;
+  --surface: #14161a;
+  --surface-2: #1a1d22;
+  --surface-3: #22262d;
+  --inset: #0f1114;
+  --edge: #24272e;
+  --edge-strong: #343941;
 
   /* type */
-  --text: #14161a;
-  --text-dim: #525963;
-  --text-faint: #5d646f;
+  --text: #e9ebef;
+  --text-dim: #a4abb6;
+  --text-faint: #838b97;
 
-  /* brass accent — ACTION and identity only, never state */
-  --accent: #d99b28;
-  --accent-hover: #c78d1c;
-  --accent-text: #96620a;
-  --accent-tint: rgba(217, 155, 40, 0.13);
-  --accent-ring: rgba(217, 155, 40, 0.32);
-  --on-accent: #1b1406;
+  /* brass accent — action and identity only, never state */
+  --accent: #e0a63c;
+  --accent-hover: #edb551;
+  --accent-text: #edb551;
+  --accent-tint: rgba(224, 166, 60, 0.13);
+  --accent-ring: rgba(224, 166, 60, 0.34);
+  --on-accent: #17130a;
 
   /* state vocabulary */
-  --ok: #1f7a45;
-  --ok-tint: #e6f3ea;
-  --ok-edge: #b7ddc5;
+  --ok: #5cc98a;
+  --ok-tint: rgba(92, 201, 138, 0.11);
+  --ok-edge: rgba(92, 201, 138, 0.32);
 
-  --warn: #92590a;
-  --warn-tint: #fbf0dc;
-  --warn-edge: #e5cea1;
+  --warn: #eb9b3d;
+  --warn-tint: rgba(235, 155, 61, 0.11);
+  --warn-edge: rgba(235, 155, 61, 0.32);
 
-  --danger: #b3291c;
-  --danger-solid: #b3291c;
-  --danger-solid-hover: #9c2317;
-  --danger-tint: #fbe9e6;
-  --danger-edge: #edc0b8;
+  --danger: #f0796b;
+  --danger-solid: #c4392c;
+  --danger-solid-hover: #d24132;
+  --danger-tint: rgba(240, 121, 107, 0.11);
+  --danger-edge: rgba(240, 121, 107, 0.3);
   --on-danger: #fff6f4;
 
-  --info: #17607f;
-  --info-tint: #e4eff4;
-  --info-edge: #b6d3df;
+  --info: #6fb3d8;
+  --info-tint: rgba(111, 179, 216, 0.1);
+  --info-edge: rgba(111, 179, 216, 0.28);
 
-  --focus: #96620a;
+  --focus: #edb551;
 
-  --shadow-sm: 0 1px 2px rgba(16, 20, 28, 0.05);
-  --shadow: 0 1px 2px rgba(16, 20, 28, 0.05), 0 6px 18px rgba(16, 20, 28, 0.06);
-  --shadow-lg: 0 2px 4px rgba(16, 20, 28, 0.05), 0 18px 44px rgba(16, 20, 28, 0.1);
+  /* Depth in the dark comes from surface separation, not drop shadows. */
+  --shadow-sm: none;
+  --shadow: none;
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.5);
 
   /* type scale */
   --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -105,108 +115,6 @@
 
   --dur: 140ms;
   --ease: cubic-bezier(0.2, 0, 0.15, 1);
-
-  color-scheme: light;
-}
-
-/* ---- tokens: dark ------------------------------------------------------- */
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0c0d10;
-    --surface: #14161a;
-    --surface-2: #1a1d22;
-    --surface-3: #22262d;
-    --inset: #0f1114;
-    --edge: #24272e;
-    --edge-strong: #343941;
-
-    --text: #e9ebef;
-    --text-dim: #a4abb6;
-    --text-faint: #838b97;
-
-    --accent: #e0a63c;
-    --accent-hover: #edb551;
-    --accent-text: #edb551;
-    --accent-tint: rgba(224, 166, 60, 0.13);
-    --accent-ring: rgba(224, 166, 60, 0.34);
-    --on-accent: #17130a;
-
-    --ok: #5cc98a;
-    --ok-tint: rgba(92, 201, 138, 0.11);
-    --ok-edge: rgba(92, 201, 138, 0.32);
-
-    --warn: #eb9b3d;
-    --warn-tint: rgba(235, 155, 61, 0.11);
-    --warn-edge: rgba(235, 155, 61, 0.32);
-
-    --danger: #f0796b;
-    --danger-solid: #c4392c;
-    --danger-solid-hover: #d24132;
-    --danger-tint: rgba(240, 121, 107, 0.11);
-    --danger-edge: rgba(240, 121, 107, 0.3);
-    --on-danger: #fff6f4;
-
-    --info: #6fb3d8;
-    --info-tint: rgba(111, 179, 216, 0.1);
-    --info-edge: rgba(111, 179, 216, 0.28);
-
-    --focus: #edb551;
-
-    --shadow-sm: none;
-    --shadow: none;
-    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.5);
-
-    color-scheme: dark;
-  }
-}
-
-:root[data-theme="dark"] {
-  --bg: #0c0d10;
-  --surface: #14161a;
-  --surface-2: #1a1d22;
-  --surface-3: #22262d;
-  --inset: #0f1114;
-  --edge: #24272e;
-  --edge-strong: #343941;
-
-  --text: #e9ebef;
-  --text-dim: #a4abb6;
-  --text-faint: #838b97;
-
-  --accent: #e0a63c;
-  --accent-hover: #edb551;
-  --accent-text: #edb551;
-  --accent-tint: rgba(224, 166, 60, 0.13);
-  --accent-ring: rgba(224, 166, 60, 0.34);
-  --on-accent: #17130a;
-
-  --ok: #5cc98a;
-  --ok-tint: rgba(92, 201, 138, 0.11);
-  --ok-edge: rgba(92, 201, 138, 0.32);
-
-  --warn: #eb9b3d;
-  --warn-tint: rgba(235, 155, 61, 0.11);
-  --warn-edge: rgba(235, 155, 61, 0.32);
-
-  --danger: #f0796b;
-  --danger-solid: #c4392c;
-  --danger-solid-hover: #d24132;
-  --danger-tint: rgba(240, 121, 107, 0.11);
-  --danger-edge: rgba(240, 121, 107, 0.3);
-  --on-danger: #fff6f4;
-
-  --info: #6fb3d8;
-  --info-tint: rgba(111, 179, 216, 0.1);
-  --info-edge: rgba(111, 179, 216, 0.28);
-
-  --focus: #edb551;
-
-  --shadow-sm: none;
-  --shadow: none;
-  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.5);
-
-  color-scheme: dark;
 }
 
 /* ---- base --------------------------------------------------------------- */
@@ -477,25 +385,6 @@ samp,
 .footer a:hover {
   color: var(--text-dim);
   text-decoration: underline;
-}
-
-.icon-btn {
-  display: inline-grid;
-  place-items: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  flex: none;
-  border-radius: var(--r-sm);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
-}
-
-.icon-btn:hover {
-  color: var(--text);
-  background: var(--surface-2);
 }
 
 /* ---- buttons ------------------------------------------------------------ */

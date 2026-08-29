@@ -118,51 +118,6 @@ class WorkerEngine implements Engine {
   }
 }
 
-/* ---- theme -------------------------------------------------------------- */
-
-const THEME_KEY = "truepad2:theme";
-const root = document.documentElement;
-
-function storedTheme(): "light" | "dark" | null {
-  try {
-    const v = localStorage.getItem(THEME_KEY);
-    return v === "light" || v === "dark" ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-const systemDark = (): boolean => window.matchMedia("(prefers-color-scheme: dark)").matches;
-const effectiveDark = (): boolean => {
-  const s = storedTheme();
-  return s ? s === "dark" : systemDark();
-};
-
-function applyTheme(themeBtn?: HTMLElement): void {
-  const s = storedTheme();
-  if (s) root.setAttribute("data-theme", s);
-  else root.removeAttribute("data-theme");
-  const dark = effectiveDark();
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", dark ? "#0c0d10" : "#f7f8fa");
-  if (themeBtn) {
-    mount(themeBtn, icon(dark ? "sun" : "moon"));
-    themeBtn.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
-    themeBtn.setAttribute("title", dark ? "Light theme" : "Dark theme");
-  }
-}
-
-function toggleTheme(themeBtn: HTMLElement): void {
-  const next = effectiveDark() ? "light" : "dark";
-  try {
-    localStorage.setItem(THEME_KEY, next);
-  } catch {
-    /* the toggle still applies for this session via the attribute below */
-    root.setAttribute("data-theme", next);
-  }
-  applyTheme(themeBtn);
-}
-
 /* ---- storage persistence probe ----------------------------------------- */
 
 async function probePersistent(): Promise<boolean | null> {
@@ -192,10 +147,7 @@ const mainEl = h("main", { class: "main", id: "app-main", attrs: { tabindex: "-1
 const bannerSlot = h("div", {});
 const toastTray = h("div", { class: "toast-tray", aria: { live: "polite" }, attrs: { role: "status" } });
 
-let themeBtn!: HTMLElement;
-
 function buildShell(navigate: (r: Route) => void): void {
-  themeBtn = h("button", { class: "icon-btn", type: "button", on: { click: () => toggleTheme(themeBtn) } });
   // Three audiences, kept apart: Use (the brand -> home), Learn (the exhibit),
   // and Advanced (security details & expert config). No security jargon up top.
   const navHow = h("a", { href: "learn.html" }, h("span", { text: "Learn" }));
@@ -219,8 +171,7 @@ function buildShell(navigate: (r: Route) => void): void {
       { class: "topbar-inner" },
       brand,
       h("div", { class: "topbar-spacer" }),
-      h("nav", { class: "topnav", aria: { label: "Primary" } }, navHow, navAdvanced),
-      themeBtn
+      h("nav", { class: "topnav", aria: { label: "Primary" } }, navHow, navAdvanced)
     )
   );
 
@@ -240,7 +191,6 @@ function buildShell(navigate: (r: Route) => void): void {
   const skip = h("a", { class: "skip-link", href: "#app-main" }, h("span", { text: "Skip to content" }));
 
   mount(app!, skip, h("div", { class: "app" }, topbar, bannerSlot, mainEl, footer), toastTray);
-  applyTheme(themeBtn);
 }
 
 /* ---- toasts ------------------------------------------------------------- */
@@ -419,7 +369,6 @@ async function bootstrap(): Promise<void> {
   }
 
   window.addEventListener("hashchange", () => void render());
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(themeBtn));
   await render();
 }
 
