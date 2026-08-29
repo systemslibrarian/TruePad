@@ -20,7 +20,7 @@ import type { Ctx, Engine, Reply, Route, ToastTone } from "./ui/context.ts";
 import type { EngineRequest, EngineResponse } from "./engine/protocol.ts";
 import { renderHome } from "./ui/home.ts";
 import { renderDashboard } from "./ui/dashboard.ts";
-import { renderCreate } from "./ui/create-pair.ts";
+import { renderCreate, renderImport } from "./ui/create-pair.ts";
 import { renderSend } from "./ui/send.ts";
 import { renderOpen } from "./ui/open.ts";
 import { renderDestroy } from "./ui/destroy.ts";
@@ -193,20 +193,18 @@ const bannerSlot = h("div", {});
 const toastTray = h("div", { class: "toast-tray", aria: { live: "polite" }, attrs: { role: "status" } });
 
 let themeBtn!: HTMLElement;
-let navPairs!: HTMLAnchorElement;
-let navSecurity!: HTMLAnchorElement;
 
 function buildShell(navigate: (r: Route) => void): void {
   themeBtn = h("button", { class: "icon-btn", type: "button", on: { click: () => toggleTheme(themeBtn) } });
-  navPairs = h("a", { href: "#/", on: { click: (e) => { e.preventDefault(); navigate({ name: "home" }); } } }, h("span", { text: "Pairs" })) as HTMLAnchorElement;
-  navSecurity = h("a", { href: "#/security", on: { click: (e) => { e.preventDefault(); navigate({ name: "security" }); } } }, h("span", { text: "Security" })) as HTMLAnchorElement;
-  const navLearn = h("a", { href: "learn.html" }, h("span", { text: "Learn" }), icon("external"));
+  // Three audiences, kept apart: Use (the brand → home), Learn (the exhibit),
+  // and Advanced (security details & expert config). No security jargon up top.
+  const navHow = h("a", { href: "learn.html" }, h("span", { text: "How it works" }), icon("external"));
+  const navAdvanced = h("a", { href: "#/advanced", on: { click: (e) => { e.preventDefault(); navigate({ name: "security" }); } } }, h("span", { text: "Advanced" })) as HTMLAnchorElement;
 
   const brand = h(
     "a",
     { class: "brand", href: "#/", on: { click: (e) => { e.preventDefault(); navigate({ name: "home" }); } } },
-    h("span", { class: "mark" }, h("span", { text: "TruePad" }), h("span", { class: "two", text: " 2" })),
-    h("span", { class: "sub", text: "authenticated one-time pad" })
+    h("span", { class: "mark" }, h("span", { text: "TruePad" }))
   );
 
   const topbar = h(
@@ -214,32 +212,23 @@ function buildShell(navigate: (r: Route) => void): void {
     { class: "topbar" },
     brand,
     h("div", { class: "topbar-spacer" }),
-    h("nav", { class: "topnav", aria: { label: "Primary" } }, navPairs, navSecurity, navLearn),
+    h("nav", { class: "topnav", aria: { label: "Primary" } }, navHow, navAdvanced),
     themeBtn
   );
 
   const footer = h(
     "footer",
     { class: "footer" },
-    h("span", { text: "TruePad 2 · MIT licensed · runs entirely in your browser, no backend, no accounts, no sync." }),
+    h("span", { text: "TruePad · runs entirely in your browser — no backend, no accounts, no sync." }),
     h("span", { class: "topbar-spacer" }),
-    h("a", { href: "learn.html" }, h("span", { text: "Teaching Lab" })),
-    h("a", { href: "https://github.com/systemslibrarian/TruePad", attrs: { target: "_blank", rel: "noreferrer noopener" } }, h("span", { text: "Source" })),
-    h("span", { class: "motto", text: "never spend a bit twice" })
+    h("a", { href: "learn.html" }, h("span", { text: "How it works" })),
+    h("a", { href: "https://github.com/systemslibrarian/TruePad", attrs: { target: "_blank", rel: "noreferrer noopener" } }, h("span", { text: "Source" }))
   );
 
   const skip = h("a", { class: "skip-link", href: "#app-main" }, h("span", { text: "Skip to content" }));
 
   mount(app!, skip, h("div", { class: "app" }, topbar, bannerSlot, mainEl, footer), toastTray);
   applyTheme(themeBtn);
-}
-
-function setActiveNav(route: Route): void {
-  const isSecurity = route.name === "security";
-  navSecurity.style.color = isSecurity ? "var(--text)" : "";
-  navSecurity.style.background = isSecurity ? "var(--surface-2)" : "";
-  navPairs.style.color = isSecurity ? "" : "var(--text)";
-  navPairs.style.background = isSecurity ? "" : "";
 }
 
 /* ---- toasts ------------------------------------------------------------- */
@@ -250,43 +239,6 @@ function toast(message: string, tone: ToastTone = "info"): void {
   setTimeout(() => node.remove(), 4200);
 }
 
-/* ---- storage banner ----------------------------------------------------- */
-
-function showStorageBanner(persistent: boolean | null, navigate: (r: Route) => void): void {
-  if (persistent !== false) {
-    mount(bannerSlot);
-    return;
-  }
-  let dismissed = false;
-  try {
-    dismissed = sessionStorage.getItem("truepad2:banner-dismissed") === "1";
-  } catch {
-    /* ignore */
-  }
-  if (dismissed) {
-    mount(bannerSlot);
-    return;
-  }
-  mount(
-    bannerSlot,
-    h(
-      "div",
-      { class: "main", style: "padding-top:1rem;padding-bottom:0" },
-      h(
-        "div",
-        { class: "warning-banner", role: "status" },
-        h("span", { text: "This browser context may not retain storage (a private window, or an evictable store). Your pads could vanish. Keep a couriered copy, and consider requesting persistent storage." }),
-        h(
-          "span",
-          { class: "row" },
-          h("button", { class: "btn small", type: "button", on: { click: () => navigate({ name: "security" }) } }, h("span", { text: "Details" })),
-          h("button", { class: "btn small ghost", type: "button", on: { click: () => { try { sessionStorage.setItem("truepad2:banner-dismissed", "1"); } catch { /* ignore */ } mount(bannerSlot); } } }, h("span", { text: "Dismiss" }))
-        )
-      )
-    )
-  );
-}
-
 /* ---- router ------------------------------------------------------------- */
 
 function parseHash(): Route {
@@ -294,11 +246,13 @@ function parseHash(): Route {
   const parts = raw.split("/").filter((p) => p.length > 0);
   if (parts.length === 0) return { name: "home" };
   if (parts[0] === "create") return { name: "create" };
-  if (parts[0] === "security") return { name: "security" };
+  if (parts[0] === "import") return { name: "import" };
+  if (parts[0] === "security" || parts[0] === "advanced") return { name: "security" };
   if (parts[0] === "pair" && parts[1]) {
     const pairId = decodeURIComponent(parts[1]);
-    if (parts[2] === "send") return { name: "send", pairId };
-    if (parts[2] === "open") return { name: "open", pairId };
+    const mode: "message" | "file" = parts[3] === "file" ? "file" : "message";
+    if (parts[2] === "send") return { name: "send", pairId, mode };
+    if (parts[2] === "open") return { name: "open", pairId, mode };
     if (parts[2] === "destroy") return { name: "destroy", pairId };
     return { name: "pair", pairId };
   }
@@ -311,14 +265,16 @@ function formatHash(route: Route): string {
       return "#/";
     case "create":
       return "#/create";
+    case "import":
+      return "#/import";
     case "security":
-      return "#/security";
+      return "#/advanced";
     case "pair":
       return `#/pair/${encodeURIComponent(route.pairId)}`;
     case "send":
-      return `#/pair/${encodeURIComponent(route.pairId)}/send`;
+      return `#/pair/${encodeURIComponent(route.pairId)}/send/${route.mode}`;
     case "open":
-      return `#/pair/${encodeURIComponent(route.pairId)}/open`;
+      return `#/pair/${encodeURIComponent(route.pairId)}/open/${route.mode}`;
     case "destroy":
       return `#/pair/${encodeURIComponent(route.pairId)}/destroy`;
   }
@@ -380,8 +336,9 @@ async function bootstrap(): Promise<void> {
 
   buildShell(navigate);
 
+  // Storage persistence is surfaced under Advanced (Security & limitations), not
+  // as a home-screen warning banner — the simple UI is not warning-heavy.
   const persistent = await probePersistent();
-  showStorageBanner(persistent, navigate);
 
   const ctx: Ctx = {
     engine,
@@ -393,7 +350,6 @@ async function bootstrap(): Promise<void> {
 
   async function render(): Promise<void> {
     const route = parseHash();
-    setActiveNav(route);
     mount(mainEl, h("p", { class: "muted", text: "Loading…" }));
     try {
       switch (route.name) {
@@ -403,14 +359,17 @@ async function bootstrap(): Promise<void> {
         case "create":
           await renderCreate(ctx, mainEl);
           break;
+        case "import":
+          await renderImport(ctx, mainEl);
+          break;
         case "pair":
           await renderDashboard(ctx, mainEl, route.pairId);
           break;
         case "send":
-          await renderSend(ctx, mainEl, route.pairId);
+          await renderSend(ctx, mainEl, route.pairId, route.mode);
           break;
         case "open":
-          await renderOpen(ctx, mainEl, route.pairId);
+          await renderOpen(ctx, mainEl, route.pairId, route.mode);
           break;
         case "destroy":
           await renderDestroy(ctx, mainEl, route.pairId);

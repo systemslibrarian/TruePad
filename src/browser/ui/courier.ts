@@ -17,7 +17,42 @@ import { callout, saveBytesButton } from "./components.ts";
 import type { Ctx } from "./context.ts";
 
 function suggestedFilename(pairId: string): string {
-  return `truepad2-pair-${pairId.slice(0, 12)}.pad.json`;
+  return `truepad-${pairId.slice(0, 12)}.pad`;
+}
+
+// Save operator-supplied bytes to a file the operator names, revoking the
+// object URL promptly. Used for the pad file (secret) — the calling screen
+// frames the secrecy warning; this just moves the bytes at the user's request.
+function triggerDownload(bytes: Uint8Array, filename: string): void {
+  const view = new Uint8Array(bytes.length);
+  view.set(bytes);
+  const url = URL.createObjectURL(new Blob([view], { type: "application/octet-stream" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  view.fill(0);
+}
+
+// A single button that exports the pad in the worker and saves it to a file in
+// one click. The pad file is the secret; the caller shows the short warning.
+export function savePadFileButton(ctx: Ctx, pairId: string, label = "Save pad file"): HTMLElement {
+  const btn = h("button", { class: "btn primary", type: "button" }, icon("download"), h("span", { text: label })) as HTMLButtonElement;
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    const reply = await ctx.engine.exportPair({ pairId });
+    btn.disabled = false;
+    if (!reply.ok) {
+      ctx.toast(`Could not prepare the pad file: ${reply.message}`, "danger");
+      return;
+    }
+    triggerDownload(reply.container, suggestedFilename(pairId));
+    ctx.toast("Pad file saved. Give it to the other person securely.", "ok");
+  });
+  return btn;
 }
 
 // Reusable export affordance for the dashboard and the create verdict.

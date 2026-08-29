@@ -106,6 +106,27 @@ export function authMeter(m: DirectionMeters): MeterView {
   };
 }
 
+// One friendly health number for a whole pad: the lowest remaining fraction
+// across both directions and both budgets, as a percent. This is the ONLY
+// remaining indicator the simple UI shows (no per-direction meters on the main
+// screens — those live under Advanced / Pad details).
+function directionRemainingFraction(m: DirectionMeters): number {
+  const enc = m.encryption.capacity > 0 ? m.encryption.remainingBytes / m.encryption.capacity : 0;
+  const auth = m.authentication.capacityRecords > 0 ? m.authentication.remainingRecords / m.authentication.capacityRecords : 0;
+  return Math.max(0, Math.min(1, Math.min(enc, auth)));
+}
+
+export function padHealthPercent(pair: PairSummary): number {
+  const ab = directionRemainingFraction(pair.meters["A->B"]);
+  const ba = directionRemainingFraction(pair.meters["B->A"]);
+  return Math.round(Math.min(ab, ba) * 100);
+}
+
+// A short, jargon-free status word for the whole pad.
+export function padStatusWord(pair: PairSummary): StatusView {
+  return pairStatus(pair);
+}
+
 export type StatusView = { label: string; tone: Tone };
 
 export function directionStatus(m: DirectionMeters): StatusView {

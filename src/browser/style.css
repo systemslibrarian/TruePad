@@ -1228,3 +1228,91 @@ table.matrix td small {
   flex-wrap: wrap;
   margin-bottom: 1.25rem;
 }
+
+/* ============================================================================
+ * Simplified UX (Phase 1.2) — home, pad screen, create/send/open. Reuses the
+ * existing tokens; adds only the new task-oriented layouts. The dense technical
+ * views (meters, ledger) keep their prior styles and live under Advanced.
+ * ========================================================================= */
+
+/* Big primary actions for the simple flows. */
+.btn.big {
+  min-height: 3.25rem;
+  padding: 0.85rem 1.4rem;
+  font-size: 1.05rem;
+  border-radius: var(--radius);
+}
+
+/* ---- Home ---- */
+.home-hero { text-align: center; margin: 1.5rem 0 2rem; }
+.home-title { font: 700 2.6rem/1 var(--font-brand); letter-spacing: 0.01em; margin: 0; }
+.home-tagline { color: var(--text-dim); font-size: 1.1rem; margin: 0.5rem 0 0; }
+.home-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; margin-bottom: 2rem; }
+.home-actions .btn.big { width: 100%; }
+.home-pads { margin-top: 1.5rem; }
+.home-pads-title { font-size: 1.05rem; color: var(--text-dim); margin: 0 0 0.75rem; font-weight: 600; }
+.pad-list { display: flex; flex-direction: column; gap: 0.75rem; }
+.pad-card { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.15rem; }
+.pad-card-main { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+.pad-card-name { font-weight: 650; font-size: 1.1rem; overflow: hidden; text-overflow: ellipsis; }
+.pad-card-meta { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.pad-card-remaining { color: var(--text-faint); font-size: 0.9rem; }
+.home-empty { text-align: center; color: var(--text-dim); padding: 1.5rem 0; }
+.home-links { display: flex; gap: 1.5rem; justify-content: center; margin: 2.5rem 0 1rem; flex-wrap: wrap; }
+.home-link { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--text-dim); text-decoration: none; }
+.home-link:hover { color: var(--text); }
+
+/* ---- Pad screen ---- */
+.pad-header { margin: 0.5rem 0 1.25rem; }
+.pad-title { font: 700 1.8rem/1.1 var(--font-brand); margin: 0; }
+.pad-remaining { color: var(--text-dim); font-size: 1.15rem; margin: 0.6rem 0 0; }
+.pad-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin: 1rem 0 1.5rem; }
+.pad-actions .btn.big { width: 100%; }
+.pad-secondary { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 1rem; }
+.row.link { color: var(--text-dim); text-decoration: none; padding: 0.6rem 0.2rem; border-radius: var(--radius-sm); }
+.row.link:hover { color: var(--text); background: var(--surface-2); padding-left: 0.6rem; }
+.row.link.danger { color: var(--danger); }
+
+/* ---- Create / choice cards ---- */
+.choice-set { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.6rem; }
+.choice-card { display: flex; align-items: flex-start; gap: 0.6rem; padding: 0.85rem; border: 1px solid var(--edge-strong); border-radius: var(--radius); cursor: pointer; background: var(--surface); }
+.choice-card:hover { border-color: var(--accent-surface); }
+.choice-card:has(input:checked) { border-color: var(--accent-surface); background: var(--accent-surface); color: var(--on-accent); }
+.choice-card:has(input:checked) .choice-desc { color: var(--on-accent); opacity: 0.85; }
+.choice-card input { margin-top: 0.2rem; }
+.choice-title { font-weight: 650; }
+.choice-desc { font-size: 0.85rem; color: var(--text-faint); margin-top: 0.15rem; }
+.advanced-block { margin-top: 0.5rem; }
+.advanced-block > summary { cursor: pointer; font-weight: 600; color: var(--text-dim); }
+.create-form .field-label { font-weight: 600; margin-bottom: 0.5rem; }
+
+/* ---- After create ---- */
+.created-card { border-color: var(--ok-edge); }
+.created-head, .ok-head { display: flex; align-items: center; gap: 0.6rem; }
+.created-head svg, .ok-head svg { color: var(--ok); width: 1.6rem; height: 1.6rem; flex: none; }
+.created-head h2, .ok-head h2 { margin: 0; }
+.save-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.save-note { color: var(--text-dim); font-size: 0.9rem; margin: 0; }
+
+/* ---- Send / Open ---- */
+.send-note { margin: 0.75rem 0 0; }
+.message-head { margin: 0 0 0.6rem; }
+.message-body { white-space: pre-wrap; word-break: break-word; background: var(--surface-inset); border: 1px solid var(--edge); border-radius: var(--radius); padding: 1rem 1.15rem; font: 400 1rem/1.5 var(--font-ui); }
+.quiet-details { margin-top: 0.75rem; }
+.quiet-details > summary { cursor: pointer; color: var(--text-faint); font-size: 0.9rem; }
+
+/* ---- Destroy ---- */
+.confirm-row { gap: 0.55rem; align-items: center; }
+.confirm-row input { width: 1.15rem; height: 1.15rem; }
+
+@media (max-width: 34rem) {
+  .home-actions, .pad-actions { grid-template-columns: 1fr; }
+  .home-title { font-size: 2.1rem; }
+}
+
+/* Constrain inline nav/link icons (the SVG has no intrinsic size). */
+.topnav a svg,
+.home-link svg,
+.footer a svg { width: 1rem; height: 1rem; flex: none; }
+.home-link { white-space: nowrap; }
+.topnav a { display: inline-flex; align-items: center; gap: 0.35rem; }

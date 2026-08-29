@@ -228,13 +228,13 @@ export async function renderSecurity(ctx: Ctx, root: HTMLElement): Promise<void>
 
   mount(
     root,
-    h("a", { class: "back-link", href: "#", on: { click: (e) => { e.preventDefault(); ctx.navigate({ name: "home" }); } } }, icon("back"), h("span", { text: "All pairs" })),
+    h("a", { class: "back-link", href: "#", on: { click: (e) => { e.preventDefault(); ctx.navigate({ name: "home" }); } } }, icon("back"), h("span", { text: "Home" })),
     h(
       "header",
       { class: "screen-head" },
-      h("span", { class: "eyebrow", text: "Security status" }),
-      h("h1", { text: "What this edition guarantees — and does not" }),
-      h("p", { class: "lede", text: "The same frozen protocol as the CLI, on a browser substrate that is honestly weaker in named places. Nothing here is rounded up to a stronger claim than it deserves." })
+      h("span", { class: "eyebrow", text: "Advanced" }),
+      h("h1", { text: "Security & limitations" }),
+      h("p", { class: "lede", text: "The technical detail behind TruePad: the same frozen protocol as the command-line tool, on a browser substrate that is honestly weaker in named places. Nothing here is rounded up to a stronger claim than it deserves. You never need this to use TruePad." })
     ),
     guaranteesSection(),
     sourceSection(),

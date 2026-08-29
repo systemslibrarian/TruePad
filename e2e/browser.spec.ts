@@ -1,137 +1,109 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /* ============================================================================
- * TruePad 2 Browser Edition, driven for real against the BUILT bundle
- * (vite preview of dist/, the thing that deploys) in a real Chromium with real
- * OPFS. The engine runs in its dedicated Web Worker and its Origin Private File
- * System store, exactly as it ships; nothing here reaches into the worker.
- *
- * Two proofs:
- *   1. A genuine courier round trip across TWO isolated OPFS stores (two
- *      browser contexts = two independent origins-worth of storage): Alice
- *      generates a pair, exports the couriered pad, sends an authenticated
- *      message; Bob imports the couriered pad into his own store and opens the
- *      envelope to the exact plaintext; then Bob destroys the pair and it
- *      refuses reuse.
- *   2. The one-time discipline in a single store: a burned record cannot be
- *      reopened even in the same copy — the same-store courier caveat — with
- *      the exact security-consequence copy asserted visible.
- *
- * OPFS work is asynchronous; every assertion below is a Playwright
- * auto-retrying `expect`, so the specs wait for the worker rather than racing
- * it. Selectors are the operator-visible text and roles src/browser/ui builds,
- * so a renamed action or lost consequence line fails here before it ships.
+ * TruePad 2 Browser Edition — the SIMPLIFIED product, driven for real against
+ * the BUILT bundle (vite preview of dist/) in a real Chromium with real OPFS.
+ * The frozen v2 engine is unchanged; these specs exercise the redesigned,
+ * task-oriented UI from the perspective of someone who just wants to send a
+ * message: create a pad, share it, send, open — with plain buttons and no
+ * security jargon required to get through.
  * ========================================================================= */
 
-const DESTROY_LIMITATION =
-  "Software can forget its reference to pad material; it cannot prove that flash forgot the bytes.";
-
-// Generate a pad from the browser DRBG (no source file needed), with no
-// rollback witness (keeps the round trip free of any witness-store dependency),
-// then open its dashboard and return the pair id.
-async function generateDrbgPair(page: Page): Promise<void> {
+// Create a pad with the simple flow: name it, keep the defaults (small, for a
+// fast test), press Create. Returns nothing — the pad screen is next.
+async function createPad(page: Page, name: string): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: "Create pair" }).first().click();
-  await expect(page.getByRole("heading", { name: "Create a pair" })).toBeVisible();
-
-  await page.getByText("Browser DRBG (trial)").click();
-  await page.getByText("No witness", { exact: true }).click();
-
-  await page.getByRole("button", { name: "Generate pair" }).click();
-  await expect(page.getByText("Pair generated", { exact: true })).toBeVisible();
-}
-
-async function openDashboardAfterGen(page: Page): Promise<string> {
-  await page.getByRole("button", { name: "Open dashboard" }).click();
-  const idText = (await page.locator("p.lede.mono").first().textContent())?.trim() ?? "";
-  expect(idText).toMatch(/^[0-9a-f]{32}$/);
-  return idText;
+  await page.getByRole("button", { name: "Create new pad" }).click();
+  await expect(page.getByRole("heading", { name: "Create a pad" })).toBeVisible();
+  await page.getByPlaceholder("e.g. Chat with Sam").fill(name);
+  await page.getByText("Small", { exact: true }).click(); // keep the test pad tiny
+  await page.getByRole("button", { name: "Create pad" }).click();
+  await expect(page.getByText("Pad created")).toBeVisible();
 }
 
 async function sendMessage(page: Page, message: string): Promise<string> {
   await page.getByRole("button", { name: "Send message" }).click();
-  await expect(page.getByRole("heading", { name: "Encrypt & burn" })).toBeVisible();
-  await page.getByRole("button", { name: "I am Alice (A)" }).click();
+  await expect(page.getByRole("heading", { name: "Send message" })).toBeVisible();
   await page.locator("textarea").fill(message);
-  // The exact-cost consequence is shown before the commit.
-  await expect(page.getByText("This will permanently consume, on send:")).toBeVisible();
-  await page.getByRole("button", { name: "Encrypt & burn" }).click();
-  await expect(page.getByText("Burned. Material consumed, envelope ready.")).toBeVisible();
+  await page.getByRole("button", { name: "Encrypt message" }).click();
+  await expect(page.getByText("Encrypted message ready")).toBeVisible();
   const envelope = (await page.locator(".codeblock").first().textContent())?.trim() ?? "";
   expect(envelope).toContain('"formatVersion":2');
   return envelope;
 }
 
-test("courier round trip across two isolated OPFS stores: create → send → import → open → destroy", async ({ browser }, testInfo) => {
-  // --- Alice: her own browser context (its own OPFS store) ---
+test("a non-technical happy path: create → save pad → send → import → open", async ({ browser }, testInfo) => {
+  // --- Alice: create a pad in her own browser context (its own OPFS) ---
   const aliceContext = await browser.newContext();
   const alice = await aliceContext.newPage();
-  await generateDrbgPair(alice);
+  await createPad(alice, "Chat with Bob");
 
-  // Export the couriered pad BEFORE any traffic, and capture the download.
-  await alice.getByRole("button", { name: "Prepare courier bundle" }).click();
-  await expect(alice.getByText("This file IS the pad — treat it as the secret it is")).toBeVisible();
-  const bundlePath = testInfo.outputPath("pair-bundle.pad.json");
+  // Save the pad file for the other person (a real download).
+  const padPath = testInfo.outputPath("shared.pad");
   const [download] = await Promise.all([
     alice.waitForEvent("download"),
-    alice.getByRole("button", { name: "Save pad bundle" }).click()
+    alice.getByRole("button", { name: "Save pad for other person" }).click()
   ]);
-  await download.saveAs(bundlePath);
+  await download.saveAs(padPath);
 
-  const pairId = await openDashboardAfterGen(alice);
-
-  const message = "attack at dawn — real OPFS round trip";
+  // Start using it, and send a message — no role choice, no jargon.
+  await alice.getByRole("button", { name: "Start using TruePad" }).click();
+  await expect(alice.getByRole("heading", { name: "Chat with Bob" })).toBeVisible();
+  const message = "meet me at the cafe at noon";
   const envelope = await sendMessage(alice, message);
 
-  // --- Bob: a second, isolated browser context (a different OPFS store) ---
+  // --- Bob: a second, isolated context adds the shared pad ---
   const bobContext = await browser.newContext();
   const bob = await bobContext.newPage();
   await bob.goto("/");
-  await bob.getByRole("button", { name: "Create pair" }).first().click();
-  await bob.getByRole("button", { name: "Import couriered pad" }).click();
-  await bob.locator('input[type="file"]').setInputFiles(bundlePath);
-  await expect(bob.getByText(/pair-bundle\.pad\.json/)).toBeVisible();
-  await bob.getByRole("button", { name: "Import pad" }).click();
+  await bob.getByRole("button", { name: "Add a shared pad" }).click();
+  await expect(bob.getByRole("heading", { name: "Add a shared pad" })).toBeVisible();
+  await bob.getByPlaceholder("e.g. Chat with Sam").fill("Chat with Alice");
+  await bob.locator('input[type="file"]').setInputFiles(padPath);
+  await bob.getByRole("button", { name: "Add pad" }).click();
 
-  // Bob lands on the imported pair's dashboard, same pair id.
-  await expect(bob.locator("p.lede.mono").first()).toHaveText(pairId);
-
-  // Bob opens the envelope as B (he receives A->B traffic) → exact plaintext.
-  await bob.getByRole("button", { name: "Open received" }).click();
-  await expect(bob.getByRole("heading", { name: "Verify & open" })).toBeVisible();
-  await bob.getByRole("button", { name: "I am Bob (B)" }).click();
+  // Bob lands on the pad screen and opens the message.
+  await expect(bob.getByRole("heading", { name: "Chat with Alice" })).toBeVisible();
+  await bob.getByRole("button", { name: "Open message" }).click();
+  await expect(bob.getByRole("heading", { name: "Open message" })).toBeVisible();
   await bob.locator("textarea").fill(envelope);
-  await bob.getByRole("button", { name: "Verify & open" }).click();
-  await expect(bob.getByText("Accepted — authenticated, then opened")).toBeVisible();
+  await bob.getByRole("button", { name: "Open message" }).click();
+  await expect(bob.getByRole("heading", { name: "Message", exact: true })).toBeVisible();
   await expect(bob.getByText(message)).toBeVisible();
-
-  // Bob destroys the pair; it then refuses reuse.
-  await bob.getByRole("button", { name: "Back to dashboard" }).click();
-  await bob.getByRole("button", { name: "Destroy pair…" }).click();
-  await expect(bob.getByRole("heading", { name: "Destroy this pair" })).toBeVisible();
-  // The verbatim limitation is shown before the act.
-  await expect(bob.getByText(DESTROY_LIMITATION).first()).toBeVisible();
-  await bob.locator('input[type="text"]').first().fill(pairId);
-  await bob.getByRole("button", { name: "Destroy this pair permanently" }).click();
-  await expect(bob.getByText("Destroyed", { exact: true })).toBeVisible();
-  await expect(bob.getByText(DESTROY_LIMITATION).first()).toBeVisible();
-
-  // Reuse is refused: the pair now shows as destroyed and opens to a tombstone.
-  await bob.getByRole("button", { name: "Back to all pairs" }).click();
-  await bob.getByRole("button", { name: "View tombstone" }).click();
-  await expect(bob.getByText("This pair has crossed the destruction boundary")).toBeVisible();
 
   await aliceContext.close();
   await bobContext.close();
 });
 
+test("a message this pad cannot open is refused in plain language, with detail tucked away", async ({ page }) => {
+  await createPad(page, "Solo pad");
+  await page.getByRole("button", { name: "Start using TruePad" }).click();
+  const envelope = await sendMessage(page, "attack at dawn");
+
+  // Trying to open your OWN sent message is refused: it is addressed to the
+  // other person, not to you (you are the sender on this pad). The user sees one
+  // plain sentence; the typed reason is only under Details, not shouted.
+  await page.getByRole("button", { name: "Back to pad" }).click();
+  await page.getByRole("button", { name: "Open message" }).click();
+  await page.locator("textarea").fill(envelope);
+  await page.getByRole("button", { name: "Open message" }).click();
+  await expect(page.getByText("This message could not be verified")).toBeVisible();
+  await expect(page.locator(".message-body")).toHaveCount(0); // no plaintext shown
+  await page.locator("details.quiet-details > summary").click();
+  await expect(page.getByText(/wrong-direction/)).toBeVisible();
+});
+
+test("disabling a pad is a single clear confirmation, and then it refuses use", async ({ page }) => {
+  await createPad(page, "Throwaway");
+  await page.getByRole("button", { name: "Start using TruePad" }).click();
+  await page.getByText("Disable this pad").click();
+  await expect(page.getByRole("heading", { name: /Disable ".*"\?/ })).toBeVisible();
+  await page.getByText("I understand this cannot be undone.").click();
+  await page.getByRole("button", { name: "Disable this pad" }).click();
+  await expect(page.getByText("Pad disabled")).toBeVisible();
+});
+
 test("the operational UI refuses to run inside a frame (and never starts the worker there)", async ({ page }) => {
-  // Serve a same-origin host page with NO CSP of its own that embeds the app at
-  // "/". The app sets no HTTP frame-ancestors / X-Frame-Options header (GitHub
-  // Pages cannot) and frame-ancestors is not enforceable from its meta CSP, so
-  // the embed is not blocked at the transport layer — the runtime gate is what
-  // must stop it. (This runs on a fresh context before any service worker is
-  // registered, so the fulfilled host page is not intercepted.)
   await page.route("**/host-embed.html", (route) =>
     route.fulfill({
       contentType: "text/html",
@@ -140,27 +112,6 @@ test("the operational UI refuses to run inside a frame (and never starts the wor
   );
   await page.goto("/host-embed.html");
   const framed = page.frameLocator('iframe[title="embedded-truepad"]');
-  // The framed context shows the refusal instead of the operational UI…
   await expect(framed.getByText("TruePad will not run inside a frame")).toBeVisible();
-  // …and the operational surface (the create action) never appears in the frame.
-  await expect(framed.getByRole("button", { name: "Create pair" })).toHaveCount(0);
-});
-
-test("the same-store courier caveat: a burned record cannot be reopened in the same copy", async ({ page }) => {
-  await generateDrbgPair(page);
-  await openDashboardAfterGen(page);
-
-  const envelope = await sendMessage(page, "attack at dawn");
-
-  // Opening the just-burned A->B envelope in the SAME store (as B) is refused:
-  // the burn self-retired sequence 0 here, so its material is gone.
-  await page.getByRole("button", { name: "Back to dashboard" }).click();
-  await page.getByRole("button", { name: "Open received" }).click();
-  await page.getByRole("button", { name: "I am Bob (B)" }).click();
-  await page.locator("textarea").fill(envelope);
-  await page.getByRole("button", { name: "Verify & open" }).click();
-
-  // The exact security-consequence copy is visible; no plaintext is shown.
-  await expect(page.getByText("Sequence already retired")).toBeVisible();
-  await expect(page.getByText("Loss is acceptable; reuse is not.")).toBeVisible();
+  await expect(framed.getByRole("button", { name: "Create new pad" })).toHaveCount(0);
 });

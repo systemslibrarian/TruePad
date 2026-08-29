@@ -1,360 +1,321 @@
 /* ============================================================================
- * TruePad 2 Browser Edition — Create pair (gen) & Import couriered pad
+ * TruePad 2 Browser Edition — Create a pad, and Add a shared pad
  * ----------------------------------------------------------------------------
- * Generation is the frozen path: operator source files (or, labelled honestly,
- * the browser DRBG), the exact L = 2·(E + 32·N) required length, no KDF. The
- * wizard states the required length, takes per-source origin declarations as
- * OPERATOR assertions (never auto-claimed), names the witness class with its
- * honest caveat verbatim, prints the verdict verbatim on success, and offers
- * the courier export framed as the pad it is. The second tab imports a pad a
- * peer couriered to this device.
+ * The whole ceremony a normal person needs: a name, a size, and where the
+ * randomness comes from — with sensible defaults chosen for them. The frozen
+ * knobs (E, N, record mode, rollback witness) live under "Advanced options" and
+ * are never required. Generation runs in the worker; the pad is written to this
+ * browser's private storage and never uploaded.
  * ========================================================================= */
 
 import { h, icon, mount } from "./dom.ts";
-import { callout, kv } from "./components.ts";
-import { exportPanel } from "./courier.ts";
-import { fmtBytes, fmtInt } from "./format.ts";
+import { callout } from "./components.ts";
+import { savePadFileButton } from "./courier.ts";
+import { writeRole } from "./role.ts";
 import type { Ctx } from "./context.ts";
-import type { BrowserWitnessClass, ManifestView, PairSummary } from "../engine/protocol.ts";
+import type { BrowserWitnessClass } from "../engine/protocol.ts";
 
 const AUTH_RECORD_BYTES = 32;
 const requiredL = (e: number, n: number): number => 2 * (e + AUTH_RECORD_BYTES * n);
 
-// Verbatim §4 caveat for the browser-local-witness kind.
-const LOCAL_WITNESS_CAVEAT =
-  "Rollback protection: browser-local only. This does not provide the same independent rollback witness guarantee as Operational TruePad.";
+type Preset = { key: "small" | "medium" | "large"; title: string; blurb: string; e: number; n: number };
+const PRESETS: Preset[] = [
+  { key: "small", title: "Small", blurb: "A few dozen messages.", e: 16384, n: 64 },
+  { key: "medium", title: "Medium", blurb: "Hundreds of messages.", e: 262144, n: 512 },
+  { key: "large", title: "Large", blurb: "Thousands of messages, room for files.", e: 4194304, n: 4096 }
+];
 
 function drbgBytes(length: number): Uint8Array {
   const out = new Uint8Array(length);
   const chunk = 65536;
-  for (let i = 0; i < length; i += chunk) {
-    crypto.getRandomValues(out.subarray(i, Math.min(i + chunk, length)));
-  }
+  for (let i = 0; i < length; i += chunk) crypto.getRandomValues(out.subarray(i, Math.min(i + chunk, length)));
   return out;
 }
 
-type SourceEntry = { file: File; origin: string };
+/* ---- Create ------------------------------------------------------------- */
 
-function renderManifest(manifest: ManifestView): HTMLElement {
-  return h(
-    "div",
-    { class: "stack" },
-    kv([
-      { term: "Pair id", value: manifest.pairId, mono: true },
-      { term: "Created", value: manifest.createdAt },
-      { term: "Encryption / direction", value: fmtBytes(manifest.encryptionBytesPerDirection) },
-      { term: "Auth records / direction", value: fmtInt(manifest.authRecordsPerDirection) },
-      { term: "Required source length", value: fmtBytes(manifest.requiredSourceLength) }
-    ]),
-    h(
-      "div",
-      { class: "source-list" },
-      ...manifest.sources.map((s) =>
-        h(
-          "div",
-          { class: "source-row" },
-          h("div", { class: "sr-head" }, h("span", { class: "sr-name", text: s.name }), h("span", { class: "sr-size", text: `${fmtInt(s.lengthBytes)} B · ${fmtInt(s.unusedBytes)} unused` })),
-          h("div", { class: "faint", text: `Declared origin: ${s.declaredOrigin}` })
-        )
-      )
-    )
-  );
-}
-
-/* ---- Generate tab ------------------------------------------------------- */
-
-function generateForm(ctx: Ctx): HTMLElement {
+export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
   const state = {
-    e: 4096,
-    n: 16,
+    sizeKey: "medium" as "small" | "medium" | "large" | "custom",
+    e: 262144,
+    n: 512,
+    source: "generate" as "generate" | "file",
     record: "variable" as "variable" | "fixed",
     f: 256,
-    sourceMode: "files" as "files" | "drbg",
     witness: "browser-local-witness" as BrowserWitnessClass,
-    sources: [] as SourceEntry[]
+    files: [] as { file: File; origin: string }[]
   };
 
-  const lDisplay = h("strong", { class: "mono" });
-  const filesSection = h("div", {});
-  const generateBtn = h("button", { class: "btn primary", type: "button", on: { click: onGenerate } }, icon("plus"), h("span", { text: "Generate pair" })) as HTMLButtonElement;
-  const validity = h("p", { class: "hint" });
+  const nameInput = h("input", { type: "text", placeholder: "e.g. Chat with Sam", value: "" }) as HTMLInputElement;
   const result = h("div", { class: "section" });
+  const customFields = h("div", {});
+  const externalFields = h("div", {});
+  const createBtn = h("button", { class: "btn primary big", type: "button", on: { click: onCreate } }, icon("plus"), h("span", { text: "Create pad" })) as HTMLButtonElement;
+  const validity = h("p", { class: "hint" });
 
   const eInput = h("input", { type: "number", min: 1, step: 1, value: state.e }) as HTMLInputElement;
   const nInput = h("input", { type: "number", min: 1, step: 1, value: state.n }) as HTMLInputElement;
-  const fInput = h("input", { type: "number", min: 1, step: 1, value: state.f }) as HTMLInputElement;
-  const fField = h("div", { class: "field" }, h("label", { text: "Fixed record size F (bytes)" }), fInput, h("span", { class: "hint", text: "Every record is padded to exactly F bytes, so ciphertext length leaks nothing about message length." }));
-
-  eInput.addEventListener("input", () => { state.e = Math.floor(Number(eInput.value)) || 0; if (state.sourceMode === "files") paintSources(); revalidate(); });
-  nInput.addEventListener("input", () => { state.n = Math.floor(Number(nInput.value)) || 0; if (state.sourceMode === "files") paintSources(); revalidate(); });
+  const fInput = h("input", { type: "number", min: 32, step: 16, value: state.f }) as HTMLInputElement;
+  eInput.addEventListener("input", () => { state.e = Math.floor(Number(eInput.value)) || 0; revalidate(); });
+  nInput.addEventListener("input", () => { state.n = Math.floor(Number(nInput.value)) || 0; revalidate(); });
   fInput.addEventListener("input", () => { state.f = Math.floor(Number(fInput.value)) || 0; revalidate(); });
 
-  function recordRadios(): HTMLElement {
-    const mk = (val: "variable" | "fixed", title: string, desc: string) =>
+  function sizeCards(): HTMLElement {
+    const card = (key: "small" | "medium" | "large" | "custom", title: string, blurb: string) =>
       h(
         "label",
-        { class: "radio-card" },
-        h("input", { type: "radio", name: "record", checked: state.record === val, on: { change: () => { state.record = val; fField.hidden = val !== "fixed"; revalidate(); } } }),
-        h("div", {}, h("div", { class: "rc-title", text: title }), h("div", { class: "rc-desc", text: desc }))
-      );
-    return h("div", { class: "radio-set" }, mk("variable", "Variable length", "Ciphertext length equals message length — the standard one-time-pad trade-off."), mk("fixed", "Fixed length (F)", "Pad every record to F bytes; hides message length at the cost of spending F bytes per send."));
-  }
-
-  function sourceModeRadios(): HTMLElement {
-    const mk = (val: "files" | "drbg", title: string, desc: string) =>
-      h(
-        "label",
-        { class: "radio-card" },
-        h("input", { type: "radio", name: "smode", checked: state.sourceMode === val, on: { change: () => { state.sourceMode = val; paintSources(); revalidate(); } } }),
-        h("div", {}, h("div", { class: "rc-title", text: title }), h("div", { class: "rc-desc", text: desc }))
-      );
-    return h("div", { class: "radio-set" }, mk("files", "Your own source files", "Serious use. One file is one source; several are XORed. Provenance is your assertion, not verified here — the browser cannot even see that two files alias one underlying file."), mk("drbg", "Browser DRBG (trial)", "Computational random material from the platform DRBG (crypto.getRandomValues) — not information-theoretic entropy. Good for trying the tool; not for material you must protect."));
-  }
-
-  function witnessRadios(): HTMLElement {
-    const mk = (val: BrowserWitnessClass, title: string, desc: HTMLElement) =>
-      h(
-        "label",
-        { class: "radio-card" },
-        h("input", { type: "radio", name: "witness", checked: state.witness === val, on: { change: () => { state.witness = val; } } }),
-        h("div", {}, h("div", { class: "rc-title", text: title }), h("div", { class: "rc-desc" }, desc))
+        { class: "choice-card" },
+        h("input", { type: "radio", name: "size", checked: state.sizeKey === key, on: { change: () => { state.sizeKey = key; applySize(); } } }),
+        h("div", {}, h("div", { class: "choice-title", text: title }), h("div", { class: "choice-desc", text: blurb }))
       );
     return h(
       "div",
-      { class: "radio-set" },
-      mk("browser-local-witness", "Browser-local witness", h("span", {}, h("span", { text: `${LOCAL_WITNESS_CAVEAT} ` }), h("span", { class: "faint", text: "Counters kept in a second, separately-cleared OPFS store (an append-only journal). It is only as independent as the two stores' clearing and backup are — both live under this origin, and “clear site data” removes both." }))),
-      mk("browser-none", "No witness", h("span", { text: "No rollback witness. Restoring a backup of this store would reset the per-record attempt budget; the residual is stated, not hidden." }))
+      { class: "choice-set" },
+      ...PRESETS.map((p) => card(p.key, p.title, p.blurb)),
+      card("custom", "Custom", "Choose the exact amounts yourself.")
+    );
+  }
+
+  function sourceCards(): HTMLElement {
+    const card = (key: "generate" | "file", title: string, blurb: string) =>
+      h(
+        "label",
+        { class: "choice-card" },
+        h("input", { type: "radio", name: "source", checked: state.source === key, on: { change: () => { state.source = key; paintExternal(); revalidate(); } } }),
+        h("div", {}, h("div", { class: "choice-title", text: title }), h("div", { class: "choice-desc", text: blurb }))
+      );
+    return h(
+      "div",
+      { class: "choice-set" },
+      card("generate", "Generate for me", "TruePad makes the randomness on your device."),
+      card("file", "Use my own random file", "Advanced: supply your own random bytes.")
     );
   }
 
   const fileInput = h("input", { type: "file", attrs: { multiple: "true" } }) as HTMLInputElement;
   fileInput.addEventListener("change", () => {
-    if (fileInput.files) {
-      for (const f of Array.from(fileInput.files)) state.sources.push({ file: f, origin: "" });
-    }
+    if (fileInput.files) for (const f of Array.from(fileInput.files)) state.files.push({ file: f, origin: "" });
     fileInput.value = "";
-    paintSources();
+    paintExternal();
     revalidate();
   });
 
-  function paintSources(): void {
-    if (state.sourceMode === "drbg") {
-      mount(
-        filesSection,
-        callout({ tone: "info", title: "Browser DRBG source", body: `One source of exactly ${fmtBytes(requiredL(state.e, state.n))} will be drawn from crypto.getRandomValues() and labelled as computational material — not information-theoretic entropy.` })
-      );
-      return;
-    }
-    const rows = state.sources.map((entry, index) => {
-      const L = requiredL(state.e, state.n);
+  function paintExternal(): void {
+    if (state.source !== "file") { mount(externalFields); return; }
+    const L = requiredL(state.e, state.n);
+    const rows = state.files.map((entry, index) => {
       const short = entry.file.size < L;
-      const originInput = h("input", { type: "text", value: entry.origin, placeholder: "e.g. Hardware RNG dump, 2025-08, device #3" }) as HTMLInputElement;
+      const originInput = h("input", { type: "text", value: entry.origin, placeholder: "Where did these bytes come from?" }) as HTMLInputElement;
       originInput.addEventListener("input", () => { entry.origin = originInput.value; revalidate(); });
       return h(
         "div",
         { class: "source-row" },
-        h(
-          "div",
-          { class: "sr-head" },
-          h("span", { class: "sr-name", text: entry.file.name }),
-          h("span", { class: "sr-size", text: short ? `${fmtInt(entry.file.size)} B — too short` : `${fmtInt(entry.file.size)} B · ${fmtInt(entry.file.size - L)} unused` })
-        ),
-        short ? h("div", { class: "co-reason", style: "color:var(--danger)", text: `needs at least ${fmtInt(L)} bytes` }) : null,
-        h("div", { class: "field", style: "margin:0" }, h("label", { text: "Declared origin (your assertion)" }), originInput),
-        h("div", {}, h("button", { class: "btn small ghost", type: "button", on: { click: () => { state.sources.splice(index, 1); paintSources(); revalidate(); } } }, h("span", { text: "Remove" })))
+        h("div", { class: "sr-head" }, h("span", { class: "sr-name", text: entry.file.name }), h("span", { class: "sr-size", text: short ? "too small" : "ok" })),
+        h("div", { class: "field", style: "margin:0" }, h("label", { text: "Where it came from (your note)" }), originInput),
+        h("button", { class: "btn small ghost", type: "button", on: { click: () => { state.files.splice(index, 1); paintExternal(); revalidate(); } } }, h("span", { text: "Remove" }))
       );
     });
     mount(
-      filesSection,
-      h("label", { class: "dropzone", on: { click: () => fileInput.click() } }, h("span", { text: "Choose source files… (each must be at least the required length)" })),
+      externalFields,
+      callout({ tone: "info", title: "About your own random file", body: "TruePad uses your bytes exactly as given — it does not check where they came from. Provenance is your responsibility; only truly random, secret material makes a secure pad." }),
+      h("label", { class: "dropzone", on: { click: () => fileInput.click() } }, h("span", { text: "Choose a random file…" })),
       fileInput,
-      state.sources.length > 0 ? h("div", { class: "source-list" }, ...rows) : h("p", { class: "hint", text: "No source files selected yet." })
+      state.files.length > 0 ? h("div", { class: "source-list" }, ...rows) : h("p", { class: "hint", text: "No file chosen yet." })
     );
   }
 
-  function currentValidity(): string | null {
-    if (!Number.isInteger(state.e) || state.e < 1) return "Encryption budget must be a positive whole number of bytes.";
-    if (!Number.isInteger(state.n) || state.n < 1) return "Auth-record budget must be a positive whole number.";
-    if (state.record === "fixed") {
-      if (!Number.isInteger(state.f) || state.f < 1) return "Fixed record size F must be a positive whole number.";
-      if (state.f > state.e) return "Fixed record size F cannot exceed the encryption budget.";
+  function advancedPanel(): HTMLElement {
+    const recordRow = h(
+      "div",
+      { class: "choice-set" },
+      h("label", { class: "choice-card" }, h("input", { type: "radio", name: "rec", checked: state.record === "variable", on: { change: () => { state.record = "variable"; fField.hidden = true; revalidate(); } } }), h("div", {}, h("div", { class: "choice-title", text: "Variable length" }), h("div", { class: "choice-desc", text: "Default. Ciphertext length equals message length." }))),
+      h("label", { class: "choice-card" }, h("input", { type: "radio", name: "rec", checked: state.record === "fixed", on: { change: () => { state.record = "fixed"; fField.hidden = false; revalidate(); } } }), h("div", {}, h("div", { class: "choice-title", text: "Fixed length" }), h("div", { class: "choice-desc", text: "Pad every message to a fixed size to hide its length." })))
+    );
+    const witnessToggle = h("label", { class: "row" }, h("input", { type: "checkbox", checked: state.witness === "browser-local-witness", on: { change: (e) => { state.witness = (e.target as HTMLInputElement).checked ? "browser-local-witness" : "browser-none"; } } }), h("span", { text: "Keep rollback protection on (recommended)" }));
+    return h(
+      "details",
+      { class: "card advanced-block" },
+      h("summary", { text: "Advanced options" }),
+      h(
+        "div",
+        { class: "stack", style: "margin-top:1rem" },
+        h("div", { class: "field" }, h("div", { class: "field-label", text: "Message packaging" }), recordRow, fField),
+        h("div", { class: "field" }, h("div", { class: "field-label", text: "Rollback protection" }), witnessToggle)
+      )
+    );
+  }
+
+  const fField = h("div", { class: "field" }, h("label", { text: "Fixed size (bytes)" }), fInput);
+  fField.hidden = true;
+
+  function applySize(): void {
+    if (state.sizeKey !== "custom") {
+      const preset = PRESETS.find((p) => p.key === state.sizeKey)!;
+      state.e = preset.e;
+      state.n = preset.n;
+      eInput.value = String(state.e);
+      nInput.value = String(state.n);
     }
-    const L = requiredL(state.e, state.n);
-    if (state.sourceMode === "files") {
-      if (state.sources.length === 0) return "Add at least one source file.";
-      for (const s of state.sources) {
-        if (s.file.size < L) return `“${s.file.name}” is shorter than the required ${fmtInt(L)} bytes.`;
-        if (s.origin.trim().length === 0) return `Declare an origin for “${s.file.name}”.`;
+    customFields.hidden = state.sizeKey !== "custom";
+    if (state.source === "file") paintExternal();
+    revalidate();
+  }
+
+  function problem(): string | null {
+    if (!Number.isInteger(state.e) || state.e < 1) return "Enter a positive capacity.";
+    if (!Number.isInteger(state.n) || state.n < 1) return "Enter a positive number of messages.";
+    if (state.record === "fixed" && (!Number.isInteger(state.f) || state.f < 32 || state.f > state.e)) return "Fixed size must be at least 32 and no more than the capacity.";
+    if (state.source === "file") {
+      const L = requiredL(state.e, state.n);
+      if (state.files.length === 0) return "Add at least one random file.";
+      for (const s of state.files) {
+        if (s.file.size < L) return `“${s.file.name}” is too small for this size.`;
+        if (s.origin.trim().length === 0) return `Add a note about where “${s.file.name}” came from.`;
       }
     }
     return null;
   }
 
   function revalidate(): void {
-    const L = requiredL(state.e, state.n);
-    lDisplay.textContent = `${fmtBytes(L)}`;
-    const problem = currentValidity();
-    generateBtn.disabled = problem !== null;
-    validity.textContent = problem ?? "Ready to generate. Both directions are created at once.";
+    const p = problem();
+    createBtn.disabled = p !== null;
+    validity.textContent = p ?? "";
   }
 
-  async function onGenerate(): Promise<void> {
+  async function onCreate(): Promise<void> {
     const L = requiredL(state.e, state.n);
     let sources: { name: string; declaredOrigin: string; bytes: Uint8Array }[];
-    if (state.sourceMode === "drbg") {
-      sources = [{ name: "browser-drbg", declaredOrigin: "Computational random material from the browser/platform DRBG (crypto.getRandomValues) — not information-theoretic entropy.", bytes: drbgBytes(L) }];
+    if (state.source === "generate") {
+      sources = [{ name: "device-random", declaredOrigin: "Generated by your device's cryptographic random generator (crypto.getRandomValues).", bytes: drbgBytes(L) }];
     } else {
       sources = [];
-      for (const s of state.sources) {
-        sources.push({ name: s.file.name, declaredOrigin: s.origin.trim(), bytes: new Uint8Array(await s.file.arrayBuffer()) });
-      }
+      for (const s of state.files) sources.push({ name: s.file.name, declaredOrigin: s.origin.trim(), bytes: new Uint8Array(await s.file.arrayBuffer()) });
     }
-    generateBtn.disabled = true;
+    createBtn.disabled = true;
+    validity.textContent = "Creating…";
     const reply = await ctx.engine.gen({
-      label: labelInput.value.trim(),
+      label: nameInput.value.trim() || "Untitled pad",
       sources,
       encryptionBytes: state.e,
       authRecords: state.n,
       recordBytes: state.record === "fixed" ? state.f : undefined,
       witnessClass: state.witness
     });
-    generateBtn.disabled = false;
+    createBtn.disabled = false;
+    validity.textContent = "";
     if (!reply.ok) {
-      mount(result, callout({ tone: "danger", title: "Generation refused", body: reply.message, reason: reply.kind === "refused" ? reply.reason : undefined }));
+      mount(result, callout({ tone: "danger", title: "Could not create the pad", body: reply.message }));
       return;
     }
-    const pair: PairSummary = reply.pair;
-    ctx.toast("Pair generated. Courier a copy to your peer.", "ok");
-    mount(
-      result,
-      callout({ tone: "ok", title: "Pair generated", body: h("div", { class: "stack-sm" }, h("p", { text: "Both directions were created and written to this browser's private storage." }), h("p", { class: "mono", text: pair.pairId })) }),
-      h("div", { class: "card stack" }, h("h3", { text: "Manifest" }), renderManifest(reply.manifest)),
-      h("div", { class: "card stack" }, h("h3", { text: "Uniformity verdict" }), callout({ tone: "info", title: "The combiner's verdict (verbatim)", body: reply.verdict })),
-      h("div", { class: "card stack" }, h("h3", { text: "Courier this pad to your peer" }), exportPanel(ctx, pair.pairId)),
-      h("div", { class: "btn-row", style: "margin-top:0.5rem" }, h("button", { class: "btn", type: "button", on: { click: () => ctx.navigate({ name: "pair", pairId: pair.pairId }) } }, h("span", { text: "Open dashboard" })))
-    );
+    // This device created the pad, so it is the first person (role A). The other
+    // person's imported copy takes role B — the UI never asks about this.
+    const pairId = reply.pair.pairId;
+    writeRole(pairId, "A");
+    renderCreated(ctx, result, pairId);
     result.scrollIntoView({ behavior: "auto", block: "start" });
   }
 
-  const labelInput = h("input", { type: "text", placeholder: "e.g. Bridge channel — Alice & Bob", value: "" }) as HTMLInputElement;
-
   const form = h(
     "div",
-    { class: "card stack" },
-    h("div", { class: "field" }, h("label", { text: "Label (non-secret, for you)" }), labelInput),
-    h(
-      "div",
-      { class: "field-grid" },
-      h("div", { class: "field" }, h("label", { text: "Encryption budget E (bytes / direction)" }), eInput),
-      h("div", { class: "field" }, h("label", { text: "Auth-record budget N (records / direction)" }), nInput)
-    ),
-    h("div", { class: "field" }, h("div", { class: "field-label", text: "Record mode" }), recordRadios(), fField),
-    h("p", { class: "muted" }, h("span", { text: "Required source length: " }), lDisplay, h("span", { text: " per source — that is L = 2·(E + 32·N)." })),
-    h("div", { class: "field" }, h("div", { class: "field-label", text: "Source material" }), sourceModeRadios(), filesSection),
-    h("div", { class: "field" }, h("div", { class: "field-label", text: "Rollback witness" }), witnessRadios()),
-    h("div", { class: "btn-row" }, generateBtn),
+    { class: "card stack create-form" },
+    h("div", { class: "field" }, h("label", { text: "Name this pad" }), nameInput),
+    h("div", { class: "field" }, h("div", { class: "field-label", text: "How much capacity?" }), sizeCards(), customFields),
+    h("div", { class: "field" }, h("div", { class: "field-label", text: "Randomness" }), sourceCards(), externalFields),
+    advancedPanel(),
+    h("div", { class: "btn-row" }, createBtn),
     validity
   );
 
-  fField.hidden = true;
-  paintSources();
-  revalidate();
+  mount(customFields, h("div", { class: "field-grid" }, h("div", { class: "field" }, h("label", { text: "Capacity (bytes)" }), eInput), h("div", { class: "field" }, h("label", { text: "Messages" }), nInput)));
+  customFields.hidden = true;
 
-  return h("div", { class: "stack" }, form, result);
+  mount(
+    root,
+    h("a", { class: "back-link", href: "#", on: { click: (e) => { e.preventDefault(); ctx.navigate({ name: "home" }); } } }, icon("back"), h("span", { text: "Home" })),
+    h("header", { class: "screen-head" }, h("h1", { text: "Create a pad" }), h("p", { class: "lede", text: "A pad lets two people send secure messages. You'll create it here, then share one copy with the other person." })),
+    form,
+    result
+  );
+  applySize();
+  paintExternal();
+  revalidate();
 }
 
-/* ---- Import tab --------------------------------------------------------- */
+function renderCreated(ctx: Ctx, root: HTMLElement, pairId: string): void {
+  mount(
+    root,
+    h(
+      "div",
+      { class: "card stack created-card" },
+      h("div", { class: "created-head" }, icon("check"), h("h2", { text: "Pad created" })),
+      h("p", { text: "To message another person, give them this pad file securely before you start. Hand it over in person, or send it on a channel only the two of you control." }),
+      h(
+        "div",
+        { class: "save-row" },
+        savePadFileButton(ctx, pairId, "Save pad for other person"),
+        h("p", { class: "save-note", text: "Keep this file secret. It contains the one-time pad." })
+      ),
+      h("div", { class: "btn-row", style: "margin-top:0.5rem" }, h("button", { class: "btn primary", type: "button", on: { click: () => ctx.navigate({ name: "pair", pairId }) } }, h("span", { text: "Start using TruePad" }), icon("chevron")))
+    )
+  );
+}
 
-function importForm(ctx: Ctx): HTMLElement {
-  const labelInput = h("input", { type: "text", placeholder: "A label for this imported pad" }) as HTMLInputElement;
+/* ---- Add a shared pad (import) ------------------------------------------ */
+
+export async function renderImport(ctx: Ctx, root: HTMLElement): Promise<void> {
+  const nameInput = h("input", { type: "text", placeholder: "e.g. Chat with Sam", value: "" }) as HTMLInputElement;
   const fileInput = h("input", { type: "file" }) as HTMLInputElement;
+  const fileNote = h("p", { class: "hint", text: "No pad file chosen." });
   const result = h("div", { class: "section" });
   let bytes: Uint8Array | null = null;
-  const fileNote = h("p", { class: "hint", text: "No bundle chosen." });
 
   fileInput.addEventListener("change", async () => {
     const f = fileInput.files && fileInput.files.length > 0 ? fileInput.files[0] : null;
     if (!f) return;
     bytes = new Uint8Array(await f.arrayBuffer());
-    fileNote.textContent = `${f.name} · ${fmtBytes(f.size)}`;
+    fileNote.textContent = f.name;
   });
 
-  const importBtn = h(
+  const addBtn = h(
     "button",
-    {
-      class: "btn primary",
-      type: "button",
-      on: {
-        click: async () => {
-          if (!bytes) {
-            mount(result, callout({ tone: "warn", title: "Choose a bundle file first", body: "Select the .pad.json your peer couriered to you." }));
-            return;
-          }
-          importBtn.setAttribute("disabled", "true");
-          // Transfer the selected bytes into the worker; the container is parsed
-          // and validated there (§4/§6). This UI never unpacks pad material. The
-          // transfer detaches our ArrayBuffer, so `bytes` is spent afterwards.
-          const container = bytes;
-          bytes = null;
-          const reply = await ctx.engine.importPair({ label: labelInput.value.trim(), container });
-          importBtn.removeAttribute("disabled");
-          if (!reply.ok) {
-            mount(result, callout({ tone: "danger", title: "Import refused", body: reply.message, reason: reply.kind === "refused" ? reply.reason : undefined }));
-            return;
-          }
-          ctx.toast("Pad imported.", "ok");
-          ctx.navigate({ name: "pair", pairId: reply.pair.pairId });
-        }
-      }
-    },
+    { class: "btn primary big", type: "button", on: { click: onAdd } },
     icon("download"),
-    h("span", { text: "Import pad" })
-  );
+    h("span", { text: "Add pad" })
+  ) as HTMLButtonElement;
 
-  return h(
-    "div",
-    { class: "stack" },
-    callout({ tone: "warn", title: "You are importing pad material", body: "This installs a couriered pad into this browser's private storage. Only import a bundle a peer delivered to you out of band; the file is the shared secret." }),
-    h(
-      "div",
-      { class: "card stack" },
-      h("div", { class: "field" }, h("label", { text: "Label" }), labelInput),
-      h("div", { class: "field" }, h("div", { class: "field-label", text: "Pad bundle file" }), fileInput, fileNote),
-      h("div", { class: "btn-row" }, importBtn)
-    ),
-    result
-  );
-}
-
-export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
-  let tab: "generate" | "import" = "generate";
-  const body = h("div", {});
-
-  function paintTabs(): HTMLElement {
-    const mk = (val: "generate" | "import", label: string) =>
-      h("button", { class: val === tab ? "btn small primary" : "btn small ghost", type: "button", aria: { pressed: String(val === tab) }, on: { click: () => { tab = val; paint(); } } }, h("span", { text: label }));
-    return h("div", { class: "btn-row" }, mk("generate", "Generate new"), mk("import", "Import couriered pad"));
+  async function onAdd(): Promise<void> {
+    if (!bytes) {
+      mount(result, callout({ tone: "warn", title: "Choose a pad file first", body: "Select the pad file the other person shared with you." }));
+      return;
+    }
+    addBtn.disabled = true;
+    const container = bytes;
+    bytes = null;
+    const reply = await ctx.engine.importPair({ label: nameInput.value.trim() || "Untitled pad", container });
+    addBtn.disabled = false;
+    if (!reply.ok) {
+      mount(result, callout({ tone: "danger", title: "Could not add this pad", body: reply.message }));
+      return;
+    }
+    // The other person created the pad (first person, role A); this imported
+    // copy is the second person, role B. Opposite roles, set automatically.
+    writeRole(reply.pair.pairId, "B");
+    ctx.toast("Pad added.", "ok");
+    ctx.navigate({ name: "pair", pairId: reply.pair.pairId });
   }
-
-  function paint(): void {
-    mount(body, tab === "generate" ? generateForm(ctx) : importForm(ctx));
-    mount(tabs, paintTabs());
-  }
-
-  const tabs = h("div", { style: "margin-bottom:1.25rem" });
 
   mount(
     root,
-    h("a", { class: "back-link", href: "#", on: { click: (e) => { e.preventDefault(); ctx.navigate({ name: "home" }); } } }, icon("back"), h("span", { text: "All pairs" })),
+    h("a", { class: "back-link", href: "#", on: { click: (e) => { e.preventDefault(); ctx.navigate({ name: "home" }); } } }, icon("back"), h("span", { text: "Home" })),
+    h("header", { class: "screen-head" }, h("h1", { text: "Add a shared pad" }), h("p", { class: "lede", text: "Add a pad file that another person created and gave you. Once it's added, the two of you can message each other." })),
     h(
-      "header",
-      { class: "screen-head" },
-      h("span", { class: "eyebrow", text: "New pair" }),
-      h("h1", { text: "Create a pair" }),
-      h("p", { class: "lede", text: "Generation builds both one-time pads at once from your source material. It runs entirely in the worker; the pad is written to this browser's private storage and never uploaded." })
+      "div",
+      { class: "card stack" },
+      callout({ tone: "warn", title: "Only add a pad file you were given directly", body: "The pad file is the shared secret. Add it only if it reached you from the other person over a channel you both control." }),
+      h("div", { class: "field" }, h("label", { text: "Name this pad" }), nameInput),
+      h("div", { class: "field" }, h("div", { class: "field-label", text: "Pad file" }), fileInput, fileNote),
+      h("div", { class: "btn-row" }, addBtn)
     ),
-    tabs,
-    body
+    result
   );
-  paint();
 }

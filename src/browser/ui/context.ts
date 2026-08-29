@@ -33,9 +33,10 @@ export interface Engine {
 export type Route =
   | { name: "home" }
   | { name: "create" }
+  | { name: "import" }
   | { name: "pair"; pairId: string }
-  | { name: "send"; pairId: string }
-  | { name: "open"; pairId: string }
+  | { name: "send"; pairId: string; mode: "message" | "file" }
+  | { name: "open"; pairId: string; mode: "message" | "file" }
   | { name: "destroy"; pairId: string }
   | { name: "security" };
 

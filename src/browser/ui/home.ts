@@ -1,103 +1,87 @@
 /* ============================================================================
- * TruePad 2 Browser Edition — Home / pair list
+ * TruePad 2 Browser Edition — Home (simple)
  * ----------------------------------------------------------------------------
- * Every pair the origin holds, as a card: operator label, Alice ↔ Bob, the two
- * directions' encryption and authentication meters, a Ready / Frozen /
- * Destroyed badge, and the way in. This is the only screen that lists pairs;
- * everything a pair can do lives on its dashboard.
+ * The front door for a non-technical person: what TruePad is in one line, the
+ * two things you can do (make a pad, or add one someone shared), and your pads
+ * as plain cards — a name, one "% remaining" number, a Ready/Warning word, and
+ * an Open button. No directional meters, no jargon; the depth lives behind
+ * "How it works" and "Advanced".
  * ========================================================================= */
 
 import { h, icon, mount } from "./dom.ts";
-import { badge, meterBar, screenHead } from "./components.ts";
-import { abbreviatePairId, authMeter, encryptionMeter, directionLabel, pairStatus } from "./format.ts";
+import { badge } from "./components.ts";
+import { padHealthPercent, padStatusWord } from "./format.ts";
 import type { Ctx } from "./context.ts";
-import type { DirectionMeters, PairSummary } from "../engine/protocol.ts";
-import type { PadDirection } from "../../core/pad.ts";
+import type { PairSummary } from "../engine/protocol.ts";
 
-function directionBlock(direction: PadDirection, m: DirectionMeters): HTMLElement {
-  return h(
-    "div",
-    { class: "stack-sm" },
-    h("div", { class: "pc-role" }, h("span", { text: directionLabel(direction) })),
-    meterBar(encryptionMeter(m)),
-    meterBar(authMeter(m))
-  );
-}
-
-function pairCard(ctx: Ctx, pair: PairSummary): HTMLElement {
-  const status = pairStatus(pair);
+function padCard(ctx: Ctx, pair: PairSummary): HTMLElement {
   const open = () => ctx.navigate({ name: "pair", pairId: pair.pairId });
-
-  const actions = pair.destroyed
-    ? [h("button", { class: "btn small ghost", type: "button", on: { click: open } }, h("span", { text: "View tombstone" }))]
-    : [
-        h("button", { class: "btn small primary", type: "button", on: { click: open } }, h("span", { text: "Open" }), icon("chevron"))
-      ];
-
+  if (pair.destroyed) {
+    return h(
+      "article",
+      { class: "card pad-card" },
+      h("div", { class: "pad-card-main" }, h("div", { class: "pad-card-name", text: pair.label || "Untitled pad" }), badge({ label: "Disabled", tone: "danger" })),
+      h("button", { class: "btn ghost", type: "button", on: { click: open } }, h("span", { text: "View" }))
+    );
+  }
+  const pct = padHealthPercent(pair);
+  const status = padStatusWord(pair);
   return h(
     "article",
-    { class: "card pair-card" },
+    { class: "card pad-card" },
     h(
       "div",
-      { class: "pc-head" },
+      { class: "pad-card-main" },
+      h("div", { class: "pad-card-name", text: pair.label || "Untitled pad" }),
       h(
         "div",
-        {},
-        h("div", { class: "pc-label", text: pair.label || "(unlabelled pair)" }),
-        h("div", { class: "pc-id mono", text: abbreviatePairId(pair.pairId), title: pair.pairId })
-      ),
-      badge(status)
+        { class: "pad-card-meta" },
+        badge(status),
+        h("span", { class: "pad-card-remaining", text: `${pct}% remaining` })
+      )
     ),
-    pair.destroyed
-      ? h("p", { class: "muted", text: "This pair crossed the destruction boundary. Its material is gone and it refuses every operation." })
-      : h(
-          "div",
-          { class: "stack" },
-          directionBlock("A->B", pair.meters["A->B"]),
-          directionBlock("B->A", pair.meters["B->A"])
-        ),
-    h("div", { class: "pc-actions" }, ...actions)
+    h("button", { class: "btn primary", type: "button", on: { click: open } }, h("span", { text: "Open" }), icon("chevron"))
   );
 }
 
 export async function renderHome(ctx: Ctx, root: HTMLElement): Promise<void> {
   const reply = await ctx.engine.listPairs();
+  const pairs = reply.ok ? reply.pairs : [];
 
-  const head = screenHead({
-    eyebrow: "Pairs on this device",
-    title: "Your pads",
-    lede: "Each pair is two one-time pads — one per direction — held in this browser's private storage. The pad never leaves the worker; only envelopes and non-secret meters reach this screen."
-  });
+  const hero = h(
+    "header",
+    { class: "home-hero" },
+    h("h1", { class: "home-title", text: "TruePad" }),
+    h("p", { class: "home-tagline", text: "Secure one-time-pad messaging" })
+  );
 
-  const createBtn = h(
-    "button",
-    { class: "btn primary", type: "button", on: { click: () => ctx.navigate({ name: "create" }) } },
-    icon("plus"),
-    h("span", { text: "Create pair" })
+  const primary = h(
+    "div",
+    { class: "home-actions" },
+    h("button", { class: "btn primary big", type: "button", on: { click: () => ctx.navigate({ name: "create" }) } }, icon("plus"), h("span", { text: "Create new pad" })),
+    h("button", { class: "btn big", type: "button", on: { click: () => ctx.navigate({ name: "import" }) } }, icon("download"), h("span", { text: "Add a shared pad" }))
+  );
+
+  const list = pairs.length === 0
+    ? h("p", { class: "home-empty muted", text: "No pads yet. Create one to send to someone, or add a pad they shared with you." })
+    : h(
+        "section",
+        { class: "home-pads" },
+        h("h2", { class: "home-pads-title", text: "Your pads" }),
+        h("div", { class: "pad-list" }, ...pairs.map((p) => padCard(ctx, p)))
+      );
+
+  const footer = h(
+    "nav",
+    { class: "home-links", aria: { label: "More" } },
+    h("a", { class: "home-link", href: "learn.html" }, h("span", { text: "How it works" }), icon("external")),
+    h("a", { class: "home-link", href: "#/advanced", on: { click: (e) => { e.preventDefault(); ctx.navigate({ name: "security" }); } } }, h("span", { text: "Advanced / Security details" }))
   );
 
   if (!reply.ok) {
-    mount(root, head, h("div", { class: "callout danger", role: "alert" }, h("div", { class: "co-title" }, h("span", { text: "Could not read the store" })), h("div", { class: "co-body", text: reply.message })));
+    mount(root, hero, primary, h("div", { class: "callout danger", role: "alert" }, h("div", { class: "co-title" }, h("span", { text: "Could not read your pads" })), h("div", { class: "co-body", text: reply.message })), footer);
     return;
   }
 
-  const pairs = reply.pairs;
-  const toolbar = h("div", { class: "spread", style: "margin-bottom:1.25rem" }, h("div", { class: "muted", text: `${pairs.length} pair${pairs.length === 1 ? "" : "s"}` }), createBtn);
-
-  if (pairs.length === 0) {
-    mount(
-      root,
-      head,
-      h(
-        "div",
-        { class: "empty" },
-        h("h2", { text: "No pairs yet" }),
-        h("p", { class: "muted", text: "Generate a pair from your own source material, or from the browser DRBG for a trial. Both directions are created at once; you courier one copy to your peer, out of band." }),
-        createBtn
-      )
-    );
-    return;
-  }
-
-  mount(root, head, toolbar, h("div", { class: "card-grid" }, ...pairs.map((p) => pairCard(ctx, p))));
+  mount(root, hero, primary, list, footer);
 }
