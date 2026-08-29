@@ -74,7 +74,14 @@ import {
   type Rollback,
   type SourceDeclaration
 } from "./store2.ts";
-import { advanceWitness, readWitnessCounters, witnessWritable, type WitnessCounters } from "./witness.ts";
+import {
+  advanceWitness,
+  readWitnessCounters,
+  witnessPathSafe,
+  witnessWritable,
+  WitnessLockError,
+  type WitnessCounters
+} from "./witness.ts";
 import { CEREMONY_ASSERTIONS, ceremonyCreate, ceremonyVerify } from "./ceremony.ts";
 
 export const BANNER2 =
@@ -395,6 +402,14 @@ function witnessPreflight(store: LoadedStore2): void {
     );
   }
   const path = rollback.config.path;
+  // Before anything else: the configured path must be one this build can both
+  // serialise and atomically replace. A symlinked witness, or one whose parent
+  // cannot be resolved, refuses FREE here rather than losing a record at the
+  // post-commit advance.
+  const safe = witnessPathSafe(path);
+  if (!safe.ok) {
+    throw new Refused2(safe.reason, safe.message);
+  }
   const result = readWitnessCounters(path, store.head.pairId, store.head.direction);
   if (!result.ok) {
     throw new Refused2(result.reason, result.message);
@@ -448,6 +463,14 @@ function witnessAdvance(store: LoadedStore2, counters: WitnessCounters): void {
   try {
     advanceWitness(rollback.config.path, store.head.pairId, store.head.direction, counters);
   } catch (error) {
+    if (error instanceof WitnessLockError && error.reason === "witness-locked") {
+      throw new Error(
+        `the durable state commit succeeded but the rollback witness at ${rollback.config.path} could not be ` +
+          `advanced: ${error.message} This record's pad material is already retired and is LOST; the output was ` +
+          "withheld and never released (FORMAT-V2.md §15.3, the same loss row as a crash between commit and emit). " +
+          "The witness itself is intact and no other pair's record was disturbed — that is what the lock bought."
+      );
+    }
     throw new Error(
       `the durable state commit succeeded but the rollback witness at ${rollback.config.path} could not be ` +
         `advanced (${(error as Error).message}). This record's pad material is already retired and is LOST; the ` +

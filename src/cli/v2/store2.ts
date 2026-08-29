@@ -72,7 +72,7 @@ import {
   statSync,
   writeSync
 } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { PadDirection } from "../../core/pad.ts";
 
 export const HEAD_FILE = "head.json";
@@ -481,6 +481,21 @@ function validateHead(raw: unknown): { head: HeadV2 } | { why: string } {
     }
     if (typeof raw.rollback.config.path !== "string" || raw.rollback.config.path.length === 0) {
       return { why: 'rollback.config.path must be a non-empty string for witnessClass "separate-state-file"' };
+    }
+    // §13/§15.2 specify an ABSOLUTE path, and gen enforces it — but a header
+    // is a file, and a hand-edited or hand-copied one could carry a relative
+    // path. A relative witness path resolves against the process's working
+    // directory, so the SAME header would name different witnesses from
+    // different directories: one authority silently becomes several, each
+    // ignorant of the others' high-water. Enforced at load, where every verb
+    // passes, rather than at gen alone.
+    if (!isAbsolute(raw.rollback.config.path)) {
+      return {
+        why:
+          `rollback.config.path must be an absolute path (§15.2); found ${JSON.stringify(raw.rollback.config.path)}. ` +
+          "A relative witness path resolves against the working directory, so one configured witness would become " +
+          "several unrelated ones"
+      };
     }
     rollback = { witnessClass: "separate-state-file", config: { path: raw.rollback.config.path } };
   } else if (witnessClass === "platform-monotonic" || witnessClass === "remote-monotonic") {

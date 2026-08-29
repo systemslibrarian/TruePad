@@ -931,6 +931,72 @@ hosts" exists in portable Node, so this is a **named operator assumption**
 — the operator keeps each pair directory on local storage reachable from
 one host — refused where detectable, assumed and stated where not.
 
+**The witness needs its own lock.** A witness file (§15.2) sits OUTSIDE every
+pair directory and **one file may witness several pairs**, so the pair lock
+above does not cover it: two pairs advancing at once hold two *different* pair
+locks while performing one read-modify-write over one shared file. Atomic
+replace (§10.1) prevents a torn file; it does not prevent a **lost update** —
+the elementwise maximum of §15.3 is applied only to the key being advanced,
+and every other pair's entry is carried over from the snapshot that writer
+read, which a concurrent writer may already have superseded. The result would
+regress a counter the witness had committed, which is precisely the condition
+§9.4/§15.3 exist to refuse.
+
+Normatively, therefore: the §15.3 ADVANCE read-modify-write is performed under
+a **second exclusive lock keyed on the witness file itself** — `O_CREAT|O_EXCL`
+on a sibling `<witness>.lock`, acquired before the witness is read for
+mutation and released only after the durable replace and directory fsync
+complete. The lock is keyed on the witness, never on the pair, the pairId, or
+the (pair, direction): the pairs sharing a witness are exactly the ones that
+must exclude one another. **Lock order is PAIR then WITNESS**, everywhere and
+without exception, and no pair lock is ever acquired while a witness lock is
+held. The PREFLIGHT read takes no witness lock — it reads only its own pair's
+entry, which no other writer may modify while this operation holds that pair's
+lock — so the lock is not held across a user-facing operation.
+
+The witness lock inherits the pair lock's stance verbatim: fail-closed on
+leftovers, **no pid-liveness guessing**. A contending updater waits briefly and
+then refuses rather than proceeding unserialised. The availability consequence
+is stated rather than hidden: a lock left behind by a crash or SIGKILL makes
+**every pair sharing that witness** refuse until an operator confirms nothing
+holds it and removes the file. That is the intended trade — a refusal is an
+availability failure, a lost update is a silent rollback of committed state.
+
+**One authority, one lock.** The lock is keyed on the witness's *canonical*
+path, not the string in the header: the parent directory is resolved
+(collapsing relative paths, `..`, and symlinked parents) and the basename is
+resolved to its on-disk spelling (collapsing case on a case-insensitive
+filesystem, where `realpath` alone returns the path as given and would
+otherwise hand two spellings of one file two different locks). A witness path
+whose final component is a **symbolic link** is refused: the atomic replace
+does not follow it, so the first advance would replace the link with a regular
+file and leave its target frozen — one authority silently becoming two. A
+basename ending in `.lock` is refused as reserved. A **relative** witness path
+is refused at load, since it would name different files from different working
+directories. What this does not establish is stated rather than invented: a
+**hard link**, or two bind mounts or network paths onto one file, are
+indistinguishable here, and two stores reaching one witness that way do not
+exclude each other. Identity is the platform's path identity and no more —
+never a hash of witness or pad content (N17).
+
+**Scope, and it is narrower than the pair lock's.** The exclusion is only as
+good as `O_EXCL` on the medium, which §10.2 scopes to local Linux ext4, with
+network filesystem semantics untested. The exposure is *worse* here than for a
+pad directory, because §15.2's argument for a witness is that it lives in a
+failure domain the pair's backup does not cover — which tempts an operator
+toward a network share or a sync client, exactly where `O_EXCL` may admit two
+writers. Normatively, therefore: **a witness shared by more than one pair MUST
+live on a local filesystem on one host**; "independent failure domain" means a
+different device or backup regime, not a network share. This build cannot
+detect the violation and does not pretend to.
+
+This adds no field to the witness (§15.2's entry shape is frozen: the lock is a
+separate file, never a generation counter, epoch, or writer id inside the
+witness) and **no durability claim**: the witness lock rides on the same
+`O_EXCL` and fsync primitives as everything else here, under the same §10.2
+scope, and on a witness medium chosen to be independent it is no better
+verified than that.
+
 ---
 
 ## 11. Test vectors
@@ -1562,7 +1628,13 @@ but refuses nothing (it is read-only). Two touchpoints:
   passes — distinct from a non-empty shape-violating file, which is
   `witness-inconsistent`.
 - **ADVANCE**, at two points, each writing the witness durably (monotone,
-  elementwise maximum on all three counters). (1) **At the reservation**
+  elementwise maximum on all three counters). The monotone property is over
+  the WHOLE file, not merely the key being advanced: no successful advance may
+  lower or remove any counter of any other entry. Because one file may witness
+  several pairs, whose pair locks do not exclude one another, that read-modify-
+  write is serialised under the witness's own exclusive lock — **§10.3**, which
+  also fixes the PAIR-then-WITNESS lock order and the stale-lock stance.
+  (1) **At the reservation**
   (O3), before verification: record the incremented `attemptsReserved`.
   This is what makes a rolled-back attempt budget detectable — the
   witness learns of each guess as it is reserved, not only when the

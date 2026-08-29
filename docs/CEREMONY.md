@@ -382,6 +382,43 @@ Stated here rather than distributed as caveats:
   can forget its reference to pad material; it cannot prove that flash
   forgot the bytes. Physical destruction of the medium is the only step
   that removes the §1.3 at-rest exposure.
+- **A shared witness serialises, and a stale witness lock stops every pair
+  that shares it.** One witness file may record several pairs (§15.2), and
+  advancing it is a read-modify-write of the whole file — so it is performed
+  under an exclusive lock on the witness itself (FORMAT-V2.md §10.3), taken
+  after the pair lock and never before it. Two pairs advancing at once wait for
+  each other, briefly, instead of one silently erasing the other's committed
+  high-water. The cost is stated rather than hidden: a crash or SIGKILL leaves
+  the lock file behind, and because nothing here guesses whether the recorded
+  pid is still alive — pids are reused, and a wrong guess would admit the second
+  writer the lock exists to exclude — **every pair sharing that witness refuses
+  until an operator confirms no TruePad operation is running against it and
+  removes `<witness>.lock`**. That is operator recovery, and it is deliberate: a
+  refusal is an availability failure the operator can see, a lost update is a
+  silent rollback of committed state that nothing would ever report. Removing
+  the lock while a real operation holds it re-opens the defect, so confirm
+  first.
+- **The witness path must be one file, named absolutely.** A relative path
+  resolves against the working directory, so one header would name different
+  witnesses from different directories; it is refused at load. A witness path
+  whose final component is a **symbolic link** is refused too: the atomic
+  replace does not follow the link, so the first advance would replace the link
+  with a regular file and leave its target frozen — one authority silently
+  becoming two. Identity is the platform's path identity (the canonical parent
+  directory) and no more: a **hard link**, or two bind mounts or network paths
+  onto one file, are indistinguishable, and two stores reaching one witness that
+  way would not exclude each other. Keep one witness file, at one real path.
+  A basename ending in `.lock` is refused as reserved, because it is the name
+  given to a neighbouring witness's lock file.
+- **A shared witness must be on local storage, on one host.** The serialisation
+  rests on `O_CREAT|O_EXCL`, which FORMAT-V2.md §10.2 scopes to local Linux
+  ext4 and does not trust on network filesystems. The temptation runs the wrong
+  way here: the reason to put a witness in an independent failure domain is
+  precisely the reason an operator reaches for a network share or a sync
+  client — and there `O_EXCL` may admit two writers, so two pairs could again
+  erase each other's high-water. "Independent failure domain" means a different
+  device or backup regime, **not** a network share. Nothing here can detect the
+  violation; it is an operator assumption, stated.
 - **Whole-directory restore regresses a store** (§9.4): an operator
   restoring a medium from a backup regresses the header and journal
   together, and the tooling cannot tell — unless a rollback witness (§15,

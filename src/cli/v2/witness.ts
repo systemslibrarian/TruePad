@@ -28,6 +28,23 @@
  *     the §12 durable commit and before the emit; on a throw the record's
  *     material is already retired and the output MUST be withheld (§15.3).
  *
+ * Concurrency scope, and its boundary (§10.3). One witness may record several
+ * pairs, and each pair has its own pad lock — so the shared file's
+ * read-modify-write is serialised by a SECOND exclusive lock keyed on the
+ * witness itself (`<canonical witness>.lock`, O_EXCL, fail-closed, no
+ * pid-liveness guessing). Lock order is PAIR then WITNESS, never the reverse.
+ *
+ * That exclusion is only as good as `O_EXCL` on the medium, and lock.ts already
+ * scopes that: local Linux ext4 only; network filesystem semantics untested.
+ * The exposure is WORSE here than for a pad lock, because §15.2's whole
+ * argument for a witness is that it lives in a failure domain the pair's backup
+ * does not cover — which tempts an operator toward a network share or a sync
+ * client, exactly where O_EXCL may admit two writers. So, normatively: a
+ * witness shared by more than one pair MUST live on a local filesystem on one
+ * host. "Independent failure domain" means a different device or backup regime,
+ * not a network share. This build cannot detect the violation and does not
+ * pretend to — it states it.
+ *
  * Strength caveat, stated rather than flattened (§15.2): a separate state
  * file is an independent backup/failure domain, NOT intrinsically monotonic —
  * a second device can be restored too, and an emptied witness knows nothing.
@@ -36,8 +53,22 @@
  * path lives in a domain the pair's backup does not cover.
  * ========================================================================= */
 
-import { accessSync, closeSync, constants, fsyncSync, openSync, readFileSync, renameSync, writeSync } from "node:fs";
-import { dirname } from "node:path";
+import {
+  accessSync,
+  readdirSync,
+  closeSync,
+  constants,
+  fsyncSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  unlinkSync,
+  writeSync
+} from "node:fs";
+import { hostname } from "node:os";
+import { basename, dirname, join } from "node:path";
 import type { PadDirection } from "../../core/pad.ts";
 
 // The three monotone quantities a witness records. The two high-waters catch
@@ -163,6 +194,266 @@ function writeWitnessDurably(path: string, data: string): void {
   fsyncDir(dir);
 }
 
+/* ---- the witness authority lock (§15.3) ----------------------------------- */
+
+// ONE witness file may hold entries for SEVERAL pairs (§15.2), and each pair
+// has its own pad lock — so two pairs advancing at once take two DIFFERENT pad
+// locks and nothing serialises the shared file. Atomic replace stops a torn
+// file; it does not stop a lost update:
+//
+//   witness {A:10, B:20}
+//   P1 (pair A) reads {A:10,B:20} -> computes {A:11,B:20}
+//   P2 (pair B) reads {A:10,B:20} -> computes {A:10,B:21}
+//   P1 writes {A:11,B:20}; P2 writes {A:10,B:21}   <- A REGRESSED 11 -> 10
+//
+// The elementwise max is applied only to the key being advanced; every other
+// pair's entry rides along from a snapshot that may already be stale. A
+// regressed witness is exactly what §9.4/§15.3 exist to refuse, so this is a
+// correctness defect, not a tidiness one — and it must be serialised at the
+// WITNESS, not at the pair.
+//
+// The lock is a sibling O_EXCL file beside the witness, on the same
+// fail-closed discipline as src/cli/lock.ts: no pid-liveness guessing, because
+// pids are reused and guessing turns a stale lock into a silent double-writer.
+const LOCK_SUFFIX = ".lock";
+// A witness RMW is a read, a small JSON rewrite, and two fsyncs — milliseconds.
+// Waiting briefly lets honest concurrent pairs through; refusing after the
+// bound keeps a stale lock from hanging an operator forever.
+const LOCK_WAIT_MS = 5_000;
+const LOCK_POLL_MS = 20;
+
+export type WitnessLockRefusal = { reason: "witness-locked" | "witness-path-unsafe"; message: string };
+
+// Thrown so truepad2.ts can map it onto the §15.3 rows rather than a bare I/O
+// error; carries the typed reason the CLI already speaks.
+export class WitnessLockError extends Error {
+  readonly reason: WitnessLockRefusal["reason"];
+  constructor(refusal: WitnessLockRefusal) {
+    super(refusal.message);
+    this.name = "WitnessLockError";
+    this.reason = refusal.reason;
+  }
+}
+
+function sleepSync(ms: number): void {
+  // A synchronous pause without a busy spin. The witness path is entirely
+  // synchronous (§10's write ordering depends on it), so this cannot await.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// The lock must name the witness AUTHORITY, not the spelling of a path. Two
+// stores may reach one witness through different text: relative vs absolute,
+// through "..", through a symlinked parent directory, or — on a
+// case-insensitive filesystem — through different case. `realpathSync` on the
+// parent collapses the first three; it does NOT collapse case, because it
+// returns the path as given, so the on-disk spelling of the basename is
+// resolved separately (see canonicalBasename). One authority, one lock.
+//
+// A symlinked witness is refused outright: the advance's
+// renameSync(tmp, path) REPLACES THE SYMLINK with a regular file rather than
+// writing through it, so the authority silently forks in two and a second
+// store still pointing at the target would witness nothing. That cannot be
+// locked around.
+//
+// A basename ending in `.lock` is refused too: it would collide with the lock
+// file of a witness configured one directory entry away, and a release could
+// then unlink a live authority's lock.
+//
+// What this does NOT establish, stated rather than invented: a hard link is
+// indistinguishable from the original by realpath, and two bind mounts or two
+// network paths onto one file can canonicalise differently. Identity here is
+// the platform's path identity and no more — never a hash of witness or pad
+// content (N17).
+// The on-disk spelling of `name` inside `realDir`. On a case-INSENSITIVE
+// filesystem — APFS, the default on this project's own dev platform, and most
+// SMB mounts — `/w/Witness.json` and `/w/witness.json` are ONE file, but
+// `realpathSync` returns the path AS GIVEN rather than the canonical case, so
+// canonicalising with realpath alone would still hand those two spellings two
+// different locks and the lost update would reproduce in full.
+//
+// An EXACT directory entry always wins, which keeps this correct on a
+// case-SENSITIVE filesystem where the two names really are two files. Only when
+// no exact entry exists is a unique case-insensitive match substituted — the
+// signature of a case-insensitive filesystem resolving a differently-spelled
+// path to one file.
+function canonicalBasename(realDir: string, name: string): string {
+  let entries: string[];
+  try {
+    entries = readdirSync(realDir);
+  } catch {
+    return name; // unreadable directory: the caller fails closed downstream
+  }
+  if (entries.includes(name)) {
+    return name;
+  }
+  const lowered = name.toLowerCase();
+  const matches = entries.filter((entry) => entry.toLowerCase() === lowered);
+  return matches.length === 1 ? matches[0] : name;
+}
+
+export function witnessLockPath(path: string): string {
+  let link = false;
+  try {
+    link = lstatSync(path).isSymbolicLink();
+  } catch {
+    /* absent is not this function's business — the caller fails closed on it */
+  }
+  if (link) {
+    throw new WitnessLockError({
+      reason: "witness-path-unsafe",
+      message:
+        `the rollback witness at ${path} is a symbolic link. The witness is advanced by an atomic replace, which ` +
+        "REPLACES a symlink with a regular file instead of writing through it — the authority would silently " +
+        "split in two, and a store configured with the link's target would stop being witnessed at all. Point " +
+        "--witness-path at the real file. Nothing was written."
+    });
+  }
+  let realDir: string;
+  try {
+    realDir = realpathSync(dirname(path));
+  } catch (error) {
+    throw new WitnessLockError({
+      reason: "witness-path-unsafe",
+      message:
+        `the rollback witness at ${path} has no reachable parent directory (${(error as Error).message}). The ` +
+        "advance is serialised by a lock file beside the witness, and the directory holding both must resolve. " +
+        "Nothing was written."
+    });
+  }
+  const base = canonicalBasename(realDir, basename(path));
+  if (base.endsWith(LOCK_SUFFIX)) {
+    throw new WitnessLockError({
+      reason: "witness-path-unsafe",
+      message:
+        `the rollback witness at ${path} ends in "${LOCK_SUFFIX}", which is reserved: it is the name this build ` +
+        "gives the lock file of a witness one directory entry away, so the two would collide and a release could " +
+        "unlink a live authority's lock. Rename the witness. Nothing was written."
+    });
+  }
+  return join(realDir, `${base}${LOCK_SUFFIX}`);
+}
+
+// LOCK ORDER, global and without exception: PAD LOCK, then WITNESS LOCK.
+// Every witness touchpoint runs inside truepad2.ts's withPair(), which holds
+// the pad lock; this module never acquires a pad lock, so the order cannot
+// invert and there is no cycle to deadlock on. One witness lock is held at a
+// time, for one read-modify-write, and is released before returning — a future
+// multi-pair verb must NOT hold one witness lock across two pad locks.
+//
+// Exclusive, cross-process, fail-closed. Waits briefly for an honest peer, then
+// refuses and names the file to remove. It does NOT decide whether the recorded
+// pid is alive: pids are reused, and a wrong guess here would let two writers
+// into the read-modify-write this lock exists to prevent.
+export function acquireWitnessLock(path: string, held?: { pairId: string; direction: PadDirection }): () => void {
+  const lockPath = witnessLockPath(path);
+  // The documented recovery is "confirm nothing holds this witness, then remove
+  // the file", and the holder is BY CONSTRUCTION a different pair in a
+  // different directory — that is the whole reason this lock exists. A body of
+  // only "pid N" gives the operator nothing to confirm against, so it names the
+  // host and the (pair, direction) too. All non-secret: pair ids and directions
+  // already travel in headers, manifests and refusals, and none of it is
+  // derived from pad material (N17).
+  const body =
+    `pid ${process.pid} host ${hostname()}` +
+    (held ? ` pair ${held.pairId}/${held.direction}` : "") +
+    ` since ${new Date().toISOString()}`;
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    let fd: number;
+    try {
+      fd = openSync(lockPath, "wx", FILE_MODE);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") {
+        // EACCES / EROFS / ENOENT on the directory: the medium cannot host the
+        // lock, so the advance cannot be serialised — refuse rather than run
+        // the read-modify-write unserialised.
+        throw new WitnessLockError({
+          reason: "witness-path-unsafe",
+          message:
+            `the rollback witness at ${path} cannot be serialised: its lock file ${lockPath} could not be created ` +
+            `(${(error as Error).message}). The advance is a read-modify-write of a file that may witness several ` +
+            "pairs, so it is never performed without the lock. Nothing was written."
+        });
+      }
+      if (Date.now() >= deadline) {
+        let holder = "(unreadable)";
+        try {
+          holder = readFileSync(lockPath, "utf8").trim();
+        } catch {
+          /* keep the placeholder */
+        }
+        throw new WitnessLockError({
+          reason: "witness-locked",
+          message:
+            `the rollback witness at ${path} is locked by ${holder} and did not free within ${LOCK_WAIT_MS}ms. One ` +
+            "witness may record several pairs, so its update is serialised across processes. If that process is " +
+            `gone (a crash or SIGKILL leaves this file behind), confirm no other TruePad operation is running ` +
+            `against this witness and remove ${lockPath}. This is deliberately not decided by inspecting the ` +
+            "recorded pid: pids are reused, and guessing wrong would admit the second writer this lock exists to " +
+            "exclude. Nothing was written."
+        });
+      }
+      sleepSync(LOCK_POLL_MS);
+      continue;
+    }
+    try {
+      writeSync(fd, body);
+    } finally {
+      closeSync(fd);
+    }
+    let released = false;
+    const release = (): void => {
+      if (released) {
+        return;
+      }
+      released = true;
+      process.off("exit", release);
+      try {
+        // Unlink only a lock this process still owns. If an operator cleared a
+        // lock believed stale and a third process then acquired it, the file at
+        // this path is someone else's exclusion — deleting it would admit the
+        // second writer the whole mechanism exists to exclude.
+        if (readFileSync(lockPath, "utf8") === body) {
+          unlinkSync(lockPath);
+        }
+      } catch {
+        /* already gone, or unreadable — leave it rather than risk a stranger's */
+      }
+    };
+    // A hard exit between acquire and release would otherwise strand the lock
+    // and take every pair sharing this witness down with it.
+    process.once("exit", release);
+    return release;
+  }
+}
+
+/* ---- test-only interleaving hold ------------------------------------------ */
+
+// TEST ONLY, and never set by the CLI: `TRUEPAD_TEST_WITNESS_HOLD_MS` makes a
+// process pause INSIDE the witness read-modify-write, immediately after the
+// read, with the snapshot in hand.
+//
+// It exists because the defect this module had is a RACE, and a race shown by
+// "spawn many and hope" is not shown at all. With a hold, the overlap is
+// arranged rather than hoped for: start one process holding, start a second
+// while the first still holds, and the two read-modify-writes are guaranteed
+// to overlap. Unserialised, the second process reads the pre-first snapshot
+// and its write erases the first's advance — the lost update, deterministically.
+// Serialised, the second blocks on the witness lock, reads the FIRST's result,
+// and both maxima survive.
+//
+// So this is also a permanent regression test: delete the lock and the
+// concurrency suite fails, rather than passing on a lucky schedule.
+function testHoldMs(): number {
+  const raw = process.env.TRUEPAD_TEST_WITNESS_HOLD_MS;
+  if (raw === undefined || raw === "") {
+    return 0;
+  }
+  const ms = Number(raw);
+  return Number.isSafeInteger(ms) && ms > 0 && ms <= 60_000 ? ms : 0;
+}
+
 /* ---- the two touchpoints -------------------------------------------------- */
 
 // PREFLIGHT read (§15.3). Fail closed: a witness that cannot be read is
@@ -224,6 +515,28 @@ export function readWitnessCounters(path: string, pairId: string, direction: Pad
   return { ok: true, counters: entry ?? null };
 }
 
+// Preflight PATH-SAFETY probe. The advance replaces the witness by rename, and
+// rename does NOT follow a symlink on the final component: a symlinked witness
+// would be REPLACED by a regular file, leaving the link's target frozen at its
+// old counters while a second store configured with that target went on
+// believing it was witnessed. One authority silently becomes two, which is the
+// same class of defect as the lost update — so it is refused, and refused HERE,
+// at preflight, where the refusal is free and nothing has been committed.
+//
+// Serialisation depends on the same path resolving to one lock, so this also
+// surfaces an unresolvable parent directory before anything is consumed.
+export function witnessPathSafe(path: string): { ok: true } | { ok: false; reason: "witness-unreachable"; message: string } {
+  try {
+    witnessLockPath(path);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof WitnessLockError) {
+      return { ok: false, reason: "witness-unreachable", message: error.message };
+    }
+    throw error;
+  }
+}
+
 // Preflight writability probe. The advance write (§15.3) atomic-replaces
 // through a temp file in the witness DIRECTORY, so a witness whose FILE reads
 // but whose DIRECTORY cannot be written (a read-only mount, a write-protected
@@ -260,16 +573,43 @@ export function witnessWritable(path: string): { ok: true } | { ok: false; reaso
 // fsync + directory fsync (§10). Throws on any I/O failure — the caller has
 // already committed the store durably, so a throw is the §15.3 loss row.
 export function advanceWitness(path: string, pairId: string, direction: PadDirection, counters: WitnessCounters): void {
+  // SERIALISE FIRST. The read below and the replace at the end are one
+  // read-modify-write over a file that may witness several pairs; the pad lock
+  // the caller holds is per-pair and does not cover it. Everything from here to
+  // the directory fsync runs under the witness authority's own lock.
+  const release = acquireWitnessLock(path, { pairId, direction });
+  try {
+    advanceLocked(path, pairId, direction, counters);
+  } finally {
+    release();
+  }
+}
+
+function advanceLocked(path: string, pairId: string, direction: PadDirection, counters: WitnessCounters): void {
   let file: WitnessFile;
-  let existing: string | null;
+  let existing: string;
   try {
     existing = readFileSync(path, "utf8");
-  } catch {
-    existing = null; // absent: a fresh witness, created below
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      // The configured witness VANISHED between preflight and advance. Do not
+      // recreate it: a fresh file here would silently erase every other pair's
+      // record — the same regression this lock exists to prevent, dressed as a
+      // bootstrap. §15.2's fresh witness is a file the operator PROVISIONED
+      // (present, empty), never one that disappeared. Fail closed.
+      throw new Error(
+        `the rollback witness at ${path} no longer exists — it was readable at preflight and is gone now. It is ` +
+          "NOT recreated: a fresh witness here would erase the recorded high-water of every other pair sharing " +
+          "this file. Restore the witness medium, then inspect the pair before using it again."
+      );
+    }
+    throw error;
   }
-  if (existing === null || existing.trim() === "") {
-    // Absent, or the present-but-empty bootstrap file the operator provisions
-    // (see readWitnessCounters): either way, start a fresh witness to build on.
+  if (existing.trim() === "") {
+    // The present-but-empty bootstrap file the operator provisions (see
+    // readWitnessCounters). A fresh witness to build on — this is the ONLY
+    // path that starts one, and it is not broadened.
     file = { formatVersion: 2, witness: {} };
   } else {
     const validated = validateWitnessFile(JSON.parse(existing));
@@ -278,6 +618,13 @@ export function advanceWitness(path: string, pairId: string, direction: PadDirec
     }
     file = validated.file;
   }
+  // TEST-ONLY: hold here with the snapshot in hand, so the suite can guarantee
+  // two read-modify-writes overlap. Never set by the CLI.
+  const hold = testHoldMs();
+  if (hold > 0) {
+    sleepSync(hold);
+  }
+
   const key = keyOf(pairId, direction);
   const prev = file.witness[key] ?? { encryptionNextOffset: 0, authenticationNextSequence: 0, attemptsReserved: 0 };
   // MONOTONE on every field: elementwise maximum, so an out-of-order or
