@@ -71,7 +71,7 @@ const DURABILITY_ROWS: [string, string][] = [
   ["“Clear site data”", "Destroys the OPFS store — every pad for this origin is gone. This is deletion you perform, not a protocol event."],
   ["Profile backup / restore", "Restoring a backed-up profile regresses the store exactly like the CLI's whole-directory restore; the rollback residual applies."],
   ["Private / Incognito window", "OPFS is typically ephemeral there — the store vanishes when the session ends."],
-  ["Two profiles / two devices", "Each is an independent copy of whatever was couriered to it. TruePad never syncs them."]
+  ["Two profiles / two devices", "Each is an independent copy of whatever pad file was carried to it. TruePad never syncs them."]
 ];
 
 function durabilityPanel(persistent: boolean | null, persistBtn: HTMLElement | null): HTMLElement {
@@ -87,7 +87,13 @@ function durabilityPanel(persistent: boolean | null, persistBtn: HTMLElement | n
     ),
     persistent === true
       ? callout({ tone: "ok", title: "Storage is marked persistent", body: "This origin has been granted persistent storage; the browser will not evict it under storage pressure. It is still not power-loss durable." })
-      : null,
+      : persistent === false
+        ? callout({
+            tone: "warn",
+            title: "This origin's storage is best-effort",
+            body: "The browser may evict it — a private window, or storage pressure. Keep a saved copy of the pad file, and request persistence below."
+          })
+        : null,
     h(
       "div",
       { class: "matrix-wrap" },
@@ -242,13 +248,6 @@ export async function renderSecurity(ctx: Ctx, root: HTMLElement): Promise<void>
         h("h1", { text: "Security & limitations" }),
         h("p", { class: "lede", text: "The same frozen protocol as the command-line tool, on a browser substrate that is honestly weaker in named places. Nothing here is rounded up. You never need this page to use TruePad." })
       ),
-      ctx.storagePersistent === false
-        ? callout({
-            tone: "warn",
-            title: "This context may not retain storage",
-            body: "The browser reports this origin's storage as best-effort, which can mean a private window or an evictable store. Request persistence under Storage below, and keep a couriered copy."
-          })
-        : null,
       guaranteesPanel(),
       sourcePanel(),
       durabilityPanel(ctx.storagePersistent, persistBtn),

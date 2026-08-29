@@ -106,6 +106,25 @@ export function callout(opts: CalloutOpts): HTMLElement {
   );
 }
 
+/* A one-line status the user can act on, with the technical reason one click
+   away. Never a page-top banner: a wall of caveats above the whole app teaches
+   people to scroll past warnings. */
+export function notice(opts: { text: string; linkText?: string; onLink?: () => void }): HTMLElement {
+  return h(
+    "p",
+    { class: "notice" },
+    icon("info"),
+    h("span", { text: opts.text }),
+    opts.onLink
+      ? h(
+          "a",
+          { href: "#", on: { click: (ev) => { ev.preventDefault(); opts.onLink?.(); } } },
+          h("span", { text: opts.linkText ?? "Details" })
+        )
+      : null
+  );
+}
+
 /* ---- layout ------------------------------------------------------------- */
 
 export type KvItem = { term: string; value: Child; mono?: boolean; title?: string };

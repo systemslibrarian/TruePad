@@ -198,11 +198,11 @@ function buildShell(navigate: (r: Route) => void): void {
   themeBtn = h("button", { class: "icon-btn", type: "button", on: { click: () => toggleTheme(themeBtn) } });
   // Three audiences, kept apart: Use (the brand -> home), Learn (the exhibit),
   // and Advanced (security details & expert config). No security jargon up top.
-  const navHow = h("a", { href: "learn.html" }, h("span", { text: "How it works" }), icon("external"));
+  const navHow = h("a", { href: "learn.html" }, h("span", { text: "Learn" }));
   const navAdvanced = h("a", {
     href: "#/advanced",
     on: { click: (e) => { e.preventDefault(); navigate({ name: "security" }); } }
-  }, h("span", { text: "Advanced" }));
+  }, h("span", { text: "Security" }));
 
   const brand = h(
     "a",
@@ -230,9 +230,9 @@ function buildShell(navigate: (r: Route) => void): void {
     h(
       "div",
       { class: "footer-inner" },
-      h("span", { text: "Runs entirely in your browser. No backend, no accounts, no sync." }),
+      h("span", { text: "Runs entirely on your device. No account, nothing uploaded." }),
       h("span", { class: "topbar-spacer" }),
-      h("a", { href: "learn.html" }, h("span", { text: "How it works" })),
+      h("a", { href: "learn.html" }, h("span", { text: "Learn" })),
       h("a", { href: "https://github.com/systemslibrarian/TruePad", attrs: { target: "_blank", rel: "noreferrer noopener" } }, h("span", { text: "Source" }))
     )
   );

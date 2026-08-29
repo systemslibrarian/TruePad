@@ -2,15 +2,18 @@
  * TruePad Browser Edition — Pad screen (the main application)
  * ----------------------------------------------------------------------------
  * One pad, four plain actions: send/open a message, send/open a file. A status
- * word and one capacity bar say how the pad is doing. The frozen internals —
- * both directions, meters, record mode, rollback state, skip — live under "Pad
- * details", and the global claims ledger under Advanced. Nothing directional
- * appears above the fold, and the one irreversible action is the quietest
- * thing on the screen.
+ * word and one capacity bar say how the pad is doing.
+ *
+ * Three levels, kept apart. Level 1 is the four actions. Level 2 is "Pad
+ * details": who the other person is, how many messages are left, and how to
+ * save the pad file again — nothing an ordinary person needs a glossary for.
+ * Level 3 is "Advanced": directions, budgets, record policy, skip. Nothing
+ * from Level 3 is allowed to surface above it, and the one irreversible action
+ * is the quietest thing on the screen.
  * ========================================================================= */
 
 import { h, icon, mount } from "./dom.ts";
-import { actionTile, backLink, badge, callout, capacityBar, kv, meterBar, panel, rowLink } from "./components.ts";
+import { actionTile, backLink, badge, callout, capacityBar, kv, meterBar, notice, panel, rowLink } from "./components.ts";
 import {
   authMeter,
   directionLabel,
@@ -21,7 +24,7 @@ import {
   padStatusWord,
   recordModeLabel
 } from "./format.ts";
-import { readRole } from "./role.ts";
+import { readRole, sendDirection } from "./role.ts";
 import { PARTY_NAME } from "./format.ts";
 import { savePadFileButton } from "./courier.ts";
 import type { Ctx } from "./context.ts";
@@ -202,28 +205,36 @@ export async function renderDashboard(ctx: Ctx, root: HTMLElement, pairId: strin
     actionTile({ label: "Open file", icon: "file-down", disabled: unusable, onClick: () => goOpen("file") })
   );
 
+  // Level 2: plain facts, no glossary required.
+  const sendable = pair.meters[sendDirection(role)].maxRemainingSends;
   const details = panel(
     "Pad details",
     {},
     kv([
-      { term: "You are", value: PARTY_NAME[role] },
-      { term: "The other person", value: PARTY_NAME[role === "A" ? "B" : "A"] },
-      { term: "Created", value: pair.createdAt ? new Date(pair.createdAt).toLocaleString() : "—" }
+      { term: "Messages you can still send", value: fmtInt(sendable) },
+      { term: "Created", value: pair.createdAt ? new Date(pair.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : "—" }
     ]),
     h(
       "div",
       { class: "save-row" },
       h("div", { class: "btn-row" }, savePadFileButton(ctx, pairId, "Save the pad file again")),
-      h("p", { class: "save-note", text: "Keep this file secret. It is the one-time pad itself." })
+      h("p", { class: "save-note", text: "Keep this file secret — anyone who has it can read these messages." })
     ),
-    h("div", { class: "card-grid" }, directionCard(pair.meters["A->B"]), directionCard(pair.meters["B->A"])),
-    panel("Skip messages (rarely needed)", {}, retirePanel(ctx, pairId))
+    // Level 3 begins here and nowhere above it.
+    panel(
+      "Advanced",
+      {},
+      h("p", { class: "faint", text: "Implementation detail. You never need this to use TruePad." }),
+      kv([{ term: "You are", value: PARTY_NAME[role] }, { term: "The other person", value: PARTY_NAME[role === "A" ? "B" : "A"] }]),
+      h("div", { class: "card-grid" }, directionCard(pair.meters["A->B"]), directionCard(pair.meters["B->A"])),
+      panel("Skip messages (rarely needed)", {}, retirePanel(ctx, pairId))
+    )
   );
 
   const secondary = h(
     "nav",
     { class: "stack-sm", aria: { label: "Pad settings" } },
-    rowLink({ text: "Security & limitations", icon: "shield", onClick: () => ctx.navigate({ name: "security" }) }),
+    rowLink({ text: "Security", icon: "shield", onClick: () => ctx.navigate({ name: "security" }) }),
     h("hr", { class: "divider" }),
     rowLink({ text: "Disable this pad", icon: "trash", danger: true, onClick: () => ctx.navigate({ name: "destroy", pairId }) })
   );
@@ -237,6 +248,12 @@ export async function renderDashboard(ctx: Ctx, root: HTMLElement, pairId: strin
       header,
       frozenBanner(ctx, pairId, pair),
       actions,
+      ctx.storagePersistent === false
+        ? notice({
+            text: "Keep a backup of your pad file. This browser may clear its storage.",
+            onLink: () => ctx.navigate({ name: "security" })
+          })
+        : null,
       details,
       secondary
     )

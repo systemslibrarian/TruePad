@@ -1,11 +1,15 @@
 /* ============================================================================
  * TruePad Browser Edition — Home
  * ----------------------------------------------------------------------------
- * The front door. What TruePad is in one sentence, the two things you can do,
- * and your pads as a real list — a name, a Ready/Warning word, and how much of
- * the pad is left, on a bar rather than as a floating percentage. A first-time
- * visitor also gets the three-step relationship, once, and small. No jargon
- * reaches this screen: A->B, sequence numbers and pair ids live under Advanced.
+ * Level 1. Someone who uses Signal and knows nothing about cryptography has to
+ * know what to click within five seconds, so there is almost nothing to read:
+ * what it is in one line, and one obvious button. How it works is a link, not a
+ * lecture. Once pads exist the marketing gets out of the way and the list is
+ * the screen, the way a messaging app behaves.
+ *
+ * No word on this screen names an internal concept. "Pad", not pair. "Pad
+ * file", not courier bundle. "The other person", not peer. Directions, records,
+ * witnesses and storage internals are Level 3 and live under Security.
  * ========================================================================= */
 
 import { brandMark, h, icon, mount } from "./dom.ts";
@@ -15,38 +19,39 @@ import type { Ctx } from "./context.ts";
 import type { PairSummary } from "../engine/protocol.ts";
 
 const STEPS: [string, string][] = [
-  ["Create a pad", "It is generated on your device and never uploaded."],
-  ["Share it once", "Give the pad file to the other person over a channel you both control."],
-  ["Message privately", "From then on you can each send and open messages."]
+  ["Create a pad", "It is made on your device and never uploaded."],
+  ["Give a copy to one person", "Hand them the pad file, or send it somewhere only the two of you can reach."],
+  ["Message each other", "From then on you can both send and open messages."]
 ];
 
-function stepList(): HTMLElement {
+// Collapsed by default: it costs nothing when closed and answers the only
+// question a first-time visitor actually has.
+function howItWorks(): HTMLElement {
   return h(
-    "ol",
-    { class: "steps" },
-    ...STEPS.map(([title, body], i) =>
-      h(
-        "li",
-        { class: "step" },
-        h("span", { class: "step-num", text: String(i + 1) }),
-        h("span", { class: "step-text" }, h("b", { text: title }), h("span", { text: body }))
+    "details",
+    { class: "quiet-details how" },
+    h("summary", { text: "How does this work?" }),
+    h(
+      "ol",
+      { class: "steps" },
+      ...STEPS.map(([title, body], i) =>
+        h(
+          "li",
+          { class: "step" },
+          h("span", { class: "step-num", text: String(i + 1) }),
+          h("span", { class: "step-text" }, h("b", { text: title }), h("span", { text: body }))
+        )
       )
     )
   );
 }
 
-function padCard(ctx: Ctx, pair: PairSummary): HTMLElement {
+function padRow(ctx: Ctx, pair: PairSummary): HTMLElement {
   const open = () => ctx.navigate({ name: "pair", pairId: pair.pairId });
   const name = pair.label || "Untitled pad";
-
   const meta = pair.destroyed
     ? h("div", { class: "pad-card-meta" }, badge({ label: "Disabled", tone: "danger" }))
-    : h(
-        "div",
-        { class: "pad-card-meta" },
-        badge(padStatusWord(pair)),
-        capacityBar(padHealthPercent(pair))
-      );
+    : h("div", { class: "pad-card-meta" }, badge(padStatusWord(pair)), capacityBar(padHealthPercent(pair)));
 
   return h(
     "button",
@@ -60,64 +65,73 @@ export async function renderHome(ctx: Ctx, root: HTMLElement): Promise<void> {
   const reply = await ctx.engine.listPairs();
   const pairs = reply.ok ? reply.pairs : [];
 
-  const hero = h(
-    "header",
-    { class: "hero" },
-    brandMark(),
-    h("h1", { class: "hero-title", text: "TruePad" }),
-    h("p", { class: "hero-sub", text: "Messages only you and one other person can read." })
-  );
-
-  const actions = h(
-    "div",
-    { class: "home-actions" },
+  const createBtn = (variant: string) =>
     h(
       "button",
-      { class: "btn primary lg", type: "button", on: { click: () => ctx.navigate({ name: "create" }) } },
+      { class: `btn ${variant}`, type: "button", on: { click: () => ctx.navigate({ name: "create" }) } },
       icon("plus"),
-      h("span", { text: "Create new pad" })
-    ),
+      h("span", { text: "Create a pad" })
+    );
+
+  const addLink = h(
+    "button",
+    { class: "btn ghost", type: "button", on: { click: () => ctx.navigate({ name: "import" }) } },
+    h("span", { text: "Add a shared pad" })
+  );
+
+  if (!reply.ok) {
+    mount(
+      root,
+      h(
+        "div",
+        { class: "screen landing" },
+        h("header", { class: "hero" }, brandMark(), h("h1", { class: "hero-title", text: "TruePad" })),
+        callout({ tone: "danger", title: "Could not read your pads", body: reply.message })
+      )
+    );
+    return;
+  }
+
+  // --- nothing yet: one line, one button, one quiet alternative ----------
+  if (pairs.length === 0) {
+    mount(
+      root,
+      h(
+        "div",
+        { class: "screen landing" },
+        h(
+          "header",
+          { class: "hero" },
+          brandMark(),
+          h("h1", { class: "hero-title", text: "TruePad" }),
+          h("p", { class: "hero-sub", text: "Private messages using a pad you share with one other person." })
+        ),
+        h("div", { class: "hero-cta" }, createBtn("primary lg")),
+        h(
+          "p",
+          { class: "hero-alt" },
+          h("span", { text: "Already have a pad file? " }),
+          h(
+            "button",
+            { class: "linklike", type: "button", on: { click: () => ctx.navigate({ name: "import" }) } },
+            h("span", { text: "Add a shared pad" })
+          )
+        ),
+        howItWorks()
+      )
+    );
+    return;
+  }
+
+  // --- pads exist: the list is the screen -------------------------------
+  mount(
+    root,
     h(
-      "button",
-      { class: "btn lg", type: "button", on: { click: () => ctx.navigate({ name: "import" }) } },
-      icon("upload"),
-      h("span", { text: "Add a shared pad" })
+      "div",
+      { class: "screen" },
+      h("h1", { class: "list-title", text: "Your pads" }),
+      h("div", { class: "pad-list" }, ...pairs.map((p) => padRow(ctx, p))),
+      h("div", { class: "btn-row list-actions" }, createBtn("primary"), addLink)
     )
   );
-
-  const body =
-    pairs.length === 0
-      ? stepList()
-      : h(
-          "section",
-          {},
-          h("div", { class: "pads-head" }, h("h2", { class: "pads-title", text: "Your pads" })),
-          h("div", { class: "pad-list" }, ...pairs.map((p) => padCard(ctx, p)))
-        );
-
-  const links = h(
-    "nav",
-    { class: "home-links", aria: { label: "More" } },
-    h("a", { class: "home-link", href: "learn.html" }, h("span", { text: "How it works" }), icon("external")),
-    h(
-      "a",
-      {
-        class: "home-link",
-        href: "#/advanced",
-        on: { click: (e) => { e.preventDefault(); ctx.navigate({ name: "security" }); } }
-      },
-      h("span", { text: "Security & limitations" })
-    )
-  );
-
-  const screen = h(
-    "div",
-    { class: "screen landing" },
-    hero,
-    actions,
-    !reply.ok ? callout({ tone: "danger", title: "Could not read your pads", body: reply.message }) : body,
-    links
-  );
-
-  mount(root, screen);
 }

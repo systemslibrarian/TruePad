@@ -13,7 +13,7 @@ import { expect, test, type Page } from "@playwright/test";
 // fast test), press Create. Returns nothing — the pad screen is next.
 async function createPad(page: Page, name: string): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: "Create new pad" }).click();
+  await page.getByRole("button", { name: "Create a pad" }).click();
   await expect(page.getByRole("heading", { name: "Create a pad" })).toBeVisible();
   await page.getByPlaceholder("e.g. Chat with Sam").fill(name);
   await page.getByText("Small", { exact: true }).click(); // keep the test pad tiny
@@ -113,5 +113,5 @@ test("the operational UI refuses to run inside a frame (and never starts the wor
   await page.goto("/host-embed.html");
   const framed = page.frameLocator('iframe[title="embedded-truepad"]');
   await expect(framed.getByText("TruePad will not run inside a frame")).toBeVisible();
-  await expect(framed.getByRole("button", { name: "Create new pad" })).toHaveCount(0);
+  await expect(framed.getByRole("button", { name: "Create a pad" })).toHaveCount(0);
 });

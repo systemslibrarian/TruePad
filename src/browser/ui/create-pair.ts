@@ -163,7 +163,7 @@ export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
       callout({
         tone: "info",
         title: "TruePad uses your bytes exactly as given",
-        body: "It does not check where they came from. Provenance is your responsibility; only truly random, secret material makes a secure pad."
+        body: "It does not check where they came from — that is your responsibility. Only truly random, secret material makes a secure pad."
       }),
       picker.el,
       state.files.length > 0 ? h("div", { class: "source-list" }, ...rows) : null
