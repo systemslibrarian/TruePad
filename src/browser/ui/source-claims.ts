@@ -23,9 +23,20 @@
  *       proven, verified, or information-theoretic.
  *     · External ceremony — operator-supplied material. ELIGIBLE for the
  *       information-theoretic premise, and only eligible: the premise is true
- *       if and only if the operator's physical assumptions are actually true,
- *       which no software can determine. The claim therefore stays
- *       conditional, in every sentence, forever.
+ *       if and only if the operator's assumptions are actually true, which no
+ *       software can determine. The claim therefore stays conditional, in
+ *       every sentence, forever.
+ *
+ * That premise has five limbs, and only the first is about uniformity. At
+ * least one selected source must be uniformly random, secret from the
+ * adversary, independent of all the other selected sources TAKEN TOGETHER,
+ * independent of the messages the pad will protect, and used for this pad and
+ * no other — before or after. UNIFORMITY IS NOT SECRECY: the frozen verdict
+ * speaks only to the first limb, EXTERNAL_BEYOND_UNIFORMITY carries the rest,
+ * and the two must never be fused. Propagating secrecy or key-message
+ * independence into the verdict would make it claim something an XOR does not
+ * establish; dropping them from the ceremony would let uniformity read as
+ * secrecy. Both are the same error in opposite directions.
  *
  * The operator declaration below is an OPERATOR DECLARATION and never a
  * verification result. Nothing here may ever read "verified", "certified",
@@ -66,11 +77,30 @@ export const CEREMONY_CONDITIONAL =
 // and this sentence is what stops the ceremony from reading as one.
 export const CEREMONY_CANNOT_VERIFY = "TruePad cannot determine whether a file is truly random.";
 
-// The source that carries the guarantee must also be SECRET from the
-// adversary — a uniform, independent, but published source proves nothing.
+// Secrecy is a SEPARATE requirement from uniformity, and the true statement is
+// the weaker one: material an adversary can obtain may still be XORed in — the
+// combiner has no content-dependent rejection and is no weaker for it — it just
+// cannot be the source that CARRIES the guarantee. Requirement first, because
+// this is the body of a callout whose title is already a warning.
+//
+// "can obtain" rather than "knows": material that is public but unnoticed is
+// still disqualified from carrying the guarantee, and the weaker verb would
+// quietly readmit it.
+//
+// The permission is conditional on INDEPENDENCE, which is what the last
+// sentence is for. A source an adversary CHOSE, having seen or guessed yours,
+// can cancel yours out — that is a broken premise, not a harmless extra input.
 export const CEREMONY_SECRECY =
-  "The source that carries the guarantee must also be secret. Material an adversary can obtain is not a source, " +
-  "however uniform it is.";
+  "At least one combined source must also be secret from the adversary. Material an adversary can obtain may " +
+  "still be XORed in — however uniform it is, it cannot be the source that carries the guarantee. Never combine " +
+  "material an adversary supplied, chose, or could have influenced: a source chosen against yours can cancel it.";
+
+// The plain-language gloss for the message-independence clause. The checkbox
+// states that condition; without this an operator cannot evaluate it, and a
+// condition you cannot evaluate is not one you can honestly declare.
+export const CEREMONY_MESSAGE_INDEPENDENCE =
+  "Never derive source material from the messages you plan to send. A file that came from the same events as " +
+  "your message is not independent of it.";
 
 // The browser's own identity limitation, stated rather than invented around.
 export const CEREMONY_ALIASING =
@@ -89,10 +119,26 @@ export function ceremonyLengthRule(required: number): string {
 /* ---- the operator declaration ------------------------------------------- */
 
 // An OPERATOR DECLARATION. Not a test, not a result, not a verification.
+//
+// It enumerates the FULL source premise rather than the uniformity half.
+// Key-message independence is a hypothesis of Shannon's theorem in its own
+// right — material derived from, or chosen after seeing, the traffic it will
+// encrypt breaks perfect secrecy however uniform it looks — so it is named
+// here instead of left implicit.
+//
+// Three things are deliberate. "about this pad's material" scopes the claim to
+// the SOURCE: secrecy end-to-end additionally needs the delivery ceremony, and
+// this sentence must not be readable as the whole premise. "all the other
+// selected sources taken together" is JOINT independence, not pairwise —
+// S3 = S1 XOR S2 is pairwise independent of each and cancels the XOR to zero.
+// And it is four sentences, because a five-limbed premise in one sentence with
+// two levels of "and" is a weaker control than three readable ones.
 export const OPERATOR_DECLARATION =
-  "I understand that TruePad cannot verify physical randomness. For an information-theoretic one-time-pad claim, " +
-  "at least one selected source must actually be uniformly random, secret, independent of the other combined " +
-  "sources, and never previously used.";
+  "I understand that TruePad cannot verify physical randomness. For an information-theoretic one-time-pad " +
+  "secrecy claim about this pad's material, at least one selected source must actually be uniformly random, " +
+  "secret from the adversary, and never previously used. That source must also be independent of all the other " +
+  "selected sources taken together, and of the messages this pad will protect. It must never be used to make " +
+  "another pad.";
 
 /* ---- the created pad's source claim ------------------------------------- */
 
@@ -102,9 +148,41 @@ export const EXTERNAL_NOT_VERIFIED = "TruePad did not verify that assumption.";
 
 // Conditional, and it stays conditional. Never "perfect secrecy achieved",
 // never "true OTP verified", never "information-theoretic security confirmed".
+//
+// Its consequent is deliberately NARROW — the randomness REQUIREMENT, one
+// hypothesis of the theorem, not the theorem — because its antecedent is the
+// uniformity premise, which is exactly what the frozen verdict rendered above
+// it speaks to. Widening the antecedent to the full premise would pull the
+// consequent toward an end-to-end secrecy claim that delivery has not earned,
+// so the rest of the premise is carried by the NEXT constant instead. That
+// division of labour is what keeps both sentences true.
 export const EXTERNAL_CONDITIONAL =
   "If that source assumption is true, the pad material satisfies the information-theoretic randomness requirement " +
   "of a one-time pad.";
+
+// Uniformity is ONE hypothesis of the theorem, not the theorem, and the verdict
+// above only ever claimed that one. This carries the rest of the premise
+// WITHOUT presupposing it holds: "would also require" is subjunctive, and it
+// closes on the same negation as EXTERNAL_NOT_VERIFIED, so no line in this
+// panel stops being conditional.
+//
+// These clauses must NEVER be propagated into CEREMONY_CONDITIONAL or the
+// engine verdict. The uniformity of an XOR genuinely does not require secrecy
+// or independence from the plaintext; that asymmetry is correct, and fusing
+// the two would make the frozen verdict claim something it does not.
+//
+// Single use is stated — it is a real hypothesis — but attributed honestly.
+// It is guarantee C, machinery TruePad DOES enforce (counters, journal,
+// attempt reservation, witness, retirement), so handing it to the operator as
+// an unmet condition would understate the product exactly as badly as claiming
+// the others would overstate it. What that machinery cannot reach is a copy of
+// the pad file made outside TruePad, so that boundary is named too.
+export const EXTERNAL_BEYOND_UNIFORMITY =
+  "The verdict above is about uniformity only. An information-theoretic secrecy claim would also require that " +
+  "the source material you supplied was, and stays, secret from the adversary; that it was independent of the " +
+  "messages this pad will protect, in either direction; that no other pad is ever derived from it; and that this " +
+  "pad material is used exactly once. TruePad's counters enforce that last condition within TruePad — a copy of " +
+  "the pad file made outside it is beyond them. TruePad established none of the rest; that is what you declared.";
 
 /* ---- pad delivery ------------------------------------------------------- */
 

@@ -218,10 +218,20 @@ and, under Advanced options, the **True OTP ceremony**, where operator-supplied
 material becomes *eligible* for the information-theoretic premise if and only
 if the operator's physical assumptions are actually true. That path states
 "TruePad cannot determine whether a file is truly random." and requires an
-explicit operator **declaration**, which is a declaration and not a
-verification result: nothing about it is persisted, and Store Format v2 has no
-`trueRandom` / `informationTheoretic` / `verifiedRandom` field for it to be
-written to. See `docs/PRODUCT-CLAIMS.md` ("The two source classes") and
+explicit operator **declaration** of the full source premise — uniform, secret
+from the adversary, jointly independent of the other sources *and* of the
+messages the pad will protect, and used for this pad and no other — which is a
+declaration and not a verification result: nothing about it is persisted, and
+Store Format v2 has no `trueRandom` / `informationTheoretic` / `verifiedRandom`
+field for it to be written to.
+
+**Uniformity is not secrecy.** The frozen verdict speaks only to the first of
+those hypotheses; the created pad says so, and carries the rest separately. Two
+precisions the ceremony is careful about: material an adversary can obtain
+**may still be XORed in** — it just cannot be the source that *carries* the
+guarantee — and independence must be joint, not pairwise, so material an
+adversary supplied or influenced is never a safe extra input. See
+`docs/PRODUCT-CLAIMS.md` ("The two source classes") and
 `docs/BROWSER-SECURITY.md` §6.1.
 
 **The availability price, stated plainly.** Every in-window forgery attempt

@@ -123,10 +123,18 @@ weaker or stronger with the source.
 Why multi-source XOR is worth doing: if **at least one** declared source is
 genuinely uniform, secret, and independent of the others, the XOR is exactly
 uniform over the full space — the other sources need not be perfect, and an
-adversary who fully controls all *but* that one learns nothing. The source
-carrying the guarantee must also be **secret**; a uniform but published source
-guarantees nothing. TruePad cannot determine whether that premise is
-physically true.
+adversary who fully controls all *but* that one learns nothing.
+
+Two precisions on that. First, **secrecy is a separate requirement from
+uniformity**: material an adversary can obtain **may still be XORed in** — the
+combiner has no content-dependent rejection and is no weaker for it — it simply
+cannot be the source that *carries* the guarantee. At least one combined source
+must also be secret from the adversary. Second, the permission holds only under
+**independence**, and independence must be **joint, not pairwise**: `S3 = S1 ⊕
+S2` is independent of each of `S1` and `S2` separately yet cancels the XOR to
+zero. Material an adversary supplied, chose, or could have influenced is
+therefore never a safe extra input — a source chosen against yours can cancel
+it. TruePad cannot determine whether any of that is true.
 
 ### The source claim is NOT the same on both paths
 
@@ -150,6 +158,24 @@ The external path's statement stays **conditional** in every rendering:
 > assumption is true, the pad material satisfies the information-theoretic
 > randomness requirement of a one-time pad.
 
+and it then says, in the same panel, what that verdict is **not**:
+
+> *"The verdict above is about uniformity only. An information-theoretic
+> secrecy claim would also require that the source material you supplied was,
+> and stays, secret from the adversary; that it was independent of the messages
+> this pad will protect, in either direction; that no other pad is ever derived
+> from it; and that this pad material is used exactly once. TruePad's counters
+> enforce that last condition within TruePad — a copy of the pad file made
+> outside it is beyond them. TruePad established none of the rest; that is what
+> you declared."*
+
+**Uniformity is not secrecy.** The frozen verdict speaks to the first hypothesis
+only; the sentence above carries the rest of the premise. The two must never be
+fused: propagating secrecy or key-message independence *into* the verdict would
+make it claim something an XOR does not establish, and dropping them from the
+ceremony would let uniformity read as secrecy. Both are the same error in
+opposite directions.
+
 It is never rendered as "perfect secrecy achieved", "true OTP verified", or
 "information-theoretic security confirmed".
 
@@ -159,9 +185,11 @@ The external path requires an explicit **operator declaration** before the pad
 can be created:
 
 > *"I understand that TruePad cannot verify physical randomness. For an
-> information-theoretic one-time-pad claim, at least one selected source must
-> actually be uniformly random, secret, independent of the other combined
-> sources, and never previously used."*
+> information-theoretic one-time-pad secrecy claim about this pad's material, at
+> least one selected source must actually be uniformly random, secret from the
+> adversary, and never previously used. That source must also be independent of
+> all the other selected sources taken together, and of the messages this pad
+> will protect. It must never be used to make another pad."*
 
 This is an **OPERATOR declaration and never a verification result**. Ticking it
 changes nothing about the material, and nothing about it is written to the
@@ -192,8 +220,13 @@ those away. **A true physical source strengthens neither the authentication
 construction nor the operational reuse-prevention machinery**, and neither of
 those proves anything about the source's physics. Three separate guarantees:
 
-- **A — OTP secrecy**: XOR under genuinely uniform, independent, secret,
-  one-use material. Source is OPERATOR; combiner is PROTOCOL.
+- **A — OTP secrecy**: XOR under material that is genuinely uniform, secret
+  from the adversary, jointly independent of the other combined sources,
+  **independent of the messages it protects**, and used once. Key-message
+  independence is a hypothesis of the theorem in its own right: pad material
+  derived from — or chosen after seeing — the traffic it encrypts breaks
+  perfect secrecy however uniform it is. Source is OPERATOR; combiner is
+  PROTOCOL.
 - **B — Authentication**: `wc-one-time-v1` Wegman–Carter, and its existing
   bounded forgery claim. PROTOCOL.
 - **C — Operational reuse prevention**: counters, journals, attempt

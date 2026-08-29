@@ -432,8 +432,13 @@ split between them; surplus beyond `L` is unused.
 - **Use external random material.** Under *Advanced options → Randomness*, the
   **True OTP ceremony**: the operator supplies material whose origin they
   control. It states the combiner, then *"TruePad cannot determine whether a
-  file is truly random."*, then that the guaranteeing source must also be
-  **secret**.
+  file is truly random."*, then the secrecy condition at its true strength:
+  material an adversary can obtain **may still be XORed in** — it simply cannot
+  be the source that *carries* the guarantee — so at least one combined source
+  must also be **secret from the adversary**, and material an adversary
+  supplied, chose, or could have influenced must never be combined at all. It
+  closes with the gloss for key-message independence: *"Never derive source
+  material from the messages you plan to send."*
 
 ### 7.2 What the browser can and cannot enforce
 
@@ -451,9 +456,11 @@ split between them; surplus beyond `L` is unused.
 Creating with external material requires ticking, verbatim:
 
 > I understand that TruePad cannot verify physical randomness. For an
-> information-theoretic one-time-pad claim, at least one selected source must
-> actually be uniformly random, secret, independent of the other combined
-> sources, and never previously used.
+> information-theoretic one-time-pad secrecy claim about this pad's material, at
+> least one selected source must actually be uniformly random, secret from the
+> adversary, and never previously used. That source must also be independent of
+> all the other selected sources taken together, and of the messages this pad
+> will protect. It must never be used to make another pad.
 
 It is an **operator declaration and never a verification result**. It changes
 nothing about the material; it is **not persisted**; and no `trueRandom`,
@@ -466,6 +473,20 @@ The created pad's statement stays conditional: the verbatim §7 verdict, then
 *"TruePad did not verify that assumption."*, then *"If that source assumption is
 true, the pad material satisfies the information-theoretic randomness
 requirement of a one-time pad."*
+
+**Uniformity is not secrecy**, and the panel then says what the verdict is not:
+
+*"The verdict above is about uniformity only. An information-theoretic secrecy
+claim would also require that the source material you supplied was, and stays,
+secret from the adversary; that it was independent of the messages this pad will
+protect, in either direction; that no other pad is ever derived from it; and
+that this pad material is used exactly once. TruePad's counters enforce that
+last condition within TruePad — a copy of the pad file made outside it is beyond
+them. TruePad established none of the rest; that is what you declared."*
+
+The §7 verdict speaks to the uniformity hypothesis alone. The rest of the
+premise — secrecy, key-message independence, one-pad-per-source — is carried by
+that sentence, and the two must never be fused in either direction.
 
 ### 7.4 Delivery is the other half
 

@@ -298,14 +298,24 @@ disclosure states the combiner exactly, then the load-bearing sentence:
 
 > **TruePad cannot determine whether a file is truly random.**
 
-and the secrecy condition — the source that carries the guarantee must also be
-secret from the adversary; uniform-but-published material is not a source.
-Creation additionally requires an explicit **operator declaration**:
+and the secrecy condition, stated at its true strength: **secrecy is a separate
+requirement from uniformity**, and material an adversary can obtain **may still
+be XORed in** — the combiner has no content-dependent rejection and is no weaker
+for it — it simply cannot be the source that *carries* the guarantee. At least
+one combined source must also be secret from the adversary. That permission
+holds only under **independence**, so the ceremony also says never to combine
+material an adversary supplied, chose, or could have influenced: a source chosen
+against yours can cancel it. Alongside it sits the plain-language gloss for
+key-message independence — *"Never derive source material from the messages you
+plan to send."* Creation additionally requires an explicit **operator
+declaration**:
 
 > I understand that TruePad cannot verify physical randomness. For an
-> information-theoretic one-time-pad claim, at least one selected source must
-> actually be uniformly random, secret, independent of the other combined
-> sources, and never previously used.
+> information-theoretic one-time-pad secrecy claim about this pad's material, at
+> least one selected source must actually be uniformly random, secret from the
+> adversary, and never previously used. That source must also be independent of
+> all the other selected sources taken together, and of the messages this pad
+> will protect. It must never be used to make another pad.
 
 That is a **declaration, not a verification result**. Words like *verified*,
 *certified*, *passed*, *confirmed* and *proven* do not appear on this path, and
@@ -318,6 +328,23 @@ assumption."*, then *"If that source assumption is true, the pad material
 satisfies the information-theoretic randomness requirement of a one-time pad."*
 Never *"perfect secrecy achieved"*, *"true OTP verified"*, or
 *"information-theoretic security confirmed"*.
+
+**Uniformity is not secrecy**, and the panel says so immediately after:
+
+*"The verdict above is about uniformity only. An information-theoretic secrecy
+claim would also require that the source material you supplied was, and stays,
+secret from the adversary; that it was independent of the messages this pad will
+protect, in either direction; that no other pad is ever derived from it; and
+that this pad material is used exactly once. TruePad's counters enforce that
+last condition within TruePad — a copy of the pad file made outside it is beyond
+them. TruePad established none of the rest; that is what you declared."*
+
+The frozen verdict speaks to the uniformity hypothesis only — an XOR's
+uniformity genuinely does not require secrecy or independence from the
+plaintext. That asymmetry is correct, and the two statements must never be
+fused: propagating secrecy or key-message independence *into* the verdict would
+make it claim something the combiner does not establish, and dropping them from
+the ceremony would let uniformity read as secrecy.
 
 **Same-object re-selection.** The UI refuses to add the **same `File` object**
 twice in one session. That is an object-reference comparison and nothing more:

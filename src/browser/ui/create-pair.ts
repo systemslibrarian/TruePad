@@ -23,6 +23,7 @@ import {
   CEREMONY_CANNOT_VERIFY,
   CEREMONY_COMBINER,
   CEREMONY_CONDITIONAL,
+  CEREMONY_MESSAGE_INDEPENDENCE,
   CEREMONY_SECRECY,
   CEREMONY_TITLE,
   DELIVERY_CEREMONY,
@@ -31,6 +32,7 @@ import {
   DEVICE_DETAIL,
   DEVICE_SHORT,
   DEVICE_SOURCE_LABEL,
+  EXTERNAL_BEYOND_UNIFORMITY,
   EXTERNAL_CONDITIONAL,
   EXTERNAL_NOT_VERIFIED,
   EXTERNAL_SHORT,
@@ -171,6 +173,7 @@ export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
       h("p", { text: CEREMONY_COMBINER }),
       h("p", { text: CEREMONY_CONDITIONAL }),
       callout({ tone: "warn", title: CEREMONY_CANNOT_VERIFY, body: CEREMONY_SECRECY }),
+      h("p", { class: "faint", text: CEREMONY_MESSAGE_INDEPENDENCE }),
       h("p", { class: "faint", text: ceremonyLengthRule(required) }),
       h("p", { class: "faint", text: CEREMONY_ALIASING })
     );
@@ -443,6 +446,7 @@ function sourceClaimPanel(claim: SourceClaim): HTMLElement {
     h("p", { class: "verdict-line", text: claim.verdict }),
     h("p", { text: EXTERNAL_NOT_VERIFIED }),
     h("p", { class: "faint", text: EXTERNAL_CONDITIONAL }),
+    h("p", { text: EXTERNAL_BEYOND_UNIFORMITY }),
     h(
       "ul",
       { class: "source-manifest" },

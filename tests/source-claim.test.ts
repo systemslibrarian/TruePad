@@ -335,6 +335,38 @@ describe("(17, 18) the external ceremony states the combiner and refuses to veri
     expect(CLAIMS.CEREMONY_SECRECY).toContain("must also be secret");
   });
 
+  // The correction that matters most: the claim used to say material an
+  // adversary can obtain "is not a source", which is FALSE. Such material may
+  // be XORed in; it simply cannot be the one carrying the guarantee. These
+  // pins hold the weaker true statement AND the two things that make it safe:
+  // uniformity is severed from secrecy, and the permission carries its
+  // independence proviso.
+  it("secrecy is a separate requirement, and a known source may still be combined", () => {
+    const secrecy = CLAIMS.CEREMONY_SECRECY;
+    // The retracted absolute must not come back, in any phrasing.
+    expect(secrecy).not.toMatch(/is not a source/i);
+    expect(secrecy).not.toMatch(/cannot be combined|must not be combined|disqualif/i);
+    // The permission, stated.
+    expect(secrecy).toContain("may still be XORed in");
+    expect(secrecy).toContain("cannot be the source that carries the guarantee");
+    // Uniformity severed from secrecy — the one clause that does that work.
+    expect(secrecy).toContain("however uniform it is");
+    // ...and the proviso that makes the permission safe: an adversary-chosen
+    // source is correlated, not a harmless extra input.
+    expect(secrecy).toMatch(/never combine material an adversary supplied, chose, or could have influenced/i);
+    // Non-factive: it must not presuppose that a secret source already exists.
+    expect(secrecy).not.toMatch(/must remain secret/i);
+  });
+
+  it("the operator can actually evaluate the message-independence clause", () => {
+    // A condition you cannot evaluate is not one you can honestly declare, so
+    // the checkbox's hardest clause gets a plain-language gloss beside it.
+    expect(CLAIMS.CEREMONY_MESSAGE_INDEPENDENCE).toContain(
+      "Never derive source material from the messages you plan to send"
+    );
+    expect(CLAIMS.CEREMONY_MESSAGE_INDEPENDENCE).toMatch(/not independent of it/);
+  });
+
   it("(7) the length rule says complete-cover, never concatenation", () => {
     const rule = CLAIMS.ceremonyLengthRule(1024);
     expect(rule).toContain("independently supply the full 1,024 bytes");
@@ -369,10 +401,72 @@ describe("(17, 18) the external ceremony states the combiner and refuses to veri
     );
   });
 
+  // UNIFORMITY is not SECRECY. The frozen verdict claims the first; the second
+  // needs four more hypotheses, and this constant carries them without ever
+  // presupposing they hold.
+  it("the created pad separates the uniformity verdict from the full secrecy premise", () => {
+    const rest = CLAIMS.EXTERNAL_BEYOND_UNIFORMITY;
+    // It names the verdict's scope rather than extending it.
+    expect(rest).toContain("about uniformity only");
+    // Subjunctive: no line in this panel may stop being conditional, and none
+    // may presuppose that a guaranteeing source exists.
+    expect(rest).toContain("would also require");
+    expect(rest).not.toMatch(/the guaranteeing source/i);
+    // The remaining hypotheses, each pinned.
+    expect(rest).toContain("secret from the adversary");
+    expect(rest).toContain("independent of the messages this pad will protect");
+    expect(rest).toContain("in either direction");
+    expect(rest).toContain("no other pad is ever derived from it");
+    expect(rest).toContain("used exactly once");
+    // Single use is guarantee C — machinery TruePad DOES enforce. Handing it to
+    // the operator as an unmet condition would understate the product exactly
+    // as badly as claiming the others would overstate it.
+    expect(rest).toContain("TruePad's counters enforce that last condition within TruePad");
+    expect(rest).toContain("a copy of the pad file made outside it is beyond them");
+    // ...and it closes on a negation, like EXTERNAL_NOT_VERIFIED.
+    expect(rest).toMatch(/TruePad established none of the rest/);
+  });
+
+  it("the uniformity pole and the secrecy premise are never fused", () => {
+    // The frozen verdict and its mirror in the ceremony speak to uniformity
+    // ONLY. An XOR's uniformity genuinely does not require secrecy or
+    // independence from the plaintext; propagating either into these strings
+    // would make them claim something the combiner does not establish.
+    for (const uniformityOnly of [VERDICT, CLAIMS.CEREMONY_CONDITIONAL, CLAIMS.EXTERNAL_CONDITIONAL]) {
+      expect(uniformityOnly, `${uniformityOnly} must not claim secrecy`).not.toMatch(/secret|secrecy/i);
+      expect(uniformityOnly, `${uniformityOnly} must not claim message independence`).not.toMatch(/message|plaintext/i);
+    }
+    // And the converse: the secrecy premise must not be dropped from the
+    // ceremony, or uniformity would silently read as secrecy.
+    expect(CLAIMS.CEREMONY_SECRECY).toMatch(/secret from the adversary/);
+    expect(CLAIMS.EXTERNAL_BEYOND_UNIFORMITY).toMatch(/secret from the adversary/);
+  });
+
   it("(19) the operator declaration is a declaration, never a verification result", () => {
     expect(CLAIMS.OPERATOR_DECLARATION).toContain("TruePad cannot verify physical randomness");
-    expect(CLAIMS.OPERATOR_DECLARATION).toContain("uniformly random, secret, independent of the other combined sources");
     expect(CLAIMS.OPERATOR_DECLARATION).toContain("never previously used");
+  });
+
+  // The declaration must enumerate the FULL secrecy premise, not the uniformity
+  // half. Each limb is pinned separately so dropping any one of them fails.
+  it("the declaration carries every limb of the source premise", () => {
+    const decl = CLAIMS.OPERATOR_DECLARATION;
+    expect(decl).toContain("uniformly random");
+    expect(decl).toContain("secret from the adversary");
+    // Key-message independence — a hypothesis of the theorem in its own right,
+    // and the limb that was missing before this closure.
+    expect(decl).toContain("of the messages this pad will protect");
+    // JOINT independence, not pairwise: S3 = S1 XOR S2 is independent of each
+    // of S1 and S2 separately yet cancels the XOR to zero.
+    expect(decl).toContain("independent of all the other selected sources taken together");
+    // Source reuse, both directions in time.
+    expect(decl).toContain("never previously used");
+    expect(decl).toContain("never be used to make another pad");
+    // Scoped to the SOURCE: end-to-end secrecy additionally needs delivery, so
+    // this sentence must not read as the whole premise.
+    expect(decl).toContain("about this pad's material");
+    // It states NECESSITY, never a result TruePad obtained.
+    expect(decl).toMatch(/^I understand that TruePad cannot verify/);
   });
 
   it("no claim string anywhere ASSERTS a verification, certification, or proof", () => {
@@ -486,6 +580,39 @@ describe("the claim ledgers carry the two source classes", () => {
     const doc = flat(read("docs", "PRODUCT-CLAIMS.md"));
     expect(doc).toContain("B and C do not prove A's physical-randomness premise");
     expect(doc).toContain("strengthens neither the authentication construction nor the operational reuse-prevention machinery");
+  });
+
+  it("no doc still carries the retracted \"is not a source\" absolute", () => {
+    for (const file of [["docs", "PRODUCT-CLAIMS.md"], ["docs", "BROWSER-SECURITY.md"], ["docs", "CEREMONY.md"], ["README.md"]]) {
+      const doc = flat(read(...file));
+      expect(doc, `${file.join("/")} must not say obtainable material is not a source`).not.toMatch(
+        /is not a source|uniform.{0,4}but.{0,4}published source guarantees nothing/i
+      );
+    }
+    // ...and the claim ledgers state the corrected, weaker truth.
+    for (const file of [["docs", "PRODUCT-CLAIMS.md"], ["docs", "BROWSER-SECURITY.md"], ["docs", "CEREMONY.md"]]) {
+      const doc = flat(read(...file));
+      expect(doc, `${file.join("/")} states the permission`).toMatch(/may still be XORed in/);
+      expect(doc, `${file.join("/")} separates secrecy from uniformity`).toMatch(/[Uu]niformity is not secrecy|separate requirement from uniformity/);
+    }
+  });
+
+  it("the docs carry the full premise, message-independence included", () => {
+    const pc = flat(read("docs", "PRODUCT-CLAIMS.md"));
+    expect(pc).toContain("independent of the messages it protects");
+    expect(pc).toContain("joint, not pairwise");
+    // The declaration is quoted verbatim in all three ledgers.
+    for (const file of [["docs", "PRODUCT-CLAIMS.md"], ["docs", "BROWSER-SECURITY.md"], ["docs", "CEREMONY.md"]]) {
+      expect(flat(read(...file)), `${file.join("/")} quotes the declaration verbatim`).toContain(
+        CLAIMS.OPERATOR_DECLARATION
+      );
+    }
+    // ...and so is the sentence that keeps uniformity from reading as secrecy.
+    for (const file of [["docs", "PRODUCT-CLAIMS.md"], ["docs", "BROWSER-SECURITY.md"], ["docs", "CEREMONY.md"]]) {
+      expect(flat(read(...file)), `${file.join("/")} quotes the beyond-uniformity line`).toContain(
+        CLAIMS.EXTERNAL_BEYOND_UNIFORMITY
+      );
+    }
   });
 
   it("BROWSER-SECURITY.md §6.1 carries both classes and the declaration", () => {

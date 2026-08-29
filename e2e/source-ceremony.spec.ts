@@ -23,9 +23,11 @@ import { expect, test, type Page } from "@playwright/test";
 const VERDICT = "Uniform if at least one declared source was uniform and independent of the others.";
 const CANNOT_VERIFY = "TruePad cannot determine whether a file is truly random.";
 const DECLARATION =
-  "I understand that TruePad cannot verify physical randomness. For an information-theoretic one-time-pad claim, " +
-  "at least one selected source must actually be uniformly random, secret, independent of the other combined " +
-  "sources, and never previously used.";
+  "I understand that TruePad cannot verify physical randomness. For an information-theoretic one-time-pad " +
+  "secrecy claim about this pad's material, at least one selected source must actually be uniformly random, " +
+  "secret from the adversary, and never previously used. That source must also be independent of all the other " +
+  "selected sources taken together, and of the messages this pad will protect. It must never be used to make " +
+  "another pad.";
 
 // Small on purpose: L = 2*(16384 + 32*64) = 36,864 bytes, so a source file is
 // cheap to build in the test and the real length check still runs for real.
@@ -144,7 +146,16 @@ test("the external ceremony states the combiner, refuses to verify, and gates on
     page.getByText("If at least one source is actually uniform and independent of the others, the combined material is uniform.")
   ).toBeVisible();
   await expect(page.getByText(CANNOT_VERIFY)).toBeVisible();
-  await expect(page.getByText(/must also be secret/)).toBeVisible();
+  // Secrecy is a separate requirement, and the claim is the WEAKER true one:
+  // a source an adversary can obtain may still be XORed in, it just cannot be
+  // the one carrying the guarantee.
+  await expect(page.getByText(/must also be secret from the adversary/)).toBeVisible();
+  await expect(page.getByText(/may still be XORed in/)).toBeVisible();
+  await expect(page.getByText(/however uniform it is, it cannot be the source that carries the guarantee/)).toBeVisible();
+  await expect(page.getByText(/never combine material an adversary supplied, chose, or could have influenced/i)).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("is not a source");
+  // ...and the clause the operator could not otherwise evaluate is glossed.
+  await expect(page.getByText(/Never derive source material from the messages you plan to send/)).toBeVisible();
   // The length rule: complete cover per source, never concatenation.
   await expect(page.getByText(/never concatenated and never split between them/)).toBeVisible();
   // The aliasing limitation is stated rather than invented around.
@@ -205,6 +216,20 @@ test("the external ceremony states the combiner, refuses to verify, and gates on
   await expect(
     page.getByText(/^If that source assumption is true, the pad material satisfies the information-theoretic/)
   ).toBeVisible();
+
+  // UNIFORMITY is not SECRECY: the verdict claims the first, and the panel says
+  // so outright rather than letting the reader fuse them.
+  await expect(page.getByText(/The verdict above is about uniformity only/)).toBeVisible();
+  await expect(page.getByText(/would also require/)).toBeVisible();
+  await expect(page.getByText(/independent of the messages this pad will protect, in either direction/)).toBeVisible();
+  await expect(page.getByText(/no other pad is ever derived from it/)).toBeVisible();
+  await expect(page.getByText(/used exactly once/)).toBeVisible();
+  // Single use is machinery TruePad DOES enforce; the panel credits it rather
+  // than handing it to the operator as an unmet condition.
+  await expect(page.getByText(/TruePad's counters enforce that last condition within TruePad/)).toBeVisible();
+  await expect(page.getByText(/TruePad established none of the rest/)).toBeVisible();
+  // Nothing here presupposes that a guaranteeing source exists.
+  await expect(page.locator("body")).not.toContainText("the guaranteeing source");
 
   // Never the unconditional forms — and nothing on the ceremony's own result
   // screen asserts a physical claim TruePad did not, and could not, establish.
@@ -277,5 +302,8 @@ test("Security states both source classes and their independence from the platfo
   await expect(page.getByText(CANNOT_VERIFY)).toBeVisible();
   await expect(page.getByText(/no key derivation, no extractor, no hash conditioner/i)).toBeVisible();
   await expect(page.getByText(/The source claim and the platform claim are independent/)).toBeVisible();
+  await expect(page.getByText(/Secrecy is a separate requirement/)).toBeVisible();
+  await expect(page.getByText(/Uniformity is not secrecy/)).toBeVisible();
+  await expect(page.getByText(/may still be XORed in/)).toBeVisible();
   await expect(page.getByText(/Delivery is the other half/)).toBeVisible();
 });
