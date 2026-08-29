@@ -25,14 +25,14 @@ export default defineConfig({
       registerType: "autoUpdate",
       injectRegister: "auto",
       manifest: {
-        name: "TruePad 2 — authenticated one-time pad",
+        name: "TruePad — private one-time-pad messaging",
         short_name: "TruePad",
         description:
-          "Authenticated one-time-pad handling with explicit one-time state — the frozen TruePad 2 protocol, running entirely in your browser. No backend, no accounts, no sync.",
+          "Send messages only you and one other person can read. An authenticated one-time pad that runs entirely in your browser — no backend, no accounts, no sync.",
         start_url: "./",
         scope: "./",
-        theme_color: "#11100c",
-        background_color: "#11100c",
+        theme_color: "#0c0d10",
+        background_color: "#0c0d10",
         display: "standalone",
         orientation: "any",
         icons: [

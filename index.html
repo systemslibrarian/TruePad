@@ -23,19 +23,19 @@
       content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; child-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TruePad 2 — authenticated one-time pad</title>
+    <title>TruePad — private one-time-pad messaging</title>
     <meta
       name="description"
-      content="Authenticated one-time-pad handling with explicit one-time state — the frozen TruePad 2 protocol, running entirely in your browser. No backend, no accounts, no sync; every security consequence is stated in full."
+      content="Send messages only you and one other person can read. TruePad is an authenticated one-time pad that runs entirely in your browser — no backend, no accounts, no sync, and every security limitation stated in full."
     />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" content="#11100c" />
+    <meta name="theme-color" content="#0c0d10" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="apple-touch-icon" href="./pwa-192.png" />
-    <meta property="og:title" content="TruePad 2 — authenticated one-time pad" />
+    <meta property="og:title" content="TruePad — private one-time-pad messaging" />
     <meta
       property="og:description"
-      content="The frozen TruePad 2 protocol in the browser: generate a pad pair, send authenticated one-time-pad messages, and see every security consequence — and limitation — stated in full."
+      content="Create a pad, share it once with one other person, and message privately. The frozen TruePad 2 protocol in the browser, with every security consequence — and limitation — stated in full."
     />
     <meta property="og:type" content="website" />
     <!--
@@ -49,8 +49,8 @@
   <body>
     <div id="app"></div>
     <noscript>
-      <div style="max-width: 40rem; margin: 3rem auto; padding: 0 1.25rem; font-family: system-ui, sans-serif; line-height: 1.6">
-        <h1>TruePad 2</h1>
+      <div style="max-width: 34rem; margin: 4rem auto; padding: 0 1.5rem; font-family: system-ui, -apple-system, sans-serif; line-height: 1.6">
+        <h1 style="letter-spacing: -0.025em">TruePad</h1>
         <p>
           The Browser Edition runs its cryptographic engine as a JavaScript Web Worker, so it needs JavaScript enabled.
           It still makes no network requests during operation, keeps no accounts, and syncs nothing. The teaching Lab is

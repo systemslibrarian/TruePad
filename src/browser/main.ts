@@ -15,7 +15,7 @@
  * ========================================================================= */
 
 import "./style.css";
-import { h, icon, mount } from "./ui/dom.ts";
+import { brandMark, h, icon, mount } from "./ui/dom.ts";
 import type { Ctx, Engine, Reply, Route, ToastTone } from "./ui/context.ts";
 import type { EngineRequest, EngineResponse } from "./engine/protocol.ts";
 import { renderHome } from "./ui/home.ts";
@@ -144,7 +144,7 @@ function applyTheme(themeBtn?: HTMLElement): void {
   else root.removeAttribute("data-theme");
   const dark = effectiveDark();
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", dark ? "#11100c" : "#f4f0e6");
+  if (meta) meta.setAttribute("content", dark ? "#0c0d10" : "#f7f8fa");
   if (themeBtn) {
     mount(themeBtn, icon(dark ? "sun" : "moon"));
     themeBtn.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
@@ -196,33 +196,45 @@ let themeBtn!: HTMLElement;
 
 function buildShell(navigate: (r: Route) => void): void {
   themeBtn = h("button", { class: "icon-btn", type: "button", on: { click: () => toggleTheme(themeBtn) } });
-  // Three audiences, kept apart: Use (the brand → home), Learn (the exhibit),
+  // Three audiences, kept apart: Use (the brand -> home), Learn (the exhibit),
   // and Advanced (security details & expert config). No security jargon up top.
   const navHow = h("a", { href: "learn.html" }, h("span", { text: "How it works" }), icon("external"));
-  const navAdvanced = h("a", { href: "#/advanced", on: { click: (e) => { e.preventDefault(); navigate({ name: "security" }); } } }, h("span", { text: "Advanced" })) as HTMLAnchorElement;
+  const navAdvanced = h("a", {
+    href: "#/advanced",
+    on: { click: (e) => { e.preventDefault(); navigate({ name: "security" }); } }
+  }, h("span", { text: "Advanced" }));
 
   const brand = h(
     "a",
-    { class: "brand", href: "#/", on: { click: (e) => { e.preventDefault(); navigate({ name: "home" }); } } },
-    h("span", { class: "mark" }, h("span", { text: "TruePad" }))
+    { class: "brand", href: "#/", aria: { label: "TruePad home" }, on: { click: (e) => { e.preventDefault(); navigate({ name: "home" }); } } },
+    brandMark(),
+    h("span", { class: "brand-word", text: "TruePad" })
   );
 
   const topbar = h(
     "header",
     { class: "topbar" },
-    brand,
-    h("div", { class: "topbar-spacer" }),
-    h("nav", { class: "topnav", aria: { label: "Primary" } }, navHow, navAdvanced),
-    themeBtn
+    h(
+      "div",
+      { class: "topbar-inner" },
+      brand,
+      h("div", { class: "topbar-spacer" }),
+      h("nav", { class: "topnav", aria: { label: "Primary" } }, navHow, navAdvanced),
+      themeBtn
+    )
   );
 
   const footer = h(
     "footer",
     { class: "footer" },
-    h("span", { text: "TruePad · runs entirely in your browser — no backend, no accounts, no sync." }),
-    h("span", { class: "topbar-spacer" }),
-    h("a", { href: "learn.html" }, h("span", { text: "How it works" })),
-    h("a", { href: "https://github.com/systemslibrarian/TruePad", attrs: { target: "_blank", rel: "noreferrer noopener" } }, h("span", { text: "Source" }))
+    h(
+      "div",
+      { class: "footer-inner" },
+      h("span", { text: "Runs entirely in your browser. No backend, no accounts, no sync." }),
+      h("span", { class: "topbar-spacer" }),
+      h("a", { href: "learn.html" }, h("span", { text: "How it works" })),
+      h("a", { href: "https://github.com/systemslibrarian/TruePad", attrs: { target: "_blank", rel: "noreferrer noopener" } }, h("span", { text: "Source" }))
+    )
   );
 
   const skip = h("a", { class: "skip-link", href: "#app-main" }, h("span", { text: "Skip to content" }));
@@ -301,20 +313,27 @@ function isFramed(): boolean {
 function renderFramedRefusal(): void {
   const root = document.getElementById("app");
   if (!root) return;
+  const glyph = icon("alert");
+  glyph.classList.add("co-icon");
   mount(
     root,
     h(
       "div",
-      { class: "main", style: "max-width:40rem;margin:3rem auto;padding:0 1.25rem" },
+      { class: "main" },
       h(
         "div",
-        { class: "callout danger", role: "alert" },
-        h("div", { class: "co-title" }, icon("alert"), h("span", { text: "TruePad will not run inside a frame" })),
+        { class: "screen" },
         h(
           "div",
-          { class: "co-body" },
-          h("p", { text: "This page is embedded in another document. The operational TruePad UI refuses to start in a frame: a framed context is a clickjacking surface, and it will not touch pad material there." }),
-          h("p", { text: "Open TruePad directly in a top-level browser tab. Enforcing this from the server would take an HTTP frame-ancestors or X-Frame-Options header, which the default GitHub Pages deployment cannot send and a meta CSP cannot supply — so this check does it at runtime instead." })
+          { class: "callout danger", role: "alert" },
+          glyph,
+          h("div", { class: "co-title", text: "TruePad will not run inside a frame" }),
+          h(
+            "div",
+            { class: "co-body" },
+            h("p", { text: "This page is embedded in another document. The operational TruePad UI refuses to start in a frame: a framed context is a clickjacking surface, and it will not touch pad material there." }),
+            h("p", { text: "Open TruePad directly in a top-level browser tab. Enforcing this from the server would take an HTTP frame-ancestors or X-Frame-Options header, which the default GitHub Pages deployment cannot send and a meta CSP cannot supply — so this check does it at runtime instead." })
+          )
         )
       )
     )
@@ -350,7 +369,7 @@ async function bootstrap(): Promise<void> {
 
   async function render(): Promise<void> {
     const route = parseHash();
-    mount(mainEl, h("p", { class: "muted", text: "Loading…" }));
+    mount(mainEl, h("div", { class: "screen" }, h("p", { class: "faint", text: "Loading…" })));
     try {
       switch (route.name) {
         case "home":
@@ -379,13 +398,20 @@ async function bootstrap(): Promise<void> {
           break;
       }
     } catch (err) {
+      const glyph = icon("alert");
+      glyph.classList.add("co-icon");
       mount(
         mainEl,
         h(
           "div",
-          { class: "callout danger", role: "alert" },
-          h("div", { class: "co-title" }, h("span", { text: "Something went wrong" })),
-          h("div", { class: "co-body", text: err instanceof Error ? err.message : String(err) })
+          { class: "screen" },
+          h(
+            "div",
+            { class: "callout danger", role: "alert" },
+            glyph,
+            h("div", { class: "co-title", text: "Something went wrong" }),
+            h("div", { class: "co-body", text: err instanceof Error ? err.message : String(err) })
+          )
         )
       );
     }

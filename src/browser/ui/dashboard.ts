@@ -1,15 +1,16 @@
 /* ============================================================================
- * TruePad 2 Browser Edition — Pad screen (the main application)
+ * TruePad Browser Edition — Pad screen (the main application)
  * ----------------------------------------------------------------------------
- * One pad, four plain actions: send/open a message, send/open a file. A single
- * "% remaining" and a Ready/Warning word. The frozen internals — both
- * directions, meters, record mode, rollback state, retire — live under "Pad
- * details", and the global claims ledger under "Advanced". Nothing directional
- * is shown up top.
+ * One pad, four plain actions: send/open a message, send/open a file. A status
+ * word and one capacity bar say how the pad is doing. The frozen internals —
+ * both directions, meters, record mode, rollback state, skip — live under "Pad
+ * details", and the global claims ledger under Advanced. Nothing directional
+ * appears above the fold, and the one irreversible action is the quietest
+ * thing on the screen.
  * ========================================================================= */
 
 import { h, icon, mount } from "./dom.ts";
-import { badge, callout, meterBar, kv } from "./components.ts";
+import { actionTile, backLink, badge, callout, capacityBar, kv, meterBar, panel, rowLink } from "./components.ts";
 import {
   authMeter,
   directionLabel,
@@ -30,14 +31,16 @@ import type { PadDirection } from "../../core/pad.ts";
 function directionCard(m: DirectionMeters): HTMLElement {
   return h(
     "article",
-    { class: "card stack" },
+    { class: "card" },
     h("div", { class: "spread" }, h("h3", { text: directionLabel(m.direction) }), badge(directionStatus(m))),
-    meterBar(encryptionMeter(m)),
-    meterBar(authMeter(m)),
+    h("div", {}, meterBar(encryptionMeter(m)), meterBar(authMeter(m))),
     kv([
       { term: "Message packaging", value: recordModeLabel(m.record) },
       { term: "Messages left", value: fmtInt(m.maxRemainingSends) },
-      { term: "Failed verifications", value: m.verification.frozen ? `${fmtInt(m.verification.failureCount)} — paused` : fmtInt(m.verification.failureCount) }
+      {
+        term: "Failed verifications",
+        value: m.verification.frozen ? `${fmtInt(m.verification.failureCount)} — paused` : fmtInt(m.verification.failureCount)
+      }
     ])
   );
 }
@@ -45,20 +48,37 @@ function directionCard(m: DirectionMeters): HTMLElement {
 function frozenBanner(ctx: Ctx, pairId: string, pair: PairSummary): HTMLElement | null {
   const frozen = (["A->B", "B->A"] as PadDirection[]).filter((d) => pair.meters[d].verification.frozen);
   if (frozen.length === 0) return null;
+
+  const actions = h("div", { class: "btn-row" });
+  const askConfirm = (): void => {
+    mount(
+      actions,
+      h(
+        "button",
+        { class: "btn sm primary", type: "button", on: { click: () => void onClearFreeze(ctx, pairId) } },
+        h("span", { text: "Yes, resume this pad" })
+      ),
+      h("button", { class: "btn sm ghost", type: "button", on: { click: paintIdle } }, h("span", { text: "Cancel" }))
+    );
+  };
+  function paintIdle(): void {
+    mount(actions, h("button", { class: "btn sm", type: "button", on: { click: askConfirm } }, h("span", { text: "Resume pad" })));
+  }
+  paintIdle();
+
   return callout({
     tone: "warn",
     title: "This pad is paused",
     body: h(
       "div",
       { class: "stack-sm" },
-      h("p", { text: "Too many messages failed to verify, so TruePad paused this pad to protect it. You can resume it if you trust the situation." }),
-      h("button", { class: "btn small", type: "button", on: { click: () => onClearFreeze(ctx, pairId) } }, h("span", { text: "Resume pad" }))
+      h("p", { text: "Too many messages failed to verify, so TruePad paused this pad. Resume it only if you trust that those failures were harmless." }),
+      actions
     )
   });
 }
 
 async function onClearFreeze(ctx: Ctx, pairId: string): Promise<void> {
-  if (!window.confirm("Resume this pad? Do this only if you trust that the failed messages were harmless.")) return;
   const reply = await ctx.engine.clearFreeze({ pairId });
   if (!reply.ok) { ctx.toast(reply.message, "danger"); return; }
   ctx.toast("Pad resumed.", "ok");
@@ -71,38 +91,65 @@ function retirePanel(ctx: Ctx, pairId: string): HTMLElement {
   const out = h("div", {});
   const submit = h(
     "button",
-    { class: "btn", type: "button", on: { click: async () => {
-      const throughSequence = Number(seq.value);
-      if (!Number.isInteger(throughSequence) || throughSequence < 0) { out.replaceChildren(callout({ tone: "warn", title: "Enter a number", body: "Skip needs the message number to skip through." })); return; }
-      submit.setAttribute("disabled", "true");
-      const reply = await ctx.engine.retire({ pairId, direction: dir.value as PadDirection, throughSequence });
-      submit.removeAttribute("disabled");
-      if (!reply.ok) { out.replaceChildren(callout({ tone: "danger", title: "Skip refused", body: reply.message })); return; }
-      ctx.toast("Skipped.", "ok");
-      ctx.navigate({ name: "pair", pairId });
-    } } },
+    {
+      class: "btn",
+      type: "button",
+      on: {
+        click: async () => {
+          const throughSequence = Number(seq.value);
+          if (!Number.isInteger(throughSequence) || throughSequence < 0) {
+            mount(out, callout({ tone: "warn", title: "Enter a number", body: "Skip needs the message number to skip through." }));
+            return;
+          }
+          submit.setAttribute("disabled", "true");
+          const reply = await ctx.engine.retire({ pairId, direction: dir.value as PadDirection, throughSequence });
+          submit.removeAttribute("disabled");
+          if (!reply.ok) { mount(out, callout({ tone: "danger", title: "Skip refused", body: reply.message })); return; }
+          ctx.toast("Skipped.", "ok");
+          ctx.navigate({ name: "pair", pairId });
+        }
+      }
+    },
     h("span", { text: "Skip messages" })
   );
   return h(
     "div",
     { class: "stack" },
-    h("p", { class: "muted", text: "Skipping permanently discards unused message slots — use it to move past material you will not send. This cannot be undone." }),
+    h("p", { class: "faint", text: "Skipping permanently discards unused message slots — use it to move past material you will not send. This cannot be undone." }),
     h("div", { class: "field-grid" }, h("div", { class: "field" }, h("label", { text: "Direction" }), dir), h("div", { class: "field" }, h("label", { text: "Skip through message #" }), seq)),
-    submit,
+    h("div", { class: "btn-row" }, submit),
     out
   );
 }
 
-function renderDestroyed(ctx: Ctx, root: HTMLElement, info: { pairId: string; label: string }): void {
+function renderDestroyed(ctx: Ctx, root: HTMLElement, info: { label: string }): void {
   mount(
     root,
-    h("a", { class: "back-link", href: "#", on: { click: (e) => { e.preventDefault(); ctx.navigate({ name: "home" }); } } }, icon("back"), h("span", { text: "Home" })),
-    h("header", { class: "screen-head" }, h("div", { class: "spread" }, h("h1", { text: info.label || "Untitled pad" }), badge({ label: "Disabled", tone: "danger" }))),
-    callout({
-      tone: "danger",
-      title: "This pad has been permanently disabled",
-      body: h("div", { class: "stack-sm" }, h("p", { text: "It can no longer send or open messages, and there is no way back." }), h("p", { class: "faint", text: "Software can forget its reference to pad material; it cannot prove that flash forgot the bytes." }))
-    })
+    h(
+      "div",
+      { class: "screen" },
+      backLink(() => ctx.navigate({ name: "home" }), "Home"),
+      h(
+        "header",
+        { class: "pad-head" },
+        h(
+          "div",
+          { class: "pad-head-top" },
+          h("h1", { class: "pad-title", text: info.label || "Untitled pad" }),
+          badge({ label: "Disabled", tone: "danger" })
+        )
+      ),
+      callout({
+        tone: "danger",
+        title: "This pad has been permanently disabled",
+        body: h(
+          "div",
+          { class: "stack-sm" },
+          h("p", { text: "It can no longer send or open messages, and there is no way back." }),
+          h("p", { class: "faint", text: "Software can forget its reference to pad material; it cannot prove that flash forgot the bytes." })
+        )
+      })
+    )
   );
 }
 
@@ -112,65 +159,86 @@ export async function renderDashboard(ctx: Ctx, root: HTMLElement, pairId: strin
     if (reply.kind === "refused" && reply.reason === "pair-destroyed") {
       const list = await ctx.engine.listPairs();
       const summary = list.ok ? list.pairs.find((p) => p.pairId === pairId) : undefined;
-      renderDestroyed(ctx, root, { pairId, label: summary?.label ?? "" });
+      renderDestroyed(ctx, root, { label: summary?.label ?? "" });
       return;
     }
-    mount(root, h("a", { class: "back-link", href: "#", on: { click: (e) => { e.preventDefault(); ctx.navigate({ name: "home" }); } } }, icon("back"), h("span", { text: "Home" })), callout({ tone: "danger", title: "Could not open this pad", body: reply.message }));
+    mount(
+      root,
+      h(
+        "div",
+        { class: "screen" },
+        backLink(() => ctx.navigate({ name: "home" }), "Home"),
+        callout({ tone: "danger", title: "Could not open this pad", body: reply.message })
+      )
+    );
     return;
   }
 
   const pair = reply.pair;
-  const pct = padHealthPercent(pair);
   const role = readRole(pairId);
+  const unusable = pair.destroyed;
 
   const header = h(
     "header",
-    { class: "pad-header" },
-    h("div", { class: "spread" }, h("h1", { class: "pad-title", text: pair.label || "Untitled pad" }), badge(padStatusWord(pair))),
-    h("p", { class: "pad-remaining", text: `${pct}% remaining` })
+    { class: "pad-head" },
+    h(
+      "div",
+      { class: "pad-head-top" },
+      h("h1", { class: "pad-title", text: pair.label || "Untitled pad" }),
+      badge(padStatusWord(pair))
+    ),
+    capacityBar(padHealthPercent(pair))
   );
 
   const goSend = (mode: "message" | "file") => ctx.navigate({ name: "send", pairId, mode });
   const goOpen = (mode: "message" | "file") => ctx.navigate({ name: "open", pairId, mode });
 
-  const primary = h(
+  const actions = h(
     "div",
-    { class: "pad-actions" },
-    h("button", { class: "btn primary big", type: "button", on: { click: () => goSend("message") } }, icon("send"), h("span", { text: "Send message" })),
-    h("button", { class: "btn big", type: "button", on: { click: () => goOpen("message") } }, icon("inbox"), h("span", { text: "Open message" })),
-    h("button", { class: "btn big", type: "button", on: { click: () => goSend("file") } }, icon("file"), h("span", { text: "Send file" })),
-    h("button", { class: "btn big", type: "button", on: { click: () => goOpen("file") } }, icon("file"), h("span", { text: "Open file" }))
+    { class: "actions-grid" },
+    actionTile({ label: "Send message", icon: "send", accent: true, disabled: unusable, onClick: () => goSend("message") }),
+    actionTile({ label: "Open message", icon: "inbox", disabled: unusable, onClick: () => goOpen("message") }),
+    actionTile({ label: "Send file", icon: "file-up", disabled: unusable, onClick: () => goSend("file") }),
+    actionTile({ label: "Open file", icon: "file-down", disabled: unusable, onClick: () => goOpen("file") })
   );
 
-  const detailsPanel = h(
-    "details",
-    { class: "card advanced-block" },
-    h("summary", { text: "Pad details" }),
+  const details = panel(
+    "Pad details",
+    {},
+    kv([
+      { term: "You are", value: PARTY_NAME[role] },
+      { term: "The other person", value: PARTY_NAME[role === "A" ? "B" : "A"] },
+      { term: "Created", value: pair.createdAt ? new Date(pair.createdAt).toLocaleString() : "—" }
+    ]),
     h(
       "div",
-      { class: "stack", style: "margin-top:1rem" },
-      h("p", { class: "muted", text: `You are ${PARTY_NAME[role]} on this pad. The other person is ${PARTY_NAME[role === "A" ? "B" : "A"]}.` }),
-      pair.createdAt ? h("p", { class: "faint", text: `Created ${new Date(pair.createdAt).toLocaleString()}` }) : null,
-      h("div", { class: "save-row" }, savePadFileButton(ctx, pairId, "Save the pad file again"), h("p", { class: "save-note", text: "Keep this file secret. It contains the one-time pad." })),
-      h("div", { class: "card-grid" }, directionCard(pair.meters["A->B"]), directionCard(pair.meters["B->A"])),
-      h("details", { class: "card" }, h("summary", { text: "Skip messages (rarely needed)" }), h("div", { style: "margin-top:1rem" }, retirePanel(ctx, pairId)))
-    )
+      { class: "save-row" },
+      h("div", { class: "btn-row" }, savePadFileButton(ctx, pairId, "Save the pad file again")),
+      h("p", { class: "save-note", text: "Keep this file secret. It is the one-time pad itself." })
+    ),
+    h("div", { class: "card-grid" }, directionCard(pair.meters["A->B"]), directionCard(pair.meters["B->A"])),
+    panel("Skip messages (rarely needed)", {}, retirePanel(ctx, pairId))
   );
 
   const secondary = h(
-    "div",
-    { class: "pad-secondary" },
-    h("a", { class: "row link", href: "#/advanced", on: { click: (e) => { e.preventDefault(); ctx.navigate({ name: "security" }); } } }, h("span", { text: "Advanced / Security details" })),
-    h("a", { class: "row link danger", href: "#", on: { click: (e) => { e.preventDefault(); ctx.navigate({ name: "destroy", pairId }); } } }, h("span", { text: "Disable this pad" }))
+    "nav",
+    { class: "stack-sm", aria: { label: "Pad settings" } },
+    rowLink({ text: "Security & limitations", icon: "shield", onClick: () => ctx.navigate({ name: "security" }) }),
+    h("hr", { class: "divider" }),
+    rowLink({ text: "Disable this pad", icon: "trash", danger: true, onClick: () => ctx.navigate({ name: "destroy", pairId }) })
   );
 
   mount(
     root,
-    h("a", { class: "back-link", href: "#", on: { click: (e) => { e.preventDefault(); ctx.navigate({ name: "home" }); } } }, icon("back"), h("span", { text: "Home" })),
-    header,
-    frozenBanner(ctx, pairId, pair),
-    primary,
-    detailsPanel,
-    secondary
+    h(
+      "div",
+      { class: "screen" },
+      backLink(() => ctx.navigate({ name: "home" }), "Home"),
+      header,
+      frozenBanner(ctx, pairId, pair),
+      actions,
+      details,
+      secondary
+    )
   );
 }

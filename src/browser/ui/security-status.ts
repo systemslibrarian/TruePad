@@ -1,17 +1,21 @@
 /* ============================================================================
- * TruePad 2 Browser Edition — Security status
+ * TruePad Browser Edition — Security & limitations (Advanced)
  * ----------------------------------------------------------------------------
- * The in-app claims ledger. Every guarantee carries its classification —
- * PROTOCOL (frozen, identical on every edition), PLATFORM-OP (this edition's
- * browser primitives), OPERATOR (only you can discharge it), NATIVE-ONLY (a CLI
- * guarantee the browser does NOT make) — and the browser's scope is stated as
- * itself, never a borrowed one. The cross-edition matrix fills the Browser
- * column truthfully and marks the other editions forthcoming. Copy here tracks
+ * The in-app claims ledger, and the only screen where the cryptography is
+ * allowed to speak in its own vocabulary. Every guarantee carries its
+ * classification — PROTOCOL (frozen, identical on every edition), PLATFORM-OP
+ * (this edition's browser primitives), OPERATOR (only you can discharge it),
+ * NATIVE-ONLY (a CLI guarantee the browser does NOT make) — and the browser's
+ * scope is stated as itself, never a borrowed one. Copy here tracks
  * docs/BROWSER-SECURITY.md; nothing is rounded up.
+ *
+ * It is organised as disclosure panels rather than one continuous wall so an
+ * expert can reach a section directly, and a beginner who wandered in can see
+ * the shape of it without reading 4,000 words.
  * ========================================================================= */
 
 import { h, icon, mount } from "./dom.ts";
-import { chip, callout } from "./components.ts";
+import { backLink, callout, chip, panel } from "./components.ts";
 import type { Ctx } from "./context.ts";
 
 type Klass = "protocol" | "platform" | "operator" | "native";
@@ -24,20 +28,14 @@ const KLABEL: Record<Klass, string> = {
 };
 
 function ledgerItem(k: Klass, title: string, body: string): HTMLElement {
-  return h(
-    "li",
-    {},
-    chip(k, KLABEL[k]),
-    h("div", { class: "ll-body" }, h("strong", { text: title }), h("span", { text: body }))
-  );
+  return h("li", {}, chip(k, KLABEL[k]), h("div", { class: "ll-body" }, h("strong", { text: title }), h("span", { text: body })));
 }
 
-function guaranteesSection(): HTMLElement {
-  return h(
-    "section",
-    { class: "section" },
-    h("h2", { text: "Protocol guarantees" }),
-    h("p", { class: "section-note", text: "These come from the frozen Store Format v2 / wc-one-time-v1 construction. The src/core modules are reused byte-for-byte, so they hold identically here and on every other edition." }),
+function guaranteesPanel(): HTMLElement {
+  return panel(
+    "Protocol guarantees",
+    { open: true },
+    h("p", { class: "faint", text: "These come from the frozen Store Format v2 / wc-one-time-v1 construction. The src/core modules are reused byte-for-byte, so they hold identically here and on every other edition." }),
     h(
       "ul",
       { class: "ledger-list" },
@@ -51,11 +49,10 @@ function guaranteesSection(): HTMLElement {
   );
 }
 
-function sourceSection(): HTMLElement {
-  return h(
-    "section",
-    { class: "section" },
-    h("h2", { text: "Source — declared, not verified" }),
+function sourcePanel(): HTMLElement {
+  return panel(
+    "Source — declared, not verified",
+    {},
     h(
       "ul",
       { class: "ledger-list" },
@@ -66,27 +63,31 @@ function sourceSection(): HTMLElement {
   );
 }
 
-function durabilitySection(persistent: boolean | null): HTMLElement {
-  const rows: [string, string][] = [
-    ["Page reload / browser restart", "Survived. Everything written to OPFS and flushed persists across normal reloads and restarts."],
-    ["What flush() means", "The bytes were handed to the browser's storage layer — the analogue of the CLI's fsync, and weaker: browsers do not document power-loss semantics for OPFS."],
-    ["Tab / worker crash after flush()", "Survived — the flushed bytes are in OPFS, and commit-before-emit makes a crash lose material, never reuse it."],
-    ["Power loss mid-write", "Not claimed. The browser makes no power-loss durability claim anywhere."],
-    ["“Clear site data”", "Destroys the OPFS store — every pad for this origin is gone. This is deletion you perform, not a protocol event."],
-    ["Profile backup / restore", "Restoring a backed-up profile regresses the store exactly like the CLI's whole-directory restore; the rollback residual applies."],
-    ["Private / Incognito window", "OPFS is typically ephemeral there — the store vanishes when the session ends."],
-    ["Two profiles / two devices", "Each is an independent copy of whatever was couriered to it. TruePad never syncs them."]
-  ];
-  return h(
-    "section",
-    { class: "section" },
-    h("h2", { text: "Platform — what “durable” means here" }),
-    h("p", { class: "section-note" }, h("span", { text: "The store is the Origin Private File System (OPFS), written with worker sync access handles and flushed. It is " }), h("strong", { text: "weaker than the CLI's Linux-ext4 durability" }), h("span", { text: ", and this table says exactly how." })),
-    persistent === false
-      ? callout({ tone: "warn", title: "This context may not retain storage", body: "The browser reports this origin's storage as best-effort, which can mean a private window or an evictable store. Request persistence below, and keep a couriered copy." })
-      : persistent === true
-        ? callout({ tone: "ok", title: "Storage is marked persistent", body: "This origin has been granted persistent storage; the browser will not evict it under storage pressure. It is still not power-loss durable." })
-        : null,
+const DURABILITY_ROWS: [string, string][] = [
+  ["Page reload / browser restart", "Survived. Everything written to OPFS and flushed persists across normal reloads and restarts."],
+  ["What flush() means", "The bytes were handed to the browser's storage layer — the analogue of the CLI's fsync, and weaker: browsers do not document power-loss semantics for OPFS."],
+  ["Tab / worker crash after flush()", "Survived — the flushed bytes are in OPFS, and commit-before-emit makes a crash lose material, never reuse it."],
+  ["Power loss mid-write", "Not claimed. The browser makes no power-loss durability claim anywhere."],
+  ["“Clear site data”", "Destroys the OPFS store — every pad for this origin is gone. This is deletion you perform, not a protocol event."],
+  ["Profile backup / restore", "Restoring a backed-up profile regresses the store exactly like the CLI's whole-directory restore; the rollback residual applies."],
+  ["Private / Incognito window", "OPFS is typically ephemeral there — the store vanishes when the session ends."],
+  ["Two profiles / two devices", "Each is an independent copy of whatever was couriered to it. TruePad never syncs them."]
+];
+
+function durabilityPanel(persistent: boolean | null, persistBtn: HTMLElement | null): HTMLElement {
+  return panel(
+    "Storage — what “durable” means here",
+    {},
+    h(
+      "p",
+      { class: "faint" },
+      h("span", { text: "The store is the Origin Private File System (OPFS), written with worker sync access handles and flushed. It is " }),
+      h("strong", { text: "weaker than the CLI's Linux-ext4 durability" }),
+      h("span", { text: ", and this table says exactly how." })
+    ),
+    persistent === true
+      ? callout({ tone: "ok", title: "Storage is marked persistent", body: "This origin has been granted persistent storage; the browser will not evict it under storage pressure. It is still not power-loss durable." })
+      : null,
     h(
       "div",
       { class: "matrix-wrap" },
@@ -94,17 +95,17 @@ function durabilitySection(persistent: boolean | null): HTMLElement {
         "table",
         { class: "matrix" },
         h("thead", {}, h("tr", {}, h("th", { text: "Question" }), h("th", { text: "Browser answer" }))),
-        h("tbody", {}, ...rows.map(([q, a]) => h("tr", {}, h("td", { text: q }), h("td", { text: a }))))
+        h("tbody", {}, ...DURABILITY_ROWS.map(([q, a]) => h("tr", {}, h("td", { text: q }), h("td", { text: a }))))
       )
-    )
+    ),
+    persistBtn ? h("div", { class: "btn-row" }, persistBtn) : null
   );
 }
 
-function rollbackSection(): HTMLElement {
-  return h(
-    "section",
-    { class: "section" },
-    h("h2", { text: "Rollback witness" }),
+function rollbackPanel(): HTMLElement {
+  return panel(
+    "Rollback witness",
+    {},
     h(
       "ul",
       { class: "ledger-list" },
@@ -120,11 +121,10 @@ function rollbackSection(): HTMLElement {
   );
 }
 
-function destructionSection(): HTMLElement {
-  return h(
-    "section",
-    { class: "section" },
-    h("h2", { text: "Destruction" }),
+function destructionPanel(): HTMLElement {
+  return panel(
+    "Destruction",
+    {},
     h(
       "ul",
       { class: "ledger-list" },
@@ -172,20 +172,23 @@ function cell(c: Cell): HTMLElement {
   return h("td", {}, h("span", { class: cls, text: c.text }), c.note ? h("small", { text: c.note }) : null);
 }
 
-function matrixSection(): HTMLElement {
-  return h(
-    "section",
-    { class: "section" },
-    h("h2", { text: "Cross-edition claims matrix" }),
-    h("p", { class: "section-note", text: "The Browser column is populated from this edition's claims ledger. Android and Desktop editions run the same frozen protocol on a different operational substrate; their columns are forthcoming and will be filled from their own ledgers, not this one." }),
+function matrixPanel(): HTMLElement {
+  return panel(
+    "Cross-edition claims matrix",
+    {},
+    h("p", { class: "faint", text: "The Browser column is populated from this edition's claims ledger. Android and Desktop editions run the same frozen protocol on a different operational substrate; their columns are forthcoming and will be filled from their own ledgers, not this one." }),
     legend(),
     h(
       "div",
-      { class: "matrix-wrap", style: "margin-top:1rem" },
+      { class: "matrix-wrap" },
       h(
         "table",
         { class: "matrix" },
-        h("thead", {}, h("tr", {}, h("th", { text: "Guarantee" }), h("th", { text: "Class" }), h("th", { text: "Browser" }), h("th", { text: "Android" }), h("th", { text: "Desktop" }))),
+        h(
+          "thead",
+          {},
+          h("tr", {}, h("th", { text: "Guarantee" }), h("th", { text: "Class" }), h("th", { text: "Browser" }), h("th", { text: "Android" }), h("th", { text: "Desktop" }))
+        ),
         h(
           "tbody",
           {},
@@ -212,7 +215,7 @@ export async function renderSecurity(ctx: Ctx, root: HTMLElement): Promise<void>
       ? h(
           "button",
           {
-            class: "btn small",
+            class: "btn",
             type: "button",
             on: {
               click: async () => {
@@ -228,30 +231,41 @@ export async function renderSecurity(ctx: Ctx, root: HTMLElement): Promise<void>
 
   mount(
     root,
-    h("a", { class: "back-link", href: "#", on: { click: (e) => { e.preventDefault(); ctx.navigate({ name: "home" }); } } }, icon("back"), h("span", { text: "Home" })),
     h(
-      "header",
-      { class: "screen-head" },
-      h("span", { class: "eyebrow", text: "Advanced" }),
-      h("h1", { text: "Security & limitations" }),
-      h("p", { class: "lede", text: "The technical detail behind TruePad: the same frozen protocol as the command-line tool, on a browser substrate that is honestly weaker in named places. Nothing here is rounded up to a stronger claim than it deserves. You never need this to use TruePad." })
-    ),
-    guaranteesSection(),
-    sourceSection(),
-    durabilitySection(ctx.storagePersistent),
-    persistBtn ? h("div", { class: "btn-row", style: "margin-top:0.75rem" }, persistBtn) : null,
-    rollbackSection(),
-    destructionSection(),
-    matrixSection(),
-    h(
-      "section",
-      { class: "section" },
-      h("h2", { text: "Learn & source" }),
+      "div",
+      { class: "screen wide" },
+      backLink(() => ctx.navigate({ name: "home" }), "Home"),
+      h(
+        "header",
+        { class: "screen-head" },
+        h("span", { class: "eyebrow", text: "Advanced" }),
+        h("h1", { text: "Security & limitations" }),
+        h("p", { class: "lede", text: "The same frozen protocol as the command-line tool, on a browser substrate that is honestly weaker in named places. Nothing here is rounded up. You never need this page to use TruePad." })
+      ),
+      ctx.storagePersistent === false
+        ? callout({
+            tone: "warn",
+            title: "This context may not retain storage",
+            body: "The browser reports this origin's storage as best-effort, which can mean a private window or an evictable store. Request persistence under Storage below, and keep a couriered copy."
+          })
+        : null,
+      guaranteesPanel(),
+      sourcePanel(),
+      durabilityPanel(ctx.storagePersistent, persistBtn),
+      rollbackPanel(),
+      destructionPanel(),
+      matrixPanel(),
+      h("hr", { class: "divider" }),
       h(
         "div",
         { class: "btn-row" },
-        h("a", { class: "btn ghost", href: "learn.html" }, icon("external"), h("span", { text: "Open the teaching Lab (/learn)" })),
-        h("a", { class: "btn ghost", href: "https://github.com/systemslibrarian/TruePad", attrs: { target: "_blank", rel: "noreferrer noopener" } }, icon("external"), h("span", { text: "Source & docs on GitHub" }))
+        h("a", { class: "btn", href: "learn.html" }, icon("external"), h("span", { text: "Open the teaching Lab" })),
+        h(
+          "a",
+          { class: "btn ghost", href: "https://github.com/systemslibrarian/TruePad", attrs: { target: "_blank", rel: "noreferrer noopener" } },
+          icon("external"),
+          h("span", { text: "Source & docs on GitHub" })
+        )
       )
     )
   );
