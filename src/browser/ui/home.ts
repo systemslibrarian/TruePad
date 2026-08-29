@@ -12,7 +12,7 @@
  * witnesses and storage internals are Level 3 and live under Security.
  * ========================================================================= */
 
-import { brandMark, h, icon, mount } from "./dom.ts";
+import { h, icon, mount } from "./dom.ts";
 import { badge, callout, capacityBar } from "./components.ts";
 import { padHealthPercent, padStatusWord } from "./format.ts";
 import type { Ctx } from "./context.ts";
@@ -43,6 +43,16 @@ function howItWorks(): HTMLElement {
         )
       )
     )
+  );
+}
+
+// The wordmark is the logo: True in ink, Pad in phosphor gold.
+function wordmark(): HTMLElement {
+  return h(
+    "h1",
+    { class: "hero-title wordmark" },
+    h("span", { text: "True" }),
+    h("span", { class: "accent", text: "Pad" })
   );
 }
 
@@ -85,7 +95,7 @@ export async function renderHome(ctx: Ctx, root: HTMLElement): Promise<void> {
       h(
         "div",
         { class: "screen landing" },
-        h("header", { class: "hero" }, brandMark(), h("h1", { class: "hero-title", text: "TruePad" })),
+        h("header", { class: "hero" }, wordmark()),
         callout({ tone: "danger", title: "Could not read your pads", body: reply.message })
       )
     );
@@ -102,8 +112,7 @@ export async function renderHome(ctx: Ctx, root: HTMLElement): Promise<void> {
         h(
           "header",
           { class: "hero" },
-          brandMark(),
-          h("h1", { class: "hero-title", text: "TruePad" }),
+          wordmark(),
           h("p", { class: "hero-sub", text: "Private messages using a pad you share with one other person." })
         ),
         h("div", { class: "hero-cta" }, createBtn("primary lg")),

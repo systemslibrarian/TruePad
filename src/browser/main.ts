@@ -15,7 +15,7 @@
  * ========================================================================= */
 
 import "./style.css";
-import { brandMark, h, icon, mount } from "./ui/dom.ts";
+import { h, icon, mount } from "./ui/dom.ts";
 import type { Ctx, Engine, Reply, Route, ToastTone } from "./ui/context.ts";
 import type { EngineRequest, EngineResponse } from "./engine/protocol.ts";
 import { renderHome } from "./ui/home.ts";
@@ -159,8 +159,7 @@ function buildShell(navigate: (r: Route) => void): void {
   const brand = h(
     "a",
     { class: "brand", href: "#/", aria: { label: "TruePad home" }, on: { click: (e) => { e.preventDefault(); navigate({ name: "home" }); } } },
-    brandMark(),
-    h("span", { class: "brand-word", text: "TruePad" })
+    h("span", { class: "brand-word" }, h("span", { text: "True" }), h("span", { class: "accent", text: "Pad" }))
   );
 
   const topbar = h(

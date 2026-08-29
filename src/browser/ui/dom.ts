@@ -147,22 +147,3 @@ export function icon(name: keyof typeof ICONS | string): SVGSVGElement {
   svg.innerHTML = ICONS[name] ?? "";
   return svg;
 }
-
-/* ---- the TruePad mark ----------------------------------------------------
- * Two offset sheets: the pad you keep, and the identical copy the other person
- * holds. Filled sheet in the accent, outlined sheet behind it — the whole
- * product in one shape, and simple enough to survive a 16px favicon.
- * ------------------------------------------------------------------------- */
-
-export function brandMark(): SVGSVGElement {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", "brand-mark");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("aria-hidden", "true");
-  svg.innerHTML =
-    '<rect class="bm-back" x="3.2" y="2.6" width="12.4" height="15.4" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
-    '<rect class="bm-front" x="8.4" y="6" width="12.4" height="15.4" rx="3" fill="currentColor"/>' +
-    '<path class="bm-rule" d="M11.6 11.3h6M11.6 15.1h3.6" stroke-width="1.6" stroke-linecap="round"/>';
-  return svg;
-}

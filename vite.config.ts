@@ -31,8 +31,8 @@ export default defineConfig({
           "Send messages only you and one other person can read. An authenticated one-time pad that runs entirely in your browser — no backend, no accounts, no sync.",
         start_url: "./",
         scope: "./",
-        theme_color: "#0c0d10",
-        background_color: "#0c0d10",
+        theme_color: "#11100c",
+        background_color: "#11100c",
         display: "standalone",
         orientation: "any",
         icons: [
