@@ -48,13 +48,18 @@ interop suite asserts the on-disk bytes directly:
  "rollback":{"witnessClass":"none","config":{}},…}
 ```
 
-The one place the browser's vocabulary is richer than the CLI's is the rollback
-class. The browser's honest classes are `browser-none` and
-`browser-independent-store` (`BROWSER-SECURITY.md` §4). **`browser-none`
-serialises to the CLI's `{ "witnessClass": "none", "config": {} }`
-byte-for-byte**, so a browser-none store is CLI-readable with no translation.
-`browser-independent-store` is a browser-only class the CLI does not honour, so
-interop is scoped to browser-none stores — stated, not hidden.
+The browser does **not** fork the format: a browser store's `head.json` always
+serialises the CLI's `{ "witnessClass": "none", "config": {} }` byte-for-byte,
+whichever rollback witness the pair uses. The browser's own witness kind
+(`browser-none` or `browser-local-witness`, `BROWSER-SECURITY.md` §4) is a
+product layer recorded in the browser-only `pair.json` and, for
+`browser-local-witness`, a separate `witness/<pairId>.log` — **both live
+alongside the frozen store, never inside it and never in the courier bundle**.
+So **every** browser store — including one with a browser-local witness — is
+CLI-readable with no translation, and the courier bundle carries no browser-only
+header vocabulary. Conversely, a CLI store whose frozen `witnessClass` the
+browser cannot honour (`separate-state-file` / `platform-monotonic` /
+`remote-monotonic`) is **refused on import**, never silently downgraded.
 
 ### canonical bytes and the tag are the frozen construction
 

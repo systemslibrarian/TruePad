@@ -125,6 +125,27 @@ test("courier round trip across two isolated OPFS stores: create → send → im
   await bobContext.close();
 });
 
+test("the operational UI refuses to run inside a frame (and never starts the worker there)", async ({ page }) => {
+  // Serve a same-origin host page with NO CSP of its own that embeds the app at
+  // "/". The app sets no HTTP frame-ancestors / X-Frame-Options header (GitHub
+  // Pages cannot) and frame-ancestors is not enforceable from its meta CSP, so
+  // the embed is not blocked at the transport layer — the runtime gate is what
+  // must stop it. (This runs on a fresh context before any service worker is
+  // registered, so the fulfilled host page is not intercepted.)
+  await page.route("**/host-embed.html", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: `<!doctype html><html><body><iframe title="embedded-truepad" src="/" style="width:900px;height:700px;border:0"></iframe></body></html>`
+    })
+  );
+  await page.goto("/host-embed.html");
+  const framed = page.frameLocator('iframe[title="embedded-truepad"]');
+  // The framed context shows the refusal instead of the operational UI…
+  await expect(framed.getByText("TruePad will not run inside a frame")).toBeVisible();
+  // …and the operational surface (the create action) never appears in the frame.
+  await expect(framed.getByRole("button", { name: "Create pair" })).toHaveCount(0);
+});
+
 test("the same-store courier caveat: a burned record cannot be reopened in the same copy", async ({ page }) => {
   await generateDrbgPair(page);
   await openDashboardAfterGen(page);

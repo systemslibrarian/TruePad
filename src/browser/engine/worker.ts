@@ -23,15 +23,16 @@ import { handle } from "./verbs.ts";
 // One store per worker, rooted at the OPFS root.
 const vfs = new OpfsVfs();
 
-// The plaintext an open releases and the pad bytes an export bundles are large
-// buffers we are done with; transfer them so the UI takes ownership without a
-// copy. Nothing else in a response references those buffers afterwards.
+// The plaintext an open releases and the packed courier container an export
+// returns are large buffers we are done with; transfer them so the UI takes
+// ownership without a copy (and, for the container, so the worker's copy is
+// detached). Nothing else in a response references those buffers afterwards.
 function collectTransfers(response: EngineResponse): Transferable[] {
   if (response.ok && response.op === "open") {
     return [response.plaintext.buffer as ArrayBuffer];
   }
   if (response.ok && response.op === "export-pair") {
-    return response.bundle.files.map((file) => file.bytes.buffer as ArrayBuffer);
+    return [response.container.buffer as ArrayBuffer];
   }
   return [];
 }

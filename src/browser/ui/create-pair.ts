@@ -12,7 +12,7 @@
 
 import { h, icon, mount } from "./dom.ts";
 import { callout, kv } from "./components.ts";
-import { exportPanel, unpackBundle } from "./courier.ts";
+import { exportPanel } from "./courier.ts";
 import { fmtBytes, fmtInt } from "./format.ts";
 import type { Ctx } from "./context.ts";
 import type { BrowserWitnessClass, ManifestView, PairSummary } from "../engine/protocol.ts";
@@ -20,8 +20,8 @@ import type { BrowserWitnessClass, ManifestView, PairSummary } from "../engine/p
 const AUTH_RECORD_BYTES = 32;
 const requiredL = (e: number, n: number): number => 2 * (e + AUTH_RECORD_BYTES * n);
 
-// Verbatim §4 caveat for the browser-independent-store class.
-const INDEPENDENT_CAVEAT =
+// Verbatim §4 caveat for the browser-local-witness kind.
+const LOCAL_WITNESS_CAVEAT =
   "Rollback protection: browser-local only. This does not provide the same independent rollback witness guarantee as Operational TruePad.";
 
 function drbgBytes(length: number): Uint8Array {
@@ -70,7 +70,7 @@ function generateForm(ctx: Ctx): HTMLElement {
     record: "variable" as "variable" | "fixed",
     f: 256,
     sourceMode: "files" as "files" | "drbg",
-    witness: "browser-independent-store" as BrowserWitnessClass,
+    witness: "browser-local-witness" as BrowserWitnessClass,
     sources: [] as SourceEntry[]
   };
 
@@ -122,7 +122,7 @@ function generateForm(ctx: Ctx): HTMLElement {
     return h(
       "div",
       { class: "radio-set" },
-      mk("browser-independent-store", "Independent store (browser-local)", h("span", {}, h("span", { text: `${INDEPENDENT_CAVEAT} ` }), h("span", { class: "faint", text: "It is only as independent as the two stores' clearing and backup are — both live under this origin, and “clear site data” removes both." }))),
+      mk("browser-local-witness", "Browser-local witness", h("span", {}, h("span", { text: `${LOCAL_WITNESS_CAVEAT} ` }), h("span", { class: "faint", text: "Counters kept in a second, separately-cleared OPFS store (an append-only journal). It is only as independent as the two stores' clearing and backup are — both live under this origin, and “clear site data” removes both." }))),
       mk("browser-none", "No witness", h("span", { text: "No rollback witness. Restoring a backup of this store would reset the per-record attempt budget; the residual is stated, not hidden." }))
     );
   }
@@ -290,15 +290,13 @@ function importForm(ctx: Ctx): HTMLElement {
             mount(result, callout({ tone: "warn", title: "Choose a bundle file first", body: "Select the .pad.json your peer couriered to you." }));
             return;
           }
-          let bundle;
-          try {
-            bundle = unpackBundle(bytes);
-          } catch (err) {
-            mount(result, callout({ tone: "danger", title: "Not a pad bundle", body: err instanceof Error ? err.message : String(err) }));
-            return;
-          }
           importBtn.setAttribute("disabled", "true");
-          const reply = await ctx.engine.importPair({ label: labelInput.value.trim(), bundle });
+          // Transfer the selected bytes into the worker; the container is parsed
+          // and validated there (§4/§6). This UI never unpacks pad material. The
+          // transfer detaches our ArrayBuffer, so `bytes` is spent afterwards.
+          const container = bytes;
+          bytes = null;
+          const reply = await ctx.engine.importPair({ label: labelInput.value.trim(), container });
           importBtn.removeAttribute("disabled");
           if (!reply.ok) {
             mount(result, callout({ tone: "danger", title: "Import refused", body: reply.message, reason: reply.kind === "refused" ? reply.reason : undefined }));

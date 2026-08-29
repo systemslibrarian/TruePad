@@ -324,7 +324,52 @@ function formatHash(route: Route): string {
   }
 }
 
+/* ---- framed-context gate ------------------------------------------------ */
+
+// The operational UI refuses to run inside a frame. A cross-origin embedder is
+// a clickjacking surface, and — unlike the CLI's host — a static GitHub Pages
+// deployment cannot send an HTTP `frame-ancestors` / `X-Frame-Options` header,
+// and `frame-ancestors` is NOT enforceable from a <meta> CSP. So this runtime
+// check is the actual enforcement point: if we are not the top-level document,
+// we never start the worker and never render the operational UI.
+function isFramed(): boolean {
+  try {
+    return window.self !== window.top;
+  } catch {
+    // A cross-origin parent throws on the comparison — which itself means we are
+    // embedded. Treat the exception as "framed".
+    return true;
+  }
+}
+
+function renderFramedRefusal(): void {
+  const root = document.getElementById("app");
+  if (!root) return;
+  mount(
+    root,
+    h(
+      "div",
+      { class: "main", style: "max-width:40rem;margin:3rem auto;padding:0 1.25rem" },
+      h(
+        "div",
+        { class: "callout danger", role: "alert" },
+        h("div", { class: "co-title" }, icon("alert"), h("span", { text: "TruePad will not run inside a frame" })),
+        h(
+          "div",
+          { class: "co-body" },
+          h("p", { text: "This page is embedded in another document. The operational TruePad UI refuses to start in a frame: a framed context is a clickjacking surface, and it will not touch pad material there." }),
+          h("p", { text: "Open TruePad directly in a top-level browser tab. Enforcing this from the server would take an HTTP frame-ancestors or X-Frame-Options header, which the default GitHub Pages deployment cannot send and a meta CSP cannot supply — so this check does it at runtime instead." })
+        )
+      )
+    )
+  );
+}
+
 async function bootstrap(): Promise<void> {
+  if (isFramed()) {
+    renderFramedRefusal();
+    return;
+  }
   const engine = new WorkerEngine();
 
   const navigate = (route: Route): void => {

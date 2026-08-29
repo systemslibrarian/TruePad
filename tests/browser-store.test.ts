@@ -59,7 +59,7 @@ function source(encryptionBytes: number, authRecords: number): Uint8Array {
 type GenOpts = {
   encryptionBytes: number;
   authRecords: number;
-  witnessClass?: "browser-none" | "browser-independent-store";
+  witnessClass?: "browser-none" | "browser-local-witness";
   recordBytes?: number;
   verifyAttemptLimit?: number;
   freezeThreshold?: number;
@@ -84,9 +84,10 @@ async function gen(vfs: Vfs, label: string, o: GenOpts): Promise<string> {
 }
 
 // Courier a whole pair from one store to another (the out-of-band pad delivery).
+// Export packs the container in the worker; import transfers the bytes back in.
 async function courier(from: Vfs, to: Vfs, pairId: string, label: string): Promise<void> {
   const exp = asOk(await send(from, { op: "export-pair", pairId }), "export-pair");
-  asOk(await send(to, { op: "import-pair", label, bundle: exp.bundle }), "import-pair");
+  asOk(await send(to, { op: "import-pair", label, container: exp.container }), "import-pair");
 }
 
 // Flip one nibble of the tag so the envelope decodes structurally but fails
@@ -183,11 +184,11 @@ describe("browser engine: contested after the verification-attempt limit", () =>
   });
 });
 
-describe("browser engine: attempt-budget rollback is caught by the independent-store witness", () => {
+describe("browser engine: attempt-budget rollback is caught by the browser-local witness", () => {
   it("restoring the store while the witness stands refuses witness-regressed", async () => {
     const a = new MemoryVfs();
     const b = new MemoryVfs();
-    const pairId = await gen(a, "rollback", { encryptionBytes: 256, authRecords: 4, witnessClass: "browser-independent-store" });
+    const pairId = await gen(a, "rollback", { encryptionBytes: 256, authRecords: 4, witnessClass: "browser-local-witness" });
     await courier(a, b, pairId, "rollback-b");
     const burn = asOk(await send(a, { op: "burn", pairId, as: "A", plaintext: utf8.encode("guarded") }), "burn");
     const forged = tamper(burn.envelope);

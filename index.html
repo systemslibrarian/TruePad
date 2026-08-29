@@ -4,17 +4,23 @@
     <meta charset="UTF-8" />
     <!--
       Content-Security-Policy shipped in the document (GitHub Pages serves no
-      custom response headers, so the meta CSP is the enforcement point). The
-      app is self-contained: no external origins are permitted for scripts,
-      connections, frames, or objects, so nothing can exfiltrate. blob: is
+      custom response headers, so this meta CSP is the enforcement point for the
+      directives a meta CSP CAN enforce). It restricts script/style/connect/
+      object/frame loading to this origin — defense in depth — but it is NOT a
+      proof that data can never leave the browser. `frame-src 'none'` stops THIS
+      page from loading child frames; it is NOT the same as `frame-ancestors`,
+      which controls who may EMBED this page and is ignored in a meta CSP — so a
+      runtime framed-context gate (src/browser/main.ts) refuses to start the
+      operational UI in a frame, and HTTP-header frame-ancestors / X-Frame-
+      Options would need a hosting layer that can set response headers. blob: is
       allowed for the module worker and the operator's courier/plaintext
-      downloads; data: for inline icons; 'unsafe-inline' is scoped to STYLE
-      only (Vite inlines critical CSS), never to script. See
-      docs/BROWSER-SECURITY.md §7 for the exact scope and its limits.
+      downloads; data: for inline icons; 'unsafe-inline' is scoped to STYLE only
+      (Vite inlines critical CSS), never to script. See docs/BROWSER-SECURITY.md
+      §7 for the exact scope and its limits.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; child-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; child-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TruePad 2 — authenticated one-time pad</title>
@@ -34,7 +40,8 @@
     <meta property="og:type" content="website" />
     <!--
       Self-contained by construction: this page references no external origins,
-      and the meta CSP above blocks any that a future edit might introduce.
+      and the meta CSP above restricts any that a future edit might introduce to
+      this origin (defense in depth — not a proof that nothing can ever leave).
       TruePad makes zero network requests during cryptographic operation. The
       web-app manifest and service worker are injected by the build (VitePWA).
     -->

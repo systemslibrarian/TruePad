@@ -10,8 +10,8 @@
  * deliberately NOT the CLI's Linux-ext4 power-loss claim.
  *
  * The Vfs is rooted at the OPFS root: a path like "<pairId>/a-to-b/head.json"
- * maps to nested directory handles, and the witness store lives at a distinct
- * root path "witness/<pairId>.json". Each method opens a sync access handle,
+ * maps to nested directory handles, and the append-only rollback witness lives
+ * at a distinct root path "witness/<pairId>.log". Each method opens a sync access handle,
  * does its work, flushes where it writes and closes — OPFS permits one open
  * sync handle per file at a time, and `withLock(pairId)` serialises the
  * mutators per pair, so the handles never collide. `withLock` is real mutual
@@ -116,18 +116,54 @@ export class OpfsVfs implements Vfs {
     }
   }
 
+  // Replace a file's whole contents durably. Where the OPFS implementation
+  // supports FileSystemFileHandle.move (Chromium), this is genuinely atomic:
+  // the bytes are written to a sibling temp file and flushed, then MOVED over
+  // the target, so a reader sees the old bytes or the new, never a torn mix.
+  // Where move() is unavailable it falls back to a durable in-place rewrite
+  // (truncate → write → flush): a crash mid-rewrite leaves a truncated/partial
+  // file, but every reader in this engine detects that and refuses closed
+  // (corrupt-head / corrupt-secret-body / corrupt-journal), never a silently-
+  // accepted partial. The rollback witness does NOT rely on this — it is an
+  // append-only journal (witness.ts) that is never truncated.
   async writeFileAtomic(path: string, data: Uint8Array): Promise<void> {
-    const file = await this.#fileHandle(path, true);
-    if (file === null) {
-      throw new Error(`writeFileAtomic: could not create ${path}`);
+    const { dirs, name } = splitPath(path);
+    const dir = await this.#dir(dirs, true);
+    if (dir === null) {
+      throw new Error(`writeFileAtomic: could not create directory for ${path}`);
     }
-    const handle = await file.createSyncAccessHandle();
+    const tmpName = `${name}.writing`;
+    const tmp = await dir.getFileHandle(tmpName, { create: true });
+    const handle = await tmp.createSyncAccessHandle();
     try {
       handle.truncate(0);
       writeAll(handle, data, 0);
       handle.flush();
     } finally {
       handle.close();
+    }
+    const move = (tmp as { move?: (destination: FileSystemDirectoryHandle, name: string) => Promise<void> }).move;
+    if (typeof move === "function") {
+      try {
+        await move.call(tmp, dir, name); // atomic replace: overwrites the target
+        return;
+      } catch {
+        /* move unsupported for this target — fall back to a durable rewrite */
+      }
+    }
+    const target = await dir.getFileHandle(name, { create: true });
+    const th = await target.createSyncAccessHandle();
+    try {
+      th.truncate(0);
+      writeAll(th, data, 0);
+      th.flush();
+    } finally {
+      th.close();
+    }
+    try {
+      await dir.removeEntry(tmpName);
+    } catch {
+      /* best-effort temp cleanup; an orphaned .writing file is inert */
     }
   }
 

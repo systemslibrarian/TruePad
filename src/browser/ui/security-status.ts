@@ -108,9 +108,9 @@ function rollbackSection(): HTMLElement {
     h(
       "ul",
       { class: "ledger-list" },
-      ledgerItem("platform", "Independent store (browser-local)", "Witness counters kept in a second, separately-cleared OPFS store the pair's export never includes — a partial failure-domain distinction that catches a restore of the pair store while the witness is untouched."),
+      ledgerItem("platform", "Browser-local witness", "An append-only journal of the three monotone counters in a second, separately-cleared OPFS store the pair's export never includes — a partial failure-domain distinction that catches a restore of the pair store while the witness is untouched. It is crash-safe: a torn append leaves the previous record authoritative, and a provisioned witness that goes missing fails closed, never reads as fresh."),
       ledgerItem("operator", "Only as independent as the two stores' clearing", "Both live under this origin; “clear site data” removes both, so a witness cleared alongside the pair knows nothing. Weaker than the CLI's cross-medium witness."),
-      ledgerItem("native", "Not an external witness", "The CLI's separate-state-file assumes an independent host failure domain a browser page cannot reach. This edition does not offer it and does not relabel browser-local state as its equal.")
+      ledgerItem("native", "Not an external witness", "The CLI's separate-state-file assumes an independent host failure domain a browser page cannot reach. This edition does not offer it and does not relabel browser-local state as its equal — it is browser-LOCAL, and named so.")
     ),
     callout({
       tone: "info",

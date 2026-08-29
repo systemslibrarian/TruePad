@@ -39,7 +39,6 @@ import type {
   EngineResponse,
   EnvelopeLine,
   ManifestView,
-  PairBundle,
   PairSummary
 } from "./protocol.ts";
 import {
@@ -61,7 +60,8 @@ import {
   type RecordSpec,
   type SourceDeclaration
 } from "./store.ts";
-import { witnessFor, type BrowserWitness } from "./witness.ts";
+import { witnessFor, type BrowserWitness, type BrowserWitnessKind } from "./witness.ts";
+import { packContainer, unpackContainer, type CourierFile } from "./courier-format.ts";
 import type { Vfs } from "./vfs.ts";
 
 const enc = new TextEncoder();
@@ -69,6 +69,14 @@ const dec = new TextDecoder();
 
 const TOMBSTONE_FILE = "destroyed.json";
 const PAIR_META_FILE = "pair.json";
+// A courier import in progress marks the final pair dir with this file BEFORE
+// it copies any store bytes, and removes it only after pair.json commits. While
+// it is present the pair is NOT active (import-incomplete): a crash mid-import
+// leaves an inactive, retryable pair, never a partial active one (§6).
+const IMPORT_MARKER_FILE = "importing.json";
+// The browser-only staging root a courier import validates a whole bundle in
+// before committing. Not a 32-hex name, so list-pairs never treats it as a pair.
+const STAGING_ROOT = "importing";
 const V1_PAD_FILE = "pad.json";
 const UNREADABLE_PAIR_TOKEN = "destroy-unreadable-pair";
 const HEX_32 = /^[0-9a-f]{32}$/;
@@ -86,6 +94,8 @@ const storeDir = (pairId: string, direction: PadDirection): string => `${pairId}
 const filePath = (prefix: string, name: string): string => `${prefix}/${name}`;
 const tombstonePath = (pairId: string): string => `${pairId}/${TOMBSTONE_FILE}`;
 const pairMetaPath = (pairId: string): string => `${pairId}/${PAIR_META_FILE}`;
+const importMarkerPath = (pairId: string): string => `${pairId}/${IMPORT_MARKER_FILE}`;
+const stagingDir = (pairId: string): string => `${STAGING_ROOT}/${pairId}`;
 
 function directionFor(role: "A" | "B", op: "burn" | "open"): PadDirection {
   if (op === "burn") {
@@ -105,7 +115,7 @@ type OpenResult = { ok: true; op: "open"; plaintext: Uint8Array; skipped: { encr
 type RetireResult = { ok: true; op: "retire"; meters: PairSummary };
 type ClearFreezeResult = { ok: true; op: "clear-freeze"; cleared: number; meters: PairSummary };
 type DestroyResult = { ok: true; op: "destroy"; alreadyDestroyed: boolean; limitation: string };
-type ExportResult = { ok: true; op: "export-pair"; bundle: PairBundle };
+type ExportResult = { ok: true; op: "export-pair"; container: Uint8Array; fileCount: number };
 type ImportResult = { ok: true; op: "import-pair"; pair: PairSummary };
 type ListResult = { ok: true; op: "list-pairs"; pairs: PairSummary[] };
 
@@ -135,16 +145,8 @@ function recordSpecFrom(recordBytes: number | undefined): RecordSpec {
   return { kind: "fixed", bytes: recordBytes };
 }
 
-function bytesEqualPrefix(a: Uint8Array, b: Uint8Array, length: number): boolean {
-  if (a.length < length || b.length < length) {
-    return false;
-  }
-  for (let i = 0; i < length; i += 1) {
-    if (a[i] !== b[i]) {
-      return false;
-    }
-  }
-  return true;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /* ---- pair gates & metadata ------------------------------------------------ */
@@ -156,6 +158,20 @@ async function requireNotDestroyed(vfs: Vfs, pairId: string): Promise<void> {
       `${pairId} carries a durable ${TOMBSTONE_FILE}: destruction of this pair was initiated (§17), so it is ` +
         `permanently unusable. Its secret material may be partially overwritten or already absent, and there is no ` +
         `path back to an active state. Nothing was touched.`
+    );
+  }
+}
+
+// §6: a pair whose courier import has not committed (its importing.json marker
+// is still present) is NOT active. It is refused here rather than used partially,
+// and re-running the import completes or discards it.
+async function requireImportComplete(vfs: Vfs, pairId: string): Promise<void> {
+  if (await vfs.exists(importMarkerPath(pairId))) {
+    throw new EngineRefused(
+      "import-incomplete",
+      `${pairId} has an unfinished courier import (${IMPORT_MARKER_FILE} is present): the import did not commit, so ` +
+        `the pair is not active. Re-run the import of the same bundle to complete it, or it will be discarded and ` +
+        `retried on the next import. Nothing was touched.`
     );
   }
 }
@@ -203,6 +219,7 @@ type LoadedPair = { "A->B": LoadedStore; "B->A": LoadedStore };
 // loaded even for single-direction verbs because the freeze is pair-wide.
 async function loadPair(vfs: Vfs, pairId: string): Promise<LoadedPair> {
   await requireNotDestroyed(vfs, pairId);
+  await requireImportComplete(vfs, pairId);
   await requirePair(vfs, pairId);
   return { "A->B": await loadHalf(vfs, pairId, "A->B"), "B->A": await loadHalf(vfs, pairId, "B->A") };
 }
@@ -223,10 +240,12 @@ function requireNotFrozen(pair: LoadedPair): void {
 }
 
 // §15.3 PREFLIGHT for one direction's store, returning the witness so the
-// caller can advance it after the durable commit. A store below its witness
-// refuses `witness-regressed`; a broken witness `witness-inconsistent`.
-async function witnessPreflight(vfs: Vfs, store: LoadedStore): Promise<BrowserWitness> {
-  const witness = witnessFor(vfs, store.head.rollback.witnessClass);
+// caller can advance it after the durable commit. The witness KIND comes from
+// the browser-only pair.json (`kind`), never the frozen head. A store below its
+// witness refuses `witness-regressed`; a missing/torn provisioned witness
+// `witness-inconsistent`.
+async function witnessPreflight(vfs: Vfs, store: LoadedStore, kind: BrowserWitnessKind): Promise<BrowserWitness> {
+  const witness = witnessFor(vfs, kind);
   const pf = await witness.preflight(store.head.pairId, store.head.direction, {
     nextOffset: store.effective.nextOffset,
     nextSequence: store.effective.nextSequence,
@@ -238,37 +257,58 @@ async function witnessPreflight(vfs: Vfs, store: LoadedStore): Promise<BrowserWi
   return witness;
 }
 
-type PairMeta = { pairId: string; label: string; createdAt: string };
+type PairMeta = { pairId: string; label: string; createdAt: string; witness: BrowserWitnessKind };
 
+function isWitnessKind(value: unknown): value is BrowserWitnessKind {
+  return value === "browser-none" || value === "browser-local-witness";
+}
+
+// Read the browser-only pair.json. Its `witness` field is LOAD-BEARING: it says
+// whether a rollback witness applies, so a present-but-corrupt pair.json fails
+// CLOSED rather than silently defaulting to no-witness (which would bypass a
+// provisioned witness). A pair with NO pair.json is a bare FORMAT-V2 store the
+// browser never provisioned (e.g. a CLI store placed directly) — browser-none,
+// with defaulted display fields.
 async function readPairMeta(vfs: Vfs, pairId: string): Promise<PairMeta> {
   const bytes = await vfs.readFile(pairMetaPath(pairId));
-  if (bytes !== null) {
-    try {
-      const parsed: unknown = JSON.parse(dec.decode(bytes));
-      if (typeof parsed === "object" && parsed !== null) {
-        const obj = parsed as Record<string, unknown>;
-        const label = typeof obj.label === "string" ? obj.label : pairId;
-        const createdAt = typeof obj.createdAt === "string" ? obj.createdAt : "";
-        return { pairId, label, createdAt };
-      }
-    } catch {
-      /* fall through to defaults */
-    }
+  if (bytes === null) {
+    return { pairId, label: pairId, createdAt: "", witness: "browser-none" };
   }
-  return { pairId, label: pairId, createdAt: "" };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(dec.decode(bytes));
+  } catch {
+    throw new EngineRefused(
+      "corrupt-pair-meta",
+      `${PAIR_META_FILE} for ${pairId} does not parse as JSON, so the browser cannot tell whether this pair carries a ` +
+        `rollback witness. It fails closed rather than assume none. Nothing was touched.`
+    );
+  }
+  if (!isRecord(parsed) || !isWitnessKind(parsed.witness)) {
+    throw new EngineRefused(
+      "corrupt-pair-meta",
+      `${PAIR_META_FILE} for ${pairId} has no recognised witness kind (found ${JSON.stringify(isRecord(parsed) ? parsed.witness : parsed)}). ` +
+        `It fails closed rather than guess whether a rollback witness applies. Nothing was touched.`
+    );
+  }
+  const label = typeof parsed.label === "string" ? parsed.label : pairId;
+  const createdAt = typeof parsed.createdAt === "string" ? parsed.createdAt : "";
+  return { pairId, label, createdAt, witness: parsed.witness };
 }
 
 async function writePairMeta(vfs: Vfs, meta: PairMeta): Promise<void> {
   await vfs.writeFileAtomic(pairMetaPath(meta.pairId), enc.encode(JSON.stringify(meta)));
 }
 
-/* ---- meters & summaries --------------------------------------------------- */
-
-function displayWitnessClass(head: HeadV2): DirectionMeters["witness"]["class"] {
-  return head.rollback.witnessClass === "browser-independent-store" ? "browser-independent-store" : "browser-none";
+// The pair's browser-product witness kind, from pair.json (fails closed on a
+// corrupt pair.json). Callers hold the pair lock and have passed the gates.
+async function witnessKindFor(vfs: Vfs, pairId: string): Promise<BrowserWitnessKind> {
+  return (await readPairMeta(vfs, pairId)).witness;
 }
 
-async function directionMeters(vfs: Vfs, store: LoadedStore): Promise<DirectionMeters> {
+/* ---- meters & summaries --------------------------------------------------- */
+
+async function directionMeters(vfs: Vfs, store: LoadedStore, kind: BrowserWitnessKind): Promise<DirectionMeters> {
   const { head, effective } = store;
   const remainingBytes = head.encryption.capacity - effective.nextOffset;
   const remainingRecords = head.authentication.capacityRecords - effective.nextSequence;
@@ -280,7 +320,7 @@ async function directionMeters(vfs: Vfs, store: LoadedStore): Promise<DirectionM
   }
   const limitedBy =
     remainingRecords <= Math.ceil(remainingBytes / head.authentication.maxCiphertextBytes) ? "AUTHENTICATION" : "ENCRYPTION";
-  const witness = witnessFor(vfs, head.rollback.witnessClass);
+  const witness = witnessFor(vfs, kind);
   const state = await witness.report(head.pairId, head.direction, {
     nextOffset: effective.nextOffset,
     nextSequence: effective.nextSequence,
@@ -299,7 +339,7 @@ async function directionMeters(vfs: Vfs, store: LoadedStore): Promise<DirectionM
     verification: { failureCount: effective.failureCount, frozen: frozenHalf(store) },
     maxRemainingSends: remainingRecords,
     limitedBy,
-    witness: { class: displayWitnessClass(head), state }
+    witness: { class: kind, state }
   };
 }
 
@@ -313,7 +353,10 @@ async function buildSummary(vfs: Vfs, pairId: string): Promise<PairSummary> {
     label: meta.label,
     createdAt: meta.createdAt,
     destroyed: false,
-    meters: { "A->B": await directionMeters(vfs, pair["A->B"]), "B->A": await directionMeters(vfs, pair["B->A"]) }
+    meters: {
+      "A->B": await directionMeters(vfs, pair["A->B"], meta.witness),
+      "B->A": await directionMeters(vfs, pair["B->A"], meta.witness)
+    }
   };
 }
 
@@ -355,22 +398,17 @@ async function genImpl(vfs: Vfs, req: Req<"gen">): Promise<GenResult> {
         `N=${capacityRecords}); too short: ${short.map((s) => s.name).join(", ")}. Nothing was written.`
     );
   }
-  // §6 platform caveat: the browser File API exposes no filesystem identity, so
-  // it cannot detect two aliases of one file the way the CLI does. It de-
-  // duplicates by a full byte comparison of the DECLARED sources — two sources
-  // identical over the required bytes would XOR to zeros — and states the limit.
-  for (let i = 0; i < req.sources.length; i += 1) {
-    for (let j = i + 1; j < req.sources.length; j += 1) {
-      if (bytesEqualPrefix(req.sources[i].bytes, req.sources[j].bytes, required)) {
-        throw new EngineRefused(
-          "duplicate-source",
-          `sources "${req.sources[i].name}" and "${req.sources[j].name}" carry identical bytes over the required ` +
-            `${required}, so the XOR would cancel them to zeros; one file is one source. (The browser cannot check ` +
-            `filesystem identity, so it compares content — a stated limitation of this edition.) Nothing was written.`
-        );
-      }
-    }
-  }
+  // NO content-dependent deduplication, and NO inspection of the combined
+  // bytes by value. If at least one declared source is uniform and independent
+  // of the others, the XOR is exactly uniform over the FULL space — every
+  // combined value, all-zeros included, is a legitimate draw. Refusing a source
+  // because its bytes equal another's would condition the accepted distribution
+  // (the same mistake as the removed all-zero tripwire), so it is not done.
+  // The browser File API exposes no filesystem identity (no inode), so this
+  // edition CANNOT prove two selections are aliases of one file the way the CLI
+  // does — a stated limitation (docs/BROWSER-SECURITY.md §6). Refusing a literal
+  // same-object re-selection is a UI concern (the picker can compare handles);
+  // the engine, which sees only bytes, never judges source content.
 
   const declarations: SourceDeclaration[] = req.sources.map((s) => ({
     name: s.name,
@@ -386,10 +424,10 @@ async function genImpl(vfs: Vfs, req: Req<"gen">): Promise<GenResult> {
   combined.fill(0); // in-memory hygiene only; no erasure claim
 
   const pairId = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
-  const rollback: BrowserRollback =
-    req.witnessClass === "browser-independent-store"
-      ? { witnessClass: "browser-independent-store", config: {} }
-      : { witnessClass: "none", config: {} };
+  // The frozen head is NEVER forked: rollback is always the CLI's { none }
+  // (§2). The browser's own witness kind is a product choice recorded in the
+  // browser-only pair.json below, outside these bytes.
+  const rollback: BrowserRollback = { witnessClass: "none", config: {} };
 
   const headFor = (direction: PadDirection): HeadV2 => ({
     formatVersion: 2,
@@ -427,12 +465,16 @@ async function genImpl(vfs: Vfs, req: Req<"gen">): Promise<GenResult> {
   const secretBA = secretFor(slices.baEncryption, slices.baAuthentication);
   const createdAt = new Date().toISOString();
 
+  const witnessKind: BrowserWitnessKind = req.witnessClass;
   await vfs.withLock(pairId, async (): Promise<void> => {
     // §12.4: per half, secret.bin is durable before head.json and the init line.
     await initStore(vfs, storeDir(pairId, "A->B"), headFor("A->B"), secretAB);
     await initStore(vfs, storeDir(pairId, "B->A"), headFor("B->A"), secretBA);
-    await writePairMeta(vfs, { pairId, label: req.label, createdAt });
-    await witnessFor(vfs, rollback.witnessClass).bootstrap(pairId);
+    // Provision the browser-local witness (explicit event), THEN commit the
+    // pair with pair.json last: a crash before pair.json leaves a fresh store
+    // with no committed browser witness (browser-none, nothing advanced yet).
+    await witnessFor(vfs, witnessKind).bootstrap(pairId);
+    await writePairMeta(vfs, { pairId, label: req.label, createdAt, witness: witnessKind });
   });
 
   secretAB.fill(0);
@@ -478,13 +520,14 @@ async function burnImpl(vfs: Vfs, req: Req<"burn">): Promise<BurnResult> {
   const plaintext = req.plaintext;
   return vfs.withLock(pairId, async (): Promise<BurnResult> => {
     const pair = await loadPair(vfs, pairId);
+    const kind = await witnessKindFor(vfs, pairId);
     // S0 — checks, all free.
     requireNotFrozen(pair);
     const direction = directionFor(req.as, "burn");
     const store = pair[direction];
     const { head, effective } = store;
     const prefix = storeDir(pairId, direction);
-    const witness = await witnessPreflight(vfs, store);
+    const witness = await witnessPreflight(vfs, store, kind);
 
     const record = head.recordPolicy.record;
     let payload: Uint8Array;
@@ -593,6 +636,7 @@ async function openImpl(vfs: Vfs, req: Req<"open">): Promise<OpenResult> {
   const pairId = req.pairId;
   return vfs.withLock(pairId, async (): Promise<OpenResult> => {
     const pair = await loadPair(vfs, pairId);
+    const kind = await witnessKindFor(vfs, pairId);
     const direction = directionFor(req.as, "open");
     const store = pair[direction];
     const { head, effective } = store;
@@ -671,7 +715,7 @@ async function openImpl(vfs: Vfs, req: Req<"open">): Promise<OpenResult> {
 
     // O2 — state gates, free.
     requireNotFrozen(pair);
-    const witness = await witnessPreflight(vfs, store);
+    const witness = await witnessPreflight(vfs, store, kind);
     const attempts = effective.attempts.get(sequence) ?? 0;
     if (attempts >= head.authentication.verifyAttemptLimit) {
       throw new EngineRefused(
@@ -808,10 +852,11 @@ async function retireImpl(vfs: Vfs, req: Req<"retire">): Promise<RetireResult> {
   const throughSequence = requireNonNeg(req.throughSequence, "throughSequence");
   return vfs.withLock(pairId, async (): Promise<RetireResult> => {
     const pair = await loadPair(vfs, pairId);
+    const kind = await witnessKindFor(vfs, pairId);
     const store = pair[direction];
     const { head, effective } = store;
     const prefix = storeDir(pairId, direction);
-    const witness = await witnessPreflight(vfs, store);
+    const witness = await witnessPreflight(vfs, store, kind);
     if (throughSequence >= head.authentication.capacityRecords) {
       throw new EngineRefused(
         "sequence-malformed",
@@ -1057,13 +1102,15 @@ const BUNDLE_FILES: readonly string[] = [
   `${SUBDIR["B->A"]}/${SECRET_FILE}`,
   `${SUBDIR["B->A"]}/${JOURNAL_FILE}`
 ];
+const BUNDLE_FILE_SET = new Set(BUNDLE_FILES);
 
 async function exportImpl(vfs: Vfs, req: Req<"export-pair">): Promise<ExportResult> {
   const pairId = req.pairId;
   return vfs.withLock(pairId, async (): Promise<ExportResult> => {
     await requireNotDestroyed(vfs, pairId);
+    await requireImportComplete(vfs, pairId);
     await requirePair(vfs, pairId);
-    const files: { path: string; bytes: Uint8Array }[] = [];
+    const files: CourierFile[] = [];
     for (const rel of BUNDLE_FILES) {
       const bytes = await vfs.readFile(`${pairId}/${rel}`);
       if (bytes === null) {
@@ -1071,56 +1118,164 @@ async function exportImpl(vfs: Vfs, req: Req<"export-pair">): Promise<ExportResu
       }
       files.push({ path: rel, bytes });
     }
-    return { ok: true, op: "export-pair", bundle: { pairId, files } };
+    // §4: the container is packed IN THE WORKER and returned as one transferred
+    // buffer. No pad material is base64-stringified on the UI thread.
+    const container = packContainer(pairId, files);
+    return { ok: true, op: "export-pair", container, fileCount: files.length };
   });
 }
 
-async function importImpl(vfs: Vfs, req: Req<"import-pair">): Promise<ImportResult> {
-  const bundle = req.bundle;
-  const pairId = bundle.pairId;
-  if (!HEX_32.test(pairId)) {
-    throw new EngineRefused("malformed-bundle", `bundle pairId must be exactly 32 lowercase hex characters (found ${JSON.stringify(pairId)}).`);
+// Exactly the expected FORMAT-V2 files — no unknown, no duplicate, none missing.
+function validateBundleFileSet(files: CourierFile[]): string | null {
+  const seen = new Set<string>();
+  for (const f of files) {
+    if (!BUNDLE_FILE_SET.has(f.path)) {
+      return `bundle path ${JSON.stringify(f.path)} is not one of this store's files.`;
+    }
+    if (seen.has(f.path)) {
+      return `bundle path ${JSON.stringify(f.path)} appears more than once.`;
+    }
+    seen.add(f.path);
   }
+  const missing = BUNDLE_FILES.filter((p) => !seen.has(p));
+  if (missing.length > 0) {
+    return `bundle is missing store file(s): ${missing.join(", ")}.`;
+  }
+  return null;
+}
+
+// Remove the six store files (and their two direction dirs) under a root. Works
+// on every Vfs backing: MemoryVfs keys by full path, so the leaf files are
+// removed explicitly; OPFS/Node also drop the now-empty dirs.
+async function removeStoreFiles(vfs: Vfs, root: string): Promise<void> {
+  for (const rel of BUNDLE_FILES) {
+    await vfs.remove(`${root}/${rel}`);
+  }
+  await vfs.remove(`${root}/${SUBDIR["A->B"]}`);
+  await vfs.remove(`${root}/${SUBDIR["B->A"]}`);
+}
+
+// Discard any INCOMPLETE import of this pairId (never a committed pair — the
+// caller checks that first): the partial store, its browser metadata, its
+// witness journal, the import marker, and the staging tree. Idempotent.
+async function discardIncompleteImport(vfs: Vfs, pairId: string): Promise<void> {
+  await removeStoreFiles(vfs, pairId);
+  await vfs.remove(pairMetaPath(pairId));
+  await vfs.remove(importMarkerPath(pairId));
+  await vfs.remove(`witness/${pairId}.log`);
+  await vfs.remove(pairId);
+  await removeStoreFiles(vfs, stagingDir(pairId));
+  await vfs.remove(stagingDir(pairId));
+}
+
+// A COMMITTED (active) pair with this id: a head.json is present AND the pair is
+// not mid-import (no importing.json). A pair still carrying the import marker is
+// not committed, so a retry may clean and redo it.
+async function committedPairExists(vfs: Vfs, pairId: string): Promise<boolean> {
+  if (await vfs.exists(importMarkerPath(pairId))) {
+    return false;
+  }
+  return (
+    (await vfs.exists(filePath(storeDir(pairId, "A->B"), HEAD_FILE))) ||
+    (await vfs.exists(filePath(storeDir(pairId, "B->A"), HEAD_FILE)))
+  );
+}
+
+async function importImpl(vfs: Vfs, req: Req<"import-pair">): Promise<ImportResult> {
+  // §4: the operator-selected bytes were transferred into the worker; unpack and
+  // validate the WHOLE container here before anything touches the store.
+  const unpacked = unpackContainer(req.container);
+  if (!unpacked.ok) {
+    throw new EngineRefused("malformed-bundle", `${unpacked.message} Nothing was imported.`);
+  }
+  const pairId = unpacked.pairId;
+  if (!HEX_32.test(pairId)) {
+    throw new EngineRefused(
+      "malformed-bundle",
+      `bundle pairId must be exactly 32 lowercase hex characters (found ${JSON.stringify(pairId)}). Nothing was imported.`
+    );
+  }
+  const witnessKind: BrowserWitnessKind = req.witnessClass ?? "browser-local-witness";
+
   return vfs.withLock(pairId, async (): Promise<ImportResult> => {
     await requireNotDestroyed(vfs, pairId);
-    if (
-      (await vfs.exists(filePath(storeDir(pairId, "A->B"), HEAD_FILE))) ||
-      (await vfs.exists(filePath(storeDir(pairId, "B->A"), HEAD_FILE)))
-    ) {
+    if (await committedPairExists(vfs, pairId)) {
       throw new EngineRefused(
         "pair-exists",
         `a pair with id ${pairId} already exists in this browser; importing would overwrite it. Nothing was imported.`
       );
     }
-    const allowed = new Set(BUNDLE_FILES);
-    for (const f of bundle.files) {
-      if (!allowed.has(f.path)) {
-        throw new EngineRefused("malformed-bundle", `bundle path ${JSON.stringify(f.path)} is not an allowed store file.`);
+    // A prior interrupted/failed import of this same pairId leaves no active
+    // pair, only removable partial/staging files: clear them so a retry is
+    // never blocked by a ghost, and so bootstrap starts from a clean witness.
+    await discardIncompleteImport(vfs, pairId);
+
+    // §6 STAGE + VALIDATE. The whole bundle is validated in importing/<pairId>/
+    // — file set, both headers (incl. rollback:none-only, so a CLI store whose
+    // frozen witness class the browser cannot honour is REFUSED, not
+    // downgraded), journals, secret sizes, reconciliation, pairId and direction
+    // agreement — before ANY of it is made active. On any failure the staging is
+    // removed and nothing active was ever written.
+    const setError = validateBundleFileSet(unpacked.files);
+    if (setError) {
+      throw new EngineRefused("malformed-bundle", `${setError} Nothing was imported.`);
+    }
+    for (const f of unpacked.files) {
+      await vfs.writeFileAtomic(`${stagingDir(pairId)}/${f.path}`, f.bytes);
+    }
+    let ab: LoadedStore | null = null;
+    let ba: LoadedStore | null = null;
+    try {
+      const loadedAB = await loadStore(vfs, `${stagingDir(pairId)}/${SUBDIR["A->B"]}`);
+      if (!loadedAB.ok) {
+        throw new EngineRefused(loadedAB.reason, `imported A->B store: ${loadedAB.message}`);
       }
+      const loadedBA = await loadStore(vfs, `${stagingDir(pairId)}/${SUBDIR["B->A"]}`);
+      if (!loadedBA.ok) {
+        throw new EngineRefused(loadedBA.reason, `imported B->A store: ${loadedBA.message}`);
+      }
+      if (loadedAB.head.pairId !== pairId || loadedBA.head.pairId !== pairId) {
+        throw new EngineRefused("malformed-bundle", `the bundle's head.json pairId disagrees with the container pairId ${pairId}. Nothing was imported.`);
+      }
+      if (loadedAB.head.direction !== "A->B" || loadedBA.head.direction !== "B->A") {
+        throw new EngineRefused("malformed-bundle", `the bundle's two halves are not a matched A->B / B->A pair. Nothing was imported.`);
+      }
+      ab = loadedAB;
+      ba = loadedBA;
+    } catch (error) {
+      await removeStoreFiles(vfs, stagingDir(pairId));
+      await vfs.remove(stagingDir(pairId));
+      throw error;
+    }
+
+    // §6 COMMIT. Everything is validated. Mark the pair provisioning FIRST (so a
+    // crash mid-copy leaves an inactive, retryable pair — never a partial active
+    // one), copy the validated files in, bootstrap the witness to the imported
+    // high-waters (only after the FORMAT-V2 state is validated), write pair.json
+    // (the commit), then clear the marker and the staging.
+    await vfs.writeFileAtomic(importMarkerPath(pairId), enc.encode(JSON.stringify({ pairId, at: new Date().toISOString() })));
+    for (const f of unpacked.files) {
       await vfs.writeFileAtomic(`${pairId}/${f.path}`, f.bytes);
     }
-    const ab = await loadStore(vfs, storeDir(pairId, "A->B"));
-    if (!ab.ok) {
-      throw new EngineRefused(ab.reason, `imported A->B store: ${ab.message}`);
-    }
-    const ba = await loadStore(vfs, storeDir(pairId, "B->A"));
-    if (!ba.ok) {
-      throw new EngineRefused(ba.reason, `imported B->A store: ${ba.message}`);
-    }
-    if (ab.head.pairId !== pairId || ba.head.pairId !== pairId) {
-      throw new EngineRefused("malformed-bundle", `the bundle's head.json pairId disagrees with the declared pairId ${pairId}.`);
-    }
-    await writePairMeta(vfs, { pairId, label: req.label, createdAt: new Date().toISOString() });
-    // Align the witness to the imported store's high-waters so a fresh import
-    // is not spuriously refused witness-regressed (independent-store class).
-    for (const direction of ["A->B", "B->A"] as const) {
-      const loaded = direction === "A->B" ? ab : ba;
-      await witnessFor(vfs, loaded.head.rollback.witnessClass).advance(pairId, direction, {
-        encryptionNextOffset: loaded.effective.nextOffset,
-        authenticationNextSequence: loaded.effective.nextSequence,
-        attemptsReserved: loaded.effective.attemptsReserved
+    if (witnessKind === "browser-local-witness") {
+      await witnessFor(vfs, "browser-local-witness").bootstrap(pairId, {
+        "A->B": {
+          encryptionNextOffset: ab.effective.nextOffset,
+          authenticationNextSequence: ab.effective.nextSequence,
+          attemptsReserved: ab.effective.attemptsReserved
+        },
+        "B->A": {
+          encryptionNextOffset: ba.effective.nextOffset,
+          authenticationNextSequence: ba.effective.nextSequence,
+          attemptsReserved: ba.effective.attemptsReserved
+        }
       });
     }
+    await writePairMeta(vfs, { pairId, label: req.label, createdAt: new Date().toISOString(), witness: witnessKind });
+    await vfs.remove(importMarkerPath(pairId)); // COMMIT: the pair is now active
+    await removeStoreFiles(vfs, stagingDir(pairId));
+    await vfs.remove(stagingDir(pairId));
+
     const pair = await buildSummary(vfs, pairId);
     return { ok: true, op: "import-pair", pair };
   });
