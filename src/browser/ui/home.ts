@@ -20,7 +20,7 @@ import type { PairSummary } from "../engine/protocol.ts";
 
 const STEPS: [string, string][] = [
   ["Create a pad", "It is made on your device and never uploaded."],
-  ["Give a copy to one person", "Hand them the pad file, or send it somewhere only the two of you can reach."],
+  ["Give a copy to one person", "Give them the pad file privately."],
   ["Message each other", "From then on you can both send and open messages."]
 ];
 
