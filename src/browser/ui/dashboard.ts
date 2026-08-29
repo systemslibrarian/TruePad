@@ -25,6 +25,7 @@ import {
   recordModeLabel
 } from "./format.ts";
 import { readRole, sendDirection } from "./role.ts";
+import { hidePair } from "./hidden.ts";
 import { PARTY_NAME } from "./format.ts";
 import { savePadFileButton } from "./courier.ts";
 import type { Ctx } from "./context.ts";
@@ -125,7 +126,17 @@ function retirePanel(ctx: Ctx, pairId: string): HTMLElement {
   );
 }
 
-function renderDestroyed(ctx: Ctx, root: HTMLElement, info: { label: string }): void {
+// A dead pad. The statement stays exactly as honest as it was — nothing here
+// resets, restores or reuses anything. "Create a new pad" is the ordinary
+// create flow producing a NEW pad with a new id and new material; "Hide" is a
+// display preference and touches neither the store nor the tombstone.
+function renderDestroyed(ctx: Ctx, root: HTMLElement, info: { pairId: string; label: string }): void {
+  const onHide = (): void => {
+    hidePair(info.pairId);
+    ctx.toast("Disabled pad hidden. It is still permanently disabled.", "info");
+    ctx.navigate({ name: "home" });
+  };
+
   mount(
     root,
     h(
@@ -151,7 +162,29 @@ function renderDestroyed(ctx: Ctx, root: HTMLElement, info: { label: string }): 
           h("p", { text: "It can no longer send or open messages, and there is no way back." }),
           h("p", { class: "faint", text: "Software can forget its reference to pad material; it cannot prove that flash forgot the bytes." })
         )
-      })
+      }),
+      h(
+        "div",
+        { class: "stack-sm" },
+        h("p", { text: "To keep messaging this person, make a new pad and give them a copy of it." }),
+        h(
+          "div",
+          { class: "btn-row" },
+          h(
+            "button",
+            { class: "btn primary", type: "button", on: { click: () => ctx.navigate({ name: "create" }) } },
+            icon("plus"),
+            h("span", { text: "Create a new pad" })
+          )
+        ),
+        h("hr", { class: "divider" }),
+        h(
+          "div",
+          { class: "stack-sm" },
+          h("button", { class: "linklike", type: "button", on: { click: onHide } }, h("span", { text: "Hide this disabled pad" })),
+          h("p", { class: "faint", text: "Hiding only takes it off your home screen. It stays permanently disabled, and this pad file can never be added back." })
+        )
+      )
     )
   );
 }
@@ -162,7 +195,7 @@ export async function renderDashboard(ctx: Ctx, root: HTMLElement, pairId: strin
     if (reply.kind === "refused" && reply.reason === "pair-destroyed") {
       const list = await ctx.engine.listPairs();
       const summary = list.ok ? list.pairs.find((p) => p.pairId === pairId) : undefined;
-      renderDestroyed(ctx, root, { label: summary?.label ?? "" });
+      renderDestroyed(ctx, root, { pairId, label: summary?.label ?? "" });
       return;
     }
     mount(

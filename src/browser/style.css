@@ -827,6 +827,30 @@ samp,
   margin-top: var(--s3);
 }
 
+/* Disabled pads are deliberately NOT pad cards: no brass rule, no capacity, no
+   chevron affordance. Quiet, last on the page, and never mixed into the list of
+   pads you can actually use. */
+.disabled-pads {
+  margin-top: var(--s6);
+}
+
+.disabled-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  padding: var(--s2) 0;
+}
+
+.disabled-row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-dim);
+}
+
 .home-links {
   display: flex;
   gap: var(--s5);
