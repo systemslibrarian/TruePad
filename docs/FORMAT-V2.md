@@ -955,8 +955,22 @@ entry, which no other writer may modify while this operation holds that pair's
 lock — so the lock is not held across a user-facing operation.
 
 The witness lock inherits the pair lock's stance verbatim: fail-closed on
-leftovers, **no pid-liveness guessing**. A contending updater waits briefly and
-then refuses rather than proceeding unserialised. The availability consequence
+leftovers, **no pid-liveness guessing**. A contending updater waits and then
+refuses rather than proceeding unserialised.
+
+**The lock is probed at preflight, and the probe is what keeps a leftover
+free.** The advance acquires the lock *after* the §12 durable commit, so a lock
+nobody will ever release would let every operation commit, retire the record's
+pad, and only then fail — destroying one record per invocation, on every pair
+sharing that witness, indefinitely. That would be strictly worse than the lost
+update the lock prevents, whose refusal is free. So the preflight acquires and
+immediately releases the lock on a short bound, alongside the writability
+probe, and a leftover refuses `locked` before anything is consumed. The advance
+waits far longer, because refusing *there* costs pad. Like the writability
+probe this is a probe, not a guarantee: a peer taking the lock between probe
+and advance still costs the one in-flight record — the bound §15.3 already
+states, unchanged, not a second loss row. No new refusal name is introduced;
+a held witness is the existing `locked` refusal. The availability consequence
 is stated rather than hidden: a lock left behind by a crash or SIGKILL makes
 **every pair sharing that witness** refuse until an operator confirms nothing
 holds it and removes the file. That is the intended trade — a refusal is an

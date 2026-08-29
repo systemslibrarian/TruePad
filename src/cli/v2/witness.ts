@@ -219,7 +219,14 @@ const LOCK_SUFFIX = ".lock";
 // A witness RMW is a read, a small JSON rewrite, and two fsyncs — milliseconds.
 // Waiting briefly lets honest concurrent pairs through; refusing after the
 // bound keeps a stale lock from hanging an operator forever.
-const LOCK_WAIT_MS = 5_000;
+// The advance runs AFTER the durable commit, so refusing there costs the
+// record. Wait generously: honest contention on a shared witness is a
+// millisecond-scale RMW, and waiting is always cheaper than losing pad.
+const LOCK_WAIT_MS = 30_000;
+// The preflight probe runs BEFORE anything is consumed, so refusing there is
+// free. Wait only briefly: its job is to catch the PERSISTENT failure — a lock
+// left behind by a crash — not to queue behind a live peer.
+const LOCK_PROBE_MS = 1_000;
 const LOCK_POLL_MS = 20;
 
 export type WitnessLockRefusal = { reason: "witness-locked" | "witness-path-unsafe"; message: string };
@@ -244,38 +251,31 @@ function sleepSync(ms: number): void {
 // The lock must name the witness AUTHORITY, not the spelling of a path. Two
 // stores may reach one witness through different text: relative vs absolute,
 // through "..", through a symlinked parent directory, or — on a
-// case-insensitive filesystem — through different case. `realpathSync` on the
-// parent collapses the first three; it does NOT collapse case, because it
-// returns the path as given, so the on-disk spelling of the basename is
-// resolved separately (see canonicalBasename). One authority, one lock.
+// case-insensitive volume — through different case.
 //
-// A symlinked witness is refused outright: the advance's
-// renameSync(tmp, path) REPLACES THE SYMLINK with a regular file rather than
-// writing through it, so the authority silently forks in two and a second
-// store still pointing at the target would witness nothing. That cannot be
-// locked around.
+// EXCLUSION does not actually depend on collapsing all of those. The lock file
+// is created in the witness's OWN directory, so it inherits that directory's
+// name-equivalence relation: on a case-insensitive volume `witness.json.lock`
+// and `Witness.json.lock` are one file and O_EXCL excludes across them
+// (verified on APFS), and on a case-sensitive volume the two witnesses were
+// never one file to begin with. `realpathSync` is what collapses "..", ".",
+// "//" and symlinked parents; it does NOT collapse case — it returns the path
+// as given (also verified on APFS), so anyone reading this should not believe
+// otherwise.
 //
-// A basename ending in `.lock` is refused too: it would collide with the lock
-// file of a witness configured one directory entry away, and a release could
-// then unlink a live authority's lock.
+// Canonicalising the basename anyway buys DETERMINISM, not exclusion: one
+// authority yields one lock path whatever spelling reached it, which is what
+// lets the ownership check on release compare a path it can trust and lets a
+// refusal name a file the operator will recognise.
 //
-// What this does NOT establish, stated rather than invented: a hard link is
-// indistinguishable from the original by realpath, and two bind mounts or two
-// network paths onto one file can canonicalise differently. Identity here is
-// the platform's path identity and no more — never a hash of witness or pad
-// content (N17).
-// The on-disk spelling of `name` inside `realDir`. On a case-INSENSITIVE
-// filesystem — APFS, the default on this project's own dev platform, and most
-// SMB mounts — `/w/Witness.json` and `/w/witness.json` are ONE file, but
-// `realpathSync` returns the path AS GIVEN rather than the canonical case, so
-// canonicalising with realpath alone would still hand those two spellings two
-// different locks and the lost update would reproduce in full.
-//
-// An EXACT directory entry always wins, which keeps this correct on a
-// case-SENSITIVE filesystem where the two names really are two files. Only when
-// no exact entry exists is a unique case-insensitive match substituted — the
-// signature of a case-insensitive filesystem resolving a differently-spelled
-// path to one file.
+// A symlinked witness is refused outright: renameSync REPLACES a symlinked
+// final component with a regular file instead of writing through it, so the
+// authority would silently fork in two and a store configured with the link's
+// target would stop being witnessed. A basename ending in `.lock` is refused
+// as reserved. What identity does NOT establish, stated rather than invented:
+// a hard link is indistinguishable by realpath, and two bind mounts or network
+// paths onto one file can canonicalise differently — never a hash of witness
+// or pad content (N17).
 function canonicalBasename(realDir: string, name: string): string {
   let entries: string[];
   try {
@@ -344,7 +344,11 @@ export function witnessLockPath(path: string): string {
 // refuses and names the file to remove. It does NOT decide whether the recorded
 // pid is alive: pids are reused, and a wrong guess here would let two writers
 // into the read-modify-write this lock exists to prevent.
-export function acquireWitnessLock(path: string, held?: { pairId: string; direction: PadDirection }): () => void {
+export function acquireWitnessLock(
+  path: string,
+  held?: { pairId: string; direction: PadDirection },
+  waitMs: number = LOCK_WAIT_MS
+): () => void {
   const lockPath = witnessLockPath(path);
   // The documented recovery is "confirm nothing holds this witness, then remove
   // the file", and the holder is BY CONSTRUCTION a different pair in a
@@ -357,7 +361,7 @@ export function acquireWitnessLock(path: string, held?: { pairId: string; direct
     `pid ${process.pid} host ${hostname()}` +
     (held ? ` pair ${held.pairId}/${held.direction}` : "") +
     ` since ${new Date().toISOString()}`;
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  const deadline = Date.now() + waitMs;
   for (;;) {
     let fd: number;
     try {
@@ -386,7 +390,7 @@ export function acquireWitnessLock(path: string, held?: { pairId: string; direct
         throw new WitnessLockError({
           reason: "witness-locked",
           message:
-            `the rollback witness at ${path} is locked by ${holder} and did not free within ${LOCK_WAIT_MS}ms. One ` +
+            `the rollback witness at ${path} is locked by ${holder} and did not free within ${waitMs}ms. One ` +
             "witness may record several pairs, so its update is serialised across processes. If that process is " +
             `gone (a crash or SIGKILL leaves this file behind), confirm no other TruePad operation is running ` +
             `against this witness and remove ${lockPath}. This is deliberately not decided by inspecting the ` +
@@ -537,6 +541,36 @@ export function witnessPathSafe(path: string): { ok: true } | { ok: false; reaso
   }
 }
 
+// Preflight LOCK probe (§15.3). The advance's read-modify-write is serialised
+// by a lock beside the witness, and that lock is acquired AFTER the durable
+// commit — so a lock nobody will ever release (one left behind by a crash or
+// SIGKILL) would let every operation commit, retire the record's pad, and then
+// fail to advance: one record of one-time pad destroyed per invocation, on
+// every pair sharing that witness, forever. That is strictly worse than the
+// lost update this lock exists to prevent, whose refusal is free.
+//
+// So the lock is probed here too — acquired and immediately released, on a
+// short bound — turning the one PERSISTENT lock failure into a free refusal
+// before anything is consumed. Exactly parallel to witnessWritable, and with
+// the same honesty: it is a probe, not a guarantee. A peer that takes the lock
+// between this probe and the advance still costs the one in-flight record,
+// which is the bound §15.3 already states — unchanged, not a second loss row.
+//
+// The short bound is deliberate: this probe's job is to catch the leftover, not
+// to queue behind a live peer. Honest contention is left to the advance, which
+// waits far longer precisely because refusing there is expensive.
+export function witnessLockProbe(path: string): { ok: true } | { ok: false; reason: "witness-locked"; message: string } {
+  try {
+    acquireWitnessLock(path, undefined, LOCK_PROBE_MS)();
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof WitnessLockError && error.reason === "witness-locked") {
+      return { ok: false, reason: "witness-locked", message: error.message };
+    }
+    throw error;
+  }
+}
+
 // Preflight writability probe. The advance write (§15.3) atomic-replaces
 // through a temp file in the witness DIRECTORY, so a witness whose FILE reads
 // but whose DIRECTORY cannot be written (a read-only mount, a write-protected
@@ -572,12 +606,18 @@ export function witnessWritable(path: string): { ok: true } | { ok: false; reaso
 // Creates the file if absent (a fresh witness, first commit). Atomic replace +
 // fsync + directory fsync (§10). Throws on any I/O failure — the caller has
 // already committed the store durably, so a throw is the §15.3 loss row.
-export function advanceWitness(path: string, pairId: string, direction: PadDirection, counters: WitnessCounters): void {
+export function advanceWitness(
+  path: string,
+  pairId: string,
+  direction: PadDirection,
+  counters: WitnessCounters,
+  waitMs: number = LOCK_WAIT_MS
+): void {
   // SERIALISE FIRST. The read below and the replace at the end are one
   // read-modify-write over a file that may witness several pairs; the pad lock
   // the caller holds is per-pair and does not cover it. Everything from here to
   // the directory fsync runs under the witness authority's own lock.
-  const release = acquireWitnessLock(path, { pairId, direction });
+  const release = acquireWitnessLock(path, { pairId, direction }, waitMs);
   try {
     advanceLocked(path, pairId, direction, counters);
   } finally {

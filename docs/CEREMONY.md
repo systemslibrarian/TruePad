@@ -393,11 +393,14 @@ Stated here rather than distributed as caveats:
   pid is still alive — pids are reused, and a wrong guess would admit the second
   writer the lock exists to exclude — **every pair sharing that witness refuses
   until an operator confirms no TruePad operation is running against it and
-  removes `<witness>.lock`**. That is operator recovery, and it is deliberate: a
-  refusal is an availability failure the operator can see, a lost update is a
-  silent rollback of committed state that nothing would ever report. Removing
-  the lock while a real operation holds it re-opens the defect, so confirm
-  first.
+  removes `<witness>.lock`**. That refusal is **free** — the lock is probed at
+  preflight, before anything is consumed, precisely so a leftover cannot make
+  every operation retire a record's pad and then withhold the output. That is
+  operator recovery, and it is deliberate: a refusal is an availability failure
+  the operator can see, a lost update is a silent rollback of committed state
+  that nothing would ever report. Removing the lock while a real operation holds
+  it re-opens the defect, so confirm first — the lock file names the pid, the
+  host, and the pair holding it.
 - **The witness path must be one file, named absolutely.** A relative path
   resolves against the working directory, so one header would name different
   witnesses from different directories; it is refused at load. A witness path

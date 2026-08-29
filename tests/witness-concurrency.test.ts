@@ -3,7 +3,13 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { acquireWitnessLock, advanceWitness, witnessLockPath, WitnessLockError } from "../src/cli/v2/witness";
+import {
+  acquireWitnessLock,
+  advanceWitness,
+  witnessLockPath,
+  witnessLockProbe,
+  WitnessLockError
+} from "../src/cli/v2/witness";
 import type { WitnessCounters } from "../src/cli/v2/witness";
 
 /* ============================================================================
@@ -261,7 +267,7 @@ describe("witness lock and fail-closed discipline", () => {
 
     let thrown: unknown;
     try {
-      advanceWitness(path, PAIR_B, "A->B", counters);
+      advanceWitness(path, PAIR_B, "A->B", counters, 200);
     } catch (error) {
       thrown = error;
     }
@@ -280,7 +286,7 @@ describe("witness lock and fail-closed discipline", () => {
     writeWitness(path, { [`${PAIR_A}/A->B`]: flat(1) });
     const lock = witnessLockPath(path);
     writeFileSync(lock, "pid 999999 since 2020-01-01T00:00:00.000Z");
-    expect(() => advanceWitness(path, PAIR_B, "A->B", counters)).toThrow();
+    expect(() => advanceWitness(path, PAIR_B, "A->B", counters, 200)).toThrow();
 
     // The operator confirms nothing holds the witness and removes the file.
     rmSync(lock);
@@ -359,7 +365,7 @@ describe("witness path identity", () => {
 
     let thrown: unknown;
     try {
-      advanceWitness(link, PAIR_B, "A->B", flat(1));
+      advanceWitness(link, PAIR_B, "A->B", flat(1), 200);
     } catch (error) {
       thrown = error;
     }
@@ -409,7 +415,7 @@ describe("witness path identity", () => {
     writeWitness(path, {});
     let thrown: unknown;
     try {
-      advanceWitness(path, PAIR_A, "A->B", flat(1));
+      advanceWitness(path, PAIR_A, "A->B", flat(1), 200);
     } catch (error) {
       thrown = error;
     }
@@ -445,13 +451,52 @@ describe("witness path identity", () => {
     expect(readFileSync(lock, "utf8")).toContain("4242");
   });
 
+  it("a leftover lock is caught by the FREE preflight probe, not by the costly advance", () => {
+    // The advance acquires the lock AFTER the durable commit, so a lock nobody
+    // will ever release would let every operation retire a record's pad and
+    // then withhold the output — one one-time-pad record destroyed per
+    // invocation, on every pair sharing the witness. That is strictly worse
+    // than the lost update the lock prevents, whose refusal is free. The probe
+    // is what keeps the persistent failure free.
+    const path = join(dir, "witness.json");
+    writeWitness(path, { [`${PAIR_A}/A->B`]: flat(1) });
+    writeFileSync(witnessLockPath(path), "pid 999999 host ghost since 2020-01-01T00:00:00.000Z");
+
+    const probe = witnessLockProbe(path);
+    expect(probe.ok).toBe(false);
+    if (!probe.ok) {
+      expect(probe.reason).toBe("witness-locked");
+      expect(probe.message).toContain("pid 999999");
+    }
+    // Clearing it restores the probe, and the probe leaves no lock behind.
+    rmSync(witnessLockPath(path));
+    expect(witnessLockProbe(path).ok).toBe(true);
+    expect(existsSync(witnessLockPath(path))).toBe(false);
+  }, 30_000);
+
+  it("O_EXCL excludes across differently-cased lock paths, so canonicalisation is determinism not exclusion", () => {
+    // Recording the real reason exclusion holds, because the tempting
+    // explanation is wrong: realpath does NOT canonicalise case. The lock file
+    // lives in the witness's own directory and inherits its name-equivalence,
+    // so on a case-insensitive volume the two lock names ARE one file.
+    const a = join(dir, "w.json.lock");
+    const b = join(dir, "W.JSON.LOCK");
+    writeFileSync(a, "holder");
+    if (!existsSync(b)) {
+      return; // case-sensitive volume: they are genuinely two files
+    }
+    // Same volume, same directory: the differently-cased name is the same file,
+    // so an O_EXCL create against it must fail.
+    expect(() => writeFileSync(b, "second", { flag: "wx" })).toThrow(/EEXIST/);
+  });
+
   it("an exclusive holder blocks a second acquirer, and releasing lets it through", () => {
     const path = join(dir, "witness.json");
     writeWitness(path, {});
     const release = acquireWitnessLock(path);
     expect(existsSync(witnessLockPath(path))).toBe(true);
     // A second acquire refuses rather than proceeding unserialised.
-    expect(() => acquireWitnessLock(path)).toThrow(WitnessLockError);
+    expect(() => acquireWitnessLock(path, undefined, 200)).toThrow(WitnessLockError);
     release();
     const again = acquireWitnessLock(path);
     again();

@@ -77,6 +77,7 @@ import {
 import {
   advanceWitness,
   readWitnessCounters,
+  witnessLockProbe,
   witnessPathSafe,
   witnessWritable,
   WitnessLockError,
@@ -421,6 +422,17 @@ function witnessPreflight(store: LoadedStore2): void {
   const writable = witnessWritable(path);
   if (!writable.ok) {
     throw new Refused2(writable.reason, writable.message);
+  }
+  // ...and the same for the serialisation lock. The advance acquires it AFTER
+  // the durable commit, so a leftover lock would otherwise retire this record's
+  // pad and then withhold the output — every invocation, on every pair sharing
+  // the witness. Probed here, that becomes a free refusal.
+  const unlocked = witnessLockProbe(path);
+  if (!unlocked.ok) {
+    // Reported as the EXISTING `locked` refusal (§14.1), not a new witness-*
+    // name: it is the same class of event as a held pad lock, wants the same
+    // operator action, and §15's refusal taxonomy is not extended here.
+    throw new Refused2("locked", unlocked.message);
   }
   if (result.counters !== null) {
     const { encryptionNextOffset, authenticationNextSequence, attemptsReserved } = result.counters;
