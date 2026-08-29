@@ -168,14 +168,22 @@ an explicit event at generation or a successful import — never inferred from a
 unexpectedly empty file — so the old truncate-then-crash hole (an advanced
 witness silently becoming "fresh") is closed.
 
-The one honestly-stated residual: a crash **exactly during** the durable-attempt
-advance of an `open` (before verification) can lose that single `attemptsReserved`
-increment, so a subsequent targeted backup-restore to the pre-attempt state could
-refill **one** verification guess on that sequence. Each guess is bounded by the
-one-time tag (~2⁻¹²⁸), so the effect on the §8.4 forgery bound is negligible, and
-it is the same **browser-local** limitation as above (a witness in the same origin
-as the store it guards). No released ciphertext's keystream, and no released
-plaintext, is ever reusable this way.
+The one honestly-stated residual concerns an **unused reservation**, not an extra
+verification. In `open` the durable order is: the O3 attempt reservation, then
+`await witness.advance(...)`, and **only after that advance succeeds** does O4
+read the auth record and evaluate the tag. So a torn/failed pre-verification
+witness advance **aborts the operation before any tag verification is
+performed** — no verification query is issued on that crash path. A subsequent
+backup-restore may recover that single reserved-but-**unused** attempt, but
+because no verification occurred, **the finite per-sequence verification-query
+bound (`verifyAttemptLimit`) is not increased by this crash path.** The
+forgery probability per verification query remains exactly the Wegman–Carter
+per-attempt bound defined in `FORMAT-V2.md` (§5 / N7: `ε = 65540·2⁻¹²⁸` at
+`maxCiphertextBytes = 1048576`, and at most `verifyAttemptLimit·ε` per record) —
+this crash path adds no query to which that bound applies. It is the same
+**browser-local** limitation as above (a witness in the same origin as the store
+it guards). No released ciphertext's keystream, and no released plaintext, is
+ever reusable this way.
 
 **PROTOCOL.** Whatever the kind, the witness records exactly the three
 frozen monotone counters — `encryptionNextOffset`,

@@ -10,8 +10,8 @@
  * deliberately NOT the CLI's Linux-ext4 power-loss claim.
  *
  * The Vfs is rooted at the OPFS root: a path like "<pairId>/a-to-b/head.json"
- * maps to nested directory handles, and the witness store lives at a distinct
- * root path "witness/<pairId>.json". Each method opens a sync access handle,
+ * maps to nested directory handles, and the append-only rollback witness lives
+ * at a distinct root path "witness/<pairId>.log". Each method opens a sync access handle,
  * does its work, flushes where it writes and closes — OPFS permits one open
  * sync handle per file at a time, and `withLock(pairId)` serialises the
  * mutators per pair, so the handles never collide. `withLock` is real mutual
