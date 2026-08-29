@@ -210,6 +210,20 @@ whole of what it claims, is: "Uniform if at least one declared source was
 uniform and independent of the others." The tool records each source's
 declared origin; it cannot verify physical randomness and never says it can.
 
+The Browser Edition offers the same combiner behind two clearly separated
+**source classes**: *Generate for me*, which is `crypto.getRandomValues()` and
+is labelled a cryptographically secure **platform/computational** source — never
+"truly random", never "physical", never "information-theoretically verified" —
+and, under Advanced options, the **True OTP ceremony**, where operator-supplied
+material becomes *eligible* for the information-theoretic premise if and only
+if the operator's physical assumptions are actually true. That path states
+"TruePad cannot determine whether a file is truly random." and requires an
+explicit operator **declaration**, which is a declaration and not a
+verification result: nothing about it is persisted, and Store Format v2 has no
+`trueRandom` / `informationTheoretic` / `verifiedRandom` field for it to be
+written to. See `docs/PRODUCT-CLAIMS.md` ("The two source classes") and
+`docs/BROWSER-SECURITY.md` §6.1.
+
 **The availability price, stated plainly.** Every in-window forgery attempt
 costs the receiver one durable write — the attempt reservation, persisted
 before any verification, so a crash loses an attempt and never grants one.

@@ -406,3 +406,90 @@ Stated here rather than distributed as caveats:
 Each of these is a hypothesis the ceremony carries so the format's claims
 (§14.2) can stay exact. Where a limitation ends is where the pad book, the
 operator, and the physical world begin — which is what a ceremony is for.
+
+---
+
+## 7. The Browser Edition source ceremony
+
+The Browser Edition offers the same **combiner** and a deliberately weaker
+**ceremony**, because a web page cannot require what §1 requires. It never
+pretends otherwise. Authoritative detail: `docs/BROWSER-SECURITY.md` §6.1.
+
+### 7.1 Two source classes, one combiner
+
+The combiner is identical to the CLI's and identical on both browser paths:
+every declared source independently supplies the full `L = 2·(E + 32·N)` bytes;
+they are XORed byte-for-byte; the result is partitioned into the four secret
+slices. No KDF, no extractor, no hash conditioner, no whitening, no statistical
+gate, no content-dependent rejection. Sources are never concatenated and never
+split between them; surplus beyond `L` is unused.
+
+- **Generate for me (default).** `crypto.getRandomValues()`. Stated to a normal
+  operator as *"TruePad uses your device's cryptographic random generator."*,
+  and under Security as a **cryptographically secure platform generator whose
+  security rests on computational and platform assumptions** — never "truly
+  random", never "physical", never "information-theoretically verified".
+- **Use external random material.** Under *Advanced options → Randomness*, the
+  **True OTP ceremony**: the operator supplies material whose origin they
+  control. It states the combiner, then *"TruePad cannot determine whether a
+  file is truly random."*, then that the guaranteeing source must also be
+  **secret**.
+
+### 7.2 What the browser can and cannot enforce
+
+| §1 step | CLI | Browser Edition |
+| --- | --- | --- |
+| offline / tmpfs workspace | asserted by flag | **cannot require** — a page has no mount table and no network control. Nothing is uploaded (`BROWSER-SECURITY.md` §7), which is a different statement |
+| ≥ 2 sources of distinct physics | ≥ 2 `--source`, physics asserted | **one source is permitted**; multi-source is offered and encouraged, physics remain the operator's assertion |
+| every source supplies the full `L` | enforced (`source-too-short`) | **enforced identically** — the same engine refusal, and the UI marks a short file before Create |
+| one file is one source | enforced by device+inode | **cannot be enforced** — the File API exposes no filesystem identity. The UI refuses the **same `File` object** re-selected in one session (an object-reference check that reads no bytes); two separate picks of one file are indistinguishable, and the ceremony copy says so |
+| two blank peer media, distinctness checked | enforced by realpath / device+inode | **not applicable** — the browser hands the operator one pad file to deliver (§7.3) |
+| source quality | declared, not measured | declared, not measured, plus an explicit **operator declaration** |
+
+### 7.3 The operator declaration, and what it is not
+
+Creating with external material requires ticking, verbatim:
+
+> I understand that TruePad cannot verify physical randomness. For an
+> information-theoretic one-time-pad claim, at least one selected source must
+> actually be uniformly random, secret, independent of the other combined
+> sources, and never previously used.
+
+It is an **operator declaration and never a verification result**. It changes
+nothing about the material; it is **not persisted**; and no `trueRandom`,
+`informationTheoretic` or `verifiedRandom` field exists in Store Format v2 for
+it to be written to. The only record is the existing `sourceDeclarations[]`.
+Words like *verified*, *certified*, *passed*, *confirmed* and *proven* do not
+appear on this path.
+
+The created pad's statement stays conditional: the verbatim §7 verdict, then
+*"TruePad did not verify that assumption."*, then *"If that source assumption is
+true, the pad material satisfies the information-theoretic randomness
+requirement of a one-time pad."*
+
+### 7.4 Delivery is the other half
+
+The browser's distribution model is one pad file, handed over by the operator —
+not §2's two provisioned peer media. The essential warning is unchanged on both
+paths: **the pad file is the secret**; possession allows reading *and* forging;
+ciphertext may travel publicly, pad material may not. For the external ceremony
+the edition adds:
+
+> For an end-to-end information-theoretic secrecy claim, the pad file must also
+> be delivered through a secret method whose confidentiality does not itself
+> depend on computational encryption assumptions. Physical handoff on removable
+> media is the clearest ceremony.
+
+Email, Dropbox, Google Drive, OneDrive, ordinary cloud storage and encrypted
+messengers **do not preserve that claim**. They may be computationally secure
+ways to move a file — a different guarantee, not a weaker form of this one.
+
+### 7.5 Independence of claims
+
+A genuinely physical source gives the Browser Edition none of the guarantees it
+does not claim (`BROWSER-SECURITY.md` §8): no power-loss durability, no
+independent external rollback witness, no physical erasure, no survival across
+"clear site data". Nor does it strengthen the Wegman–Carter authentication
+bound or the operational reuse-prevention machinery — and neither of those
+proves anything about the source's physics. Three separate guarantees, never
+quoted for one another.

@@ -14,12 +14,39 @@
  * ========================================================================= */
 
 import { h, icon, mount } from "./dom.ts";
-import { backLink, callout, choice, filePicker, panel, screenHead } from "./components.ts";
+import { backLink, callout, choice, filePicker, kv, panel, screenHead } from "./components.ts";
 import { savePadFileButton } from "./courier.ts";
 import { fmtInt } from "./format.ts";
 import { writeRole } from "./role.ts";
+import {
+  CEREMONY_ALIASING,
+  CEREMONY_CANNOT_VERIFY,
+  CEREMONY_COMBINER,
+  CEREMONY_CONDITIONAL,
+  CEREMONY_SECRECY,
+  CEREMONY_TITLE,
+  DELIVERY_CEREMONY,
+  DELIVERY_ESSENTIAL,
+  DELIVERY_NOT_ITS,
+  DEVICE_DETAIL,
+  DEVICE_SHORT,
+  DEVICE_SOURCE_LABEL,
+  EXTERNAL_CONDITIONAL,
+  EXTERNAL_NOT_VERIFIED,
+  EXTERNAL_SHORT,
+  EXTERNAL_SOURCE_LABEL,
+  OPERATOR_DECLARATION,
+  ceremonyLengthRule
+} from "./source-claims.ts";
 import type { Ctx } from "./context.ts";
-import type { BrowserWitnessClass } from "../engine/protocol.ts";
+import type { BrowserWitnessClass, ManifestView } from "../engine/protocol.ts";
+
+// What the created screen says about where the pad material came from. The
+// external verdict is carried through verbatim from the ENGINE's gen reply, so
+// the UI can never restate the combiner's claim in its own words.
+type SourceClaim =
+  | { kind: "device" }
+  | { kind: "external"; verdict: string; manifest: ManifestView };
 
 const AUTH_RECORD_BYTES = 32;
 const requiredL = (e: number, n: number): number => 2 * (e + AUTH_RECORD_BYTES * n);
@@ -55,7 +82,11 @@ export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
     record: "variable" as "variable" | "fixed",
     f: 256,
     witness: "browser-local-witness" as BrowserWitnessClass,
-    files: [] as { file: File; origin: string }[]
+    files: [] as { file: File; origin: string }[],
+    // The operator declaration for the external ceremony. Transient UI state:
+    // it gates the button and is never persisted, never sent to the engine,
+    // and never written to the store — a checkbox is not a cryptographic fact.
+    declared: false
   };
 
   const nameInput = h("input", { type: "text", placeholder: "e.g. Chat with Sam", value: "" }) as HTMLInputElement;
@@ -108,17 +139,40 @@ export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
       choice({
         name: "source",
         title: "Generate for me",
-        desc: "TruePad makes the randomness on your device.",
+        desc: DEVICE_SHORT,
         checked: state.source === "generate",
         onSelect: () => { state.source = "generate"; paintSources(); paintExternal(); revalidate(); }
       }),
       choice({
         name: "source",
-        title: "Use my own random file",
-        desc: "Supply your own random bytes instead.",
+        title: "Use external random material",
+        desc: EXTERNAL_SHORT,
         checked: state.source === "file",
         onSelect: () => { state.source = "file"; paintSources(); paintExternal(); revalidate(); }
       })
+    );
+  }
+
+  // The declaration checkbox is built once and kept, so re-painting the file
+  // list never silently clears an acknowledgement the operator already gave.
+  const declareBox = h("input", {
+    type: "checkbox",
+    on: { change: (e) => { state.declared = (e.target as HTMLInputElement).checked; revalidate(); } }
+  }) as HTMLInputElement;
+
+  // The expert disclosure. It describes the COMBINER exactly (that part is
+  // unconditional) and then says, in the plainest sentence in the app, that
+  // selecting this path is not an act of randomness generation.
+  function ceremonyPanel(required: number): HTMLElement {
+    return h(
+      "div",
+      { class: "stack-sm ceremony" },
+      h("div", { class: "field-label", text: CEREMONY_TITLE }),
+      h("p", { text: CEREMONY_COMBINER }),
+      h("p", { text: CEREMONY_CONDITIONAL }),
+      callout({ tone: "warn", title: CEREMONY_CANNOT_VERIFY, body: CEREMONY_SECRECY }),
+      h("p", { class: "faint", text: ceremonyLengthRule(required) }),
+      h("p", { class: "faint", text: CEREMONY_ALIASING })
     );
   }
 
@@ -148,10 +202,18 @@ export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
     });
     const picker = filePicker({
       action: "Choose a random file",
-      hint: "Any file of truly random, secret bytes",
+      hint: `Each file must hold at least ${fmtInt(L)} bytes`,
       multiple: true,
       onChange: (files) => {
-        for (const f of files) state.files.push({ file: f, origin: "" });
+        for (const f of files) {
+          // The ONE identity check the browser actually supports: the very same
+          // File object handed back twice in one session. It compares object
+          // references, never bytes — source CONTENT can never condition
+          // acceptance. Two separate picks of one underlying file are
+          // indistinguishable here, which is why CEREMONY_ALIASING says so.
+          if (state.files.some((e) => e.file === f)) continue;
+          state.files.push({ file: f, origin: "" });
+        }
         picker.input.value = "";
         picker.setName(null);
         paintExternal();
@@ -160,14 +222,12 @@ export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
     });
     mount(
       externalFields,
-      callout({
-        tone: "info",
-        title: "TruePad uses your bytes exactly as given",
-        body: "It does not check where they came from — that is your responsibility. Only truly random, secret material makes a secure pad."
-      }),
+      ceremonyPanel(L),
       picker.el,
-      state.files.length > 0 ? h("div", { class: "source-list" }, ...rows) : null
+      state.files.length > 0 ? h("div", { class: "source-list" }, ...rows) : null,
+      h("label", { class: "confirm-row declare-row" }, declareBox, h("span", { text: OPERATOR_DECLARATION }))
     );
+    declareBox.checked = state.declared;
   }
 
   function applySize(): void {
@@ -197,6 +257,9 @@ export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
         if (s.file.size < L) return `“${s.file.name}” is too small for this size.`;
         if (s.origin.trim().length === 0) return `Add a note about where “${s.file.name}” came from.`;
       }
+      // The declaration is required to CREATE, and it is the operator's
+      // statement about the world — not a result TruePad computed.
+      if (!state.declared) return "Confirm the source declaration to continue.";
     }
     return null;
   }
@@ -213,7 +276,8 @@ export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
     if (state.source === "generate") {
       sources = [{
         name: "device-random",
-        declaredOrigin: "Generated by your device's cryptographic random generator (crypto.getRandomValues).",
+        declaredOrigin:
+          "Generated by your device's cryptographic random generator (crypto.getRandomValues) — a computational CSPRNG source, not verified physical randomness.",
         bytes: drbgBytes(L)
       }];
     } else {
@@ -222,14 +286,30 @@ export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
     }
     createBtn.disabled = true;
     validity.textContent = "Creating…";
-    const reply = await ctx.engine.gen({
-      label: nameInput.value.trim() || "Untitled pad",
-      sources,
-      encryptionBytes: state.e,
-      authRecords: state.n,
-      recordBytes: state.record === "fixed" ? state.f : undefined,
-      witnessClass: state.witness
-    });
+    let reply;
+    try {
+      // A successful call TRANSFERS these buffers, detaching them here — the
+      // strongest outcome, and the normal one. The finally covers the path
+      // where postMessage itself threw and the page's copies are still live.
+      // Best-effort in-memory hygiene, no erasure claim; the operator's file
+      // on disk is untouched either way (arrayBuffer() hands out a copy).
+      reply = await ctx.engine.gen({
+        label: nameInput.value.trim() || "Untitled pad",
+        sources,
+        encryptionBytes: state.e,
+        authRecords: state.n,
+        recordBytes: state.record === "fixed" ? state.f : undefined,
+        witnessClass: state.witness
+      });
+    } finally {
+      for (const s of sources) {
+        try {
+          s.bytes.fill(0);
+        } catch {
+          /* already detached by the transfer — nothing left to wipe */
+        }
+      }
+    }
     createBtn.disabled = false;
     validity.textContent = "";
     if (!reply.ok) {
@@ -240,7 +320,13 @@ export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
     // person's imported copy takes role B — the UI never asks about this.
     const pairId = reply.pair.pairId;
     writeRole(pairId, "A");
-    renderCreated(ctx, root, pairId);
+    // The verdict and manifest are the ENGINE's, shown back verbatim.
+    renderCreated(
+      ctx,
+      root,
+      pairId,
+      state.source === "generate" ? { kind: "device" } : { kind: "external", verdict: reply.verdict, manifest: reply.manifest }
+    );
   }
 
   const advanced = panel(
@@ -332,7 +418,47 @@ export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
 
 /* ---- the courier ceremony ----------------------------------------------- */
 
-function renderCreated(ctx: Ctx, root: HTMLElement, pairId: string): void {
+// Level 3, collapsed: which class of source made this pad, and exactly what
+// that does and does not license. A layperson who never opened Advanced took
+// the device path and sees the same short screen they always did.
+function sourceClaimPanel(claim: SourceClaim): HTMLElement {
+  if (claim.kind === "device") {
+    return panel(
+      "Details",
+      {},
+      kv([{ term: "Randomness source", value: DEVICE_SOURCE_LABEL }]),
+      h("p", { class: "faint", text: DEVICE_DETAIL })
+    );
+  }
+  const { manifest } = claim;
+  return panel(
+    "Details",
+    { open: true },
+    kv([
+      { term: "Randomness source", value: EXTERNAL_SOURCE_LABEL },
+      { term: "Sources combined", value: fmtInt(manifest.sources.length) },
+      { term: "Bytes each source supplied", value: fmtInt(manifest.requiredSourceLength) }
+    ]),
+    // Verbatim from the engine — the combiner states its own claim.
+    h("p", { class: "verdict-line", text: claim.verdict }),
+    h("p", { text: EXTERNAL_NOT_VERIFIED }),
+    h("p", { class: "faint", text: EXTERNAL_CONDITIONAL }),
+    h(
+      "ul",
+      { class: "source-manifest" },
+      ...manifest.sources.map((src) =>
+        h(
+          "li",
+          {},
+          h("span", { class: "sr-name", text: src.name }),
+          h("span", { class: "faint", text: `${fmtInt(src.lengthBytes)} bytes supplied, ${fmtInt(src.unusedBytes)} unused — ${src.declaredOrigin}` })
+        )
+      )
+    )
+  );
+}
+
+function renderCreated(ctx: Ctx, root: HTMLElement, pairId: string, claim: SourceClaim): void {
   const startBtn = h(
     "button",
     { class: "btn lg", type: "button", on: { click: () => ctx.navigate({ name: "pair", pairId }) } },
@@ -349,6 +475,20 @@ function renderCreated(ctx: Ctx, root: HTMLElement, pairId: string): void {
     }
   });
 
+  // The pad source is only half of an OTP deployment: the pad FILE is secret
+  // too. The essential warning is the same on both paths; the ceremony
+  // disclosure is the expert half, and it is careful that a computationally
+  // secure transfer is a DIFFERENT claim, not a weaker form of this one.
+  const delivery =
+    claim.kind === "external"
+      ? panel(
+          "Delivering the pad file",
+          { open: true },
+          h("p", { text: DELIVERY_CEREMONY }),
+          h("p", { class: "faint", text: DELIVERY_NOT_ITS })
+        )
+      : null;
+
   mount(
     root,
     h(
@@ -356,12 +496,10 @@ function renderCreated(ctx: Ctx, root: HTMLElement, pairId: string): void {
       { class: "screen" },
       h("div", { class: "ok-head" }, icon("check"), h("h1", { text: "Pad created" })),
       h("p", { class: "muted", text: "One thing left: give the other person their copy. Until they have it, neither of you can read anything the other sends." }),
-      callout({
-        tone: "warn",
-        title: "The pad file is the secret",
-        body: "Anyone who holds it can read and forge this pad's messages. Hand it over in person, or send it on a channel only the two of you control — never email, upload, or sync it."
-      }),
+      callout({ tone: "warn", title: "The pad file is the secret", body: DELIVERY_ESSENTIAL }),
+      delivery,
       h("div", { class: "btn-row" }, saveBtn),
+      sourceClaimPanel(claim),
       h("hr", { class: "divider" }),
       h("div", { class: "btn-row" }, startBtn)
     )

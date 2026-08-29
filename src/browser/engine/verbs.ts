@@ -420,8 +420,15 @@ async function genImpl(vfs: Vfs, req: Req<"gen">): Promise<GenResult> {
     req.sources.map((s) => s.bytes),
     required
   );
-  const slices = partition(combined, capacity, capacityRecords);
-  combined.fill(0); // in-memory hygiene only; no erasure claim
+  let slices: ReturnType<typeof partition>;
+  try {
+    slices = partition(combined, capacity, capacityRecords);
+  } finally {
+    // partition() returns COPIES, never views of `combined` (§7), so the
+    // combined buffer is dead the moment it returns — or throws. In-memory
+    // hygiene only; no erasure claim.
+    combined.fill(0);
+  }
 
   const pairId = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
   // The frozen head is NEVER forked: rollback is always the CLI's { none }
@@ -466,23 +473,30 @@ async function genImpl(vfs: Vfs, req: Req<"gen">): Promise<GenResult> {
   const createdAt = new Date().toISOString();
 
   const witnessKind: BrowserWitnessKind = req.witnessClass;
-  await vfs.withLock(pairId, async (): Promise<void> => {
-    // §12.4: per half, secret.bin is durable before head.json and the init line.
-    await initStore(vfs, storeDir(pairId, "A->B"), headFor("A->B"), secretAB);
-    await initStore(vfs, storeDir(pairId, "B->A"), headFor("B->A"), secretBA);
-    // Provision the browser-local witness (explicit event), THEN commit the
-    // pair with pair.json last: a crash before pair.json leaves a fresh store
-    // with no committed browser witness (browser-none, nothing advanced yet).
-    await witnessFor(vfs, witnessKind).bootstrap(pairId);
-    await writePairMeta(vfs, { pairId, label: req.label, createdAt, witness: witnessKind });
-  });
-
-  secretAB.fill(0);
-  secretBA.fill(0);
-  slices.abEncryption.fill(0);
-  slices.abAuthentication.fill(0);
-  slices.baEncryption.fill(0);
-  slices.baAuthentication.fill(0);
+  try {
+    await vfs.withLock(pairId, async (): Promise<void> => {
+      // §12.4: per half, secret.bin is durable before head.json and the init line.
+      await initStore(vfs, storeDir(pairId, "A->B"), headFor("A->B"), secretAB);
+      await initStore(vfs, storeDir(pairId, "B->A"), headFor("B->A"), secretBA);
+      // Provision the browser-local witness (explicit event), THEN commit the
+      // pair with pair.json last: a crash before pair.json leaves a fresh store
+      // with no committed browser witness (browser-none, nothing advanced yet).
+      await witnessFor(vfs, witnessKind).bootstrap(pairId);
+      await writePairMeta(vfs, { pairId, label: req.label, createdAt, witness: witnessKind });
+    });
+  } finally {
+    // AFTER the awaited provisioning has settled — never before it, so nothing
+    // is zeroed while initStore still needs the bytes. The finally is what
+    // covers the failure path: a store that failed half-way leaves its files
+    // for the caller to see, but these in-memory copies do not outlive it.
+    // In-memory hygiene only; no erasure claim.
+    secretAB.fill(0);
+    secretBA.fill(0);
+    slices.abEncryption.fill(0);
+    slices.abAuthentication.fill(0);
+    slices.baEncryption.fill(0);
+    slices.baAuthentication.fill(0);
+  }
 
   // The manifest is operational metadata only — NOTHING pad-derived (N14).
   const manifest: ManifestView = {

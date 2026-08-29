@@ -16,6 +16,16 @@
 
 import { h, icon, mount } from "./dom.ts";
 import { backLink, callout, chip, panel } from "./components.ts";
+import {
+  CEREMONY_CANNOT_VERIFY,
+  CEREMONY_COMBINER,
+  CEREMONY_SECRECY,
+  DELIVERY_CEREMONY,
+  DELIVERY_NOT_ITS,
+  DEVICE_DETAIL,
+  EXTERNAL_CONDITIONAL,
+  EXTERNAL_NOT_VERIFIED
+} from "./source-claims.ts";
 import type { Ctx } from "./context.ts";
 
 type Klass = "protocol" | "platform" | "operator" | "native";
@@ -53,12 +63,32 @@ function sourcePanel(): HTMLElement {
   return panel(
     "Source — declared, not verified",
     {},
+    // The combiner and the source are two different claims with two different
+    // strengths, and this panel is where they are told apart in full.
+    h("p", { class: "faint", text: `${CEREMONY_COMBINER} That part is exact and unconditional: every declared source supplies the complete 2·(E + 32·N) bytes, they are XORed byte-for-byte, and the result is partitioned into the four secret slices. No key derivation, no extractor, no hash conditioner, no whitening, no statistical test, and no rejection that depends on what your bytes say.` }),
     h(
       "ul",
       { class: "ledger-list" },
+      ledgerItem(
+        "platform",
+        "Device-generated material is computational",
+        DEVICE_DETAIL
+      ),
+      ledgerItem(
+        "operator",
+        "External material is eligible, not established",
+        `${CEREMONY_CANNOT_VERIFY} Choosing the external ceremony is a declaration you make, never a result TruePad computed. ${EXTERNAL_NOT_VERIFIED} ${EXTERNAL_CONDITIONAL}`
+      ),
+      ledgerItem("operator", "The guaranteeing source must also be secret", CEREMONY_SECRECY),
       ledgerItem("operator", "Provenance is your assertion", "One file is one source; several are XORed. You declare each source's origin; this tool cannot test physical provenance and never claims to."),
-      ledgerItem("operator", "Aliasing cannot be detected", "The browser File API exposes no filesystem identity, so the edition cannot tell that two selected files alias one underlying file — a limit the CLI does not have. It states this rather than inventing identity from a pad-derived hash."),
-      ledgerItem("protocol", "The verdict is scoped", "Generation prints the combiner's verdict verbatim: uniform IF at least one declared source was uniform and independent. Browser DRBG material is labelled computational — not information-theoretic entropy.")
+      ledgerItem("operator", "Aliasing cannot be detected", "The browser File API exposes no filesystem identity, so the edition cannot tell that two selected files alias one underlying file — a limit the CLI does not have. It states this rather than inventing identity from a pad-derived hash, and it never inspects source bytes to guess."),
+      ledgerItem("protocol", "The verdict is scoped", "Generation prints the combiner's verdict verbatim: uniform IF at least one declared source was uniform and independent. Browser DRBG material is labelled computational — not information-theoretic entropy."),
+      ledgerItem("operator", "Delivery is the other half", `${DELIVERY_CEREMONY} ${DELIVERY_NOT_ITS}`),
+      ledgerItem(
+        "native",
+        "The source claim and the platform claim are independent",
+        "A genuinely physical source does not give this edition power-loss durability, an external rollback witness, or physical erasure — and the device generator does not take any of those away. What the browser does not claim below is unchanged by which source you chose."
+      )
     )
   );
 }

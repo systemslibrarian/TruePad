@@ -14,6 +14,15 @@
  * caught: a typed refusal becomes a structured { ok:false, kind:"refused" },
  * anything else a { ok:false, kind:"error" } with only its message — never a
  * stack that could carry secret context into the UI thread's logs.
+ *
+ * This is also the ownership boundary for secret-bearing REQUEST buffers. The
+ * UI transfers them, so by the time they arrive the page's copies are already
+ * detached and these are the only ones left; the worker zeroes them once the
+ * verb has returned, on the success and failure paths alike. That is in-memory
+ * hygiene and nothing more — it does not prove a garbage-collected copy is
+ * gone, that the browser's internals forgot the bytes, or that physical RAM
+ * was erased. It never touches the operator's file on disk: `File.arrayBuffer()`
+ * hands out a fresh buffer, not a view of the file.
  * ========================================================================= */
 
 import type { EngineRequest, EngineResponse } from "./protocol.ts";
@@ -37,8 +46,30 @@ function collectTransfers(response: EngineResponse): Transferable[] {
   return [];
 }
 
+// The request buffers that carry secret material: gen's declared sources and
+// import-pair's packed courier container. Everything else on a request is
+// operational metadata. Zeroing is best-effort — a detached or frozen buffer
+// simply throws and is skipped.
+function secretRequestBuffers(request: EngineRequest): Uint8Array[] {
+  if (request.op === "gen") return request.sources.map((s) => s.bytes);
+  if (request.op === "import-pair") return [request.container];
+  if (request.op === "burn") return [request.plaintext];
+  return [];
+}
+
+function wipe(buffers: Uint8Array[]): void {
+  for (const buffer of buffers) {
+    try {
+      buffer.fill(0);
+    } catch {
+      /* already detached or non-writable — nothing to do */
+    }
+  }
+}
+
 self.onmessage = async (event: MessageEvent<EngineRequest>): Promise<void> => {
   const request = event.data;
+  const secrets = secretRequestBuffers(request);
   let response: EngineResponse;
   try {
     response = await handle(vfs, request);
@@ -52,6 +83,10 @@ self.onmessage = async (event: MessageEvent<EngineRequest>): Promise<void> => {
       kind: "error",
       message: (error as Error).message
     };
+  } finally {
+    // After handle() has returned or thrown — never before, so nothing is
+    // wiped while a verb still needs it.
+    wipe(secrets);
   }
   self.postMessage(response, collectTransfers(response));
 };

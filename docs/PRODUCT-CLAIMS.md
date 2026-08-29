@@ -85,8 +85,123 @@ column, do not rely on it.
 | 13 | Power-loss durability of a mid-write | NATIVE-ONLY / UNVERIFIED | **not claimed** — OPFS documents no power-loss semantics (the CLI claims it only on Linux ext4, `FORMAT-V2.md` §10) | forthcoming | forthcoming |
 | 14 | An **independent external** rollback witness (a separate host failure domain) | NATIVE-ONLY | **not offered** — the browser cannot reach an independent host domain; it offers only the browser-local classes of §4, and says so verbatim | forthcoming | forthcoming |
 | 15 | Physical erasure of pad material on destroy | NATIVE-ONLY / not claimed | **not claimed** — *"Software can forget its reference to pad material; it cannot prove that flash forgot the bytes."* Zero-overwrite is best-effort hygiene | forthcoming | forthcoming |
-| 16 | Physical source provenance / one-file-one-source **by filesystem identity** | OPERATOR / platform caveat | declared, not verified; the browser File API exposes no inode, so alias detection is limited to a content comparison of *declared* sources (§6) — stated, not invented | forthcoming | forthcoming |
+| 16 | Physical source provenance / one-file-one-source **by filesystem identity** | OPERATOR / platform caveat | declared, not verified; the browser File API exposes no inode, so alias detection is limited to spotting the *same `File` object* re-selected in one session — an object-reference check, never a comparison of source bytes (§6, §9). Source **content never conditions acceptance** — stated, not invented | forthcoming | forthcoming |
 | 17 | Store survives "clear site data", profile restore, or an Incognito context ending | OPERATOR | **not protected** — these destroy or regress the OPFS store; stated operator responsibilities (§2) | forthcoming | forthcoming |
+
+---
+
+## The two source classes — and the one combiner
+
+Rows 9 and 16 above are about the **source**. This section separates the
+source claim from the **combiner** claim, because they have different
+strengths and conflating them is the single easiest way to overclaim a
+one-time pad.
+
+### The combiner is the same on both paths, and it is exact
+
+Every declared source independently supplies the complete
+`L = 2·(E + 32·N)` bytes. Those bytes are combined by **bytewise XOR**:
+
+```
+M[i] = S1[i] XOR S2[i] XOR … XOR Sn[i]        for every 0 <= i < L
+```
+
+and `M` is partitioned into the four secret slices
+`[A→B enc][A→B auth][B→A enc][B→A auth]` (`FORMAT-V2.md` §7). Between the
+declared sources and the secret body there is **no KDF, no extractor, no hash
+conditioner, no whitening, no compression, no modulo folding, and no
+statistical test that gates acceptance**. Sources are never concatenated and
+never split between them — each one covers the whole pad. Surplus bytes beyond
+`L` are unused.
+
+Nothing conditions on what the bytes *say*: an all-zero combined result is
+accepted (it is a legitimate draw from the uniform distribution, and refusing
+it would condition the accepted distribution), and two sources are never
+refused for holding equal bytes. This is **PROTOCOL**, and it does not get
+weaker or stronger with the source.
+
+Why multi-source XOR is worth doing: if **at least one** declared source is
+genuinely uniform, secret, and independent of the others, the XOR is exactly
+uniform over the full space — the other sources need not be perfect, and an
+adversary who fully controls all *but* that one learns nothing. The source
+carrying the guarantee must also be **secret**; a uniform but published source
+guarantees nothing. TruePad cannot determine whether that premise is
+physically true.
+
+### The source claim is NOT the same on both paths
+
+| | Device-generated | External ceremony |
+| - | --- | --- |
+| **Source** | `crypto.getRandomValues()` — the platform's cryptographic random generator (CSPRNG) | operator-supplied files, operator-declared origin |
+| **Strength** | **computational / platform source assumption**. Real, and named as what it is | **information-theoretic *eligibility* only if** the operator's physical source assumptions are actually true |
+| **Combiner** | exact XOR construction (above) | exact XOR construction (above) |
+| **Class** | PLATFORM-OP (source) + PROTOCOL (combiner) | OPERATOR (source) + PROTOCOL (combiner) |
+| **What TruePad verified** | that it called the platform CSPRNG | **nothing about the material's physics** |
+
+The device path is **never** described as "truly random", "verified true
+randomness", "physical randomness", or "information-theoretically verified".
+The combiner may be mathematically exact while the source claim is
+computational; those are two statements, and TruePad keeps them apart.
+
+The external path's statement stays **conditional** in every rendering:
+
+> *"Uniform if at least one declared source was uniform and independent of the
+> others."* — TruePad did not verify that assumption. If that source
+> assumption is true, the pad material satisfies the information-theoretic
+> randomness requirement of a one-time pad.
+
+It is never rendered as "perfect secrecy achieved", "true OTP verified", or
+"information-theoretic security confirmed".
+
+### A checkbox is not a measurement
+
+The external path requires an explicit **operator declaration** before the pad
+can be created:
+
+> *"I understand that TruePad cannot verify physical randomness. For an
+> information-theoretic one-time-pad claim, at least one selected source must
+> actually be uniformly random, secret, independent of the other combined
+> sources, and never previously used."*
+
+This is an **OPERATOR declaration and never a verification result**. Ticking it
+changes nothing about the material, and nothing about it is written to the
+store: **no `trueRandom`, no `informationTheoretic`, no `verifiedRandom` flag
+exists in Store Format v2, and none may be added** — software cannot establish
+those facts. The only persisted record is the existing
+`head.json → sourceDeclarations[]`: each source's name, the operator's own
+origin note, and its length. Nothing pad-derived (N14).
+
+### Delivery is the other half
+
+A source claim is not an end-to-end claim. The pad **file** is the secret, and
+for an end-to-end information-theoretic secrecy claim it must also be
+delivered through a secret method whose confidentiality does not itself depend
+on computational encryption assumptions — physical handoff on removable media
+is the clearest ceremony. Email, Dropbox, Google Drive, OneDrive, ordinary
+cloud storage and encrypted messengers **do not preserve that claim**; they may
+be computationally secure ways to move a file, which is a *different*
+guarantee, not a weaker form of the same one.
+
+### The source claim and the platform claim are independent
+
+Choosing the external ceremony does **not** give the Browser Edition any of the
+guarantees in rows 13–15 and 17. It does not add power-loss durability, an
+independent external rollback witness, physical erasure on destroy, or survival
+across "clear site data". Equally, the device generator does not take any of
+those away. **A true physical source strengthens neither the authentication
+construction nor the operational reuse-prevention machinery**, and neither of
+those proves anything about the source's physics. Three separate guarantees:
+
+- **A — OTP secrecy**: XOR under genuinely uniform, independent, secret,
+  one-use material. Source is OPERATOR; combiner is PROTOCOL.
+- **B — Authentication**: `wc-one-time-v1` Wegman–Carter, and its existing
+  bounded forgery claim. PROTOCOL.
+- **C — Operational reuse prevention**: counters, journals, attempt
+  reservation, the rollback witness, locks, retirement, the destruction
+  tombstone. PROTOCOL + PLATFORM-OP.
+
+B and C do not prove A's physical-randomness premise, and A's premise does not
+strengthen B or C.
 
 ---
 
@@ -97,7 +212,9 @@ Restated from `BROWSER-SECURITY.md` §8 so it sits beside the matrix:
 - **NOT** native `fsync` / power-loss durability (row 13).
 - **NOT** an independent external rollback witness (row 14).
 - **NOT** physical erasure on `destroy` (row 15).
-- **NOT** verification of source physical provenance or uniformity (rows 9, 16).
+- **NOT** verification of source physical provenance or uniformity (rows 9, 16)
+  — on *either* source path, and the operator declaration is a declaration,
+  not a measurement.
 - **NOT** protection against "clear site data", profile restore, or an
   Incognito context evaporating the store (row 17).
 
