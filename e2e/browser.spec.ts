@@ -100,7 +100,11 @@ test("disabling a pad is a single clear confirmation, and then it refuses use", 
   await expect(page.getByRole("heading", { name: /Disable ".*"\?/ })).toBeVisible();
   await page.getByText("I understand this cannot be undone.").click();
   await page.getByRole("button", { name: "Disable this pad" }).click();
-  await expect(page.getByText("Pad disabled")).toBeVisible();
+  // Disabling lands on the disabled-pad screen itself: the honest statement,
+  // and the two things left to do with a dead pad.
+  await expect(page.getByText("This pad has been permanently disabled")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create a new pad" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remove from TruePad" })).toBeVisible();
 });
 
 test("the operational UI refuses to run inside a frame (and never starts the worker there)", async ({ page }) => {

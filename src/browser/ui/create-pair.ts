@@ -403,7 +403,21 @@ export async function renderImport(ctx: Ctx, root: HTMLElement): Promise<void> {
     const reply = await ctx.engine.importPair({ label: nameInput.value.trim() || "Untitled pad", container });
     addBtn.disabled = false;
     if (!reply.ok) {
-      mount(errorSlot, callout({ tone: "danger", title: "Could not add this pad", body: reply.message }));
+      // A pad file whose pair is tombstoned is refused by the engine and always
+      // will be — that refusal is the security property and is untouched here.
+      // What changes is only what we SAY: naming the tombstone would hand back
+      // the history of a pad the user removed, so the wording stays generic.
+      const dead = reply.kind === "refused" && reply.reason === "pair-destroyed";
+      mount(
+        errorSlot,
+        dead
+          ? callout({
+              tone: "danger",
+              title: "This pad file can't be added.",
+              body: "Nothing was added. Ask the other person for a new pad."
+            })
+          : callout({ tone: "danger", title: "Could not add this pad", body: reply.message })
+      );
       return;
     }
     // The other person created the pad (first person, role A); this imported

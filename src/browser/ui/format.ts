@@ -18,6 +18,12 @@ const INT = new Intl.NumberFormat("en-US");
 
 export const fmtInt = (n: number): string => INT.format(n);
 
+// The only claim TruePad is allowed to make about destruction, worded once and
+// shared by every screen that has to say it. It mirrors the engine's own
+// DESTROY_LIMITATION verbatim — softening either copy would be a lie.
+export const DESTRUCTION_LIMITATION =
+  "Software can forget its reference to pad material; it cannot prove that flash forgot the bytes.";
+
 export function fmtBytes(n: number): string {
   const exact = `${INT.format(n)} byte${n === 1 ? "" : "s"}`;
   if (n < 1024) return exact;

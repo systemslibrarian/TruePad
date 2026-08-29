@@ -25,6 +25,8 @@ import { renderSend } from "./ui/send.ts";
 import { renderOpen } from "./ui/open.ts";
 import { renderDestroy } from "./ui/destroy.ts";
 import { renderSecurity } from "./ui/security-status.ts";
+import { renderNotFound } from "./ui/not-found.ts";
+import { isRemoved } from "./ui/removed.ts";
 
 /* ---- worker RPC client -------------------------------------------------- */
 
@@ -316,9 +318,32 @@ async function bootstrap(): Promise<void> {
     requestPersistent
   };
 
+  // Every route that names a pad passes through here first. A pad the user
+  // removed is no longer part of the app, whatever the URL says, so its old
+  // routes resolve to a generic "Pad not found" before the engine is asked
+  // anything: no label, no status, no dates, no "Disabled", no pair id. The
+  // engine still knows the pair is tombstoned and still refuses it everywhere
+  // — it simply no longer says so to someone who asked TruePad to forget it.
+  function removedPairId(route: Route): string | null {
+    switch (route.name) {
+      case "pair":
+      case "send":
+      case "open":
+      case "destroy":
+        return isRemoved(route.pairId) ? route.pairId : null;
+      default:
+        return null;
+    }
+  }
+
   async function render(): Promise<void> {
     const route = parseHash();
     mount(mainEl, h("div", { class: "screen" }, h("p", { class: "faint", text: "Loading…" })));
+    if (removedPairId(route) !== null) {
+      renderNotFound(ctx, mainEl);
+      mainEl.focus();
+      return;
+    }
     try {
       switch (route.name) {
         case "home":

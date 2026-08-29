@@ -16,6 +16,7 @@ import { h, icon, mount } from "./dom.ts";
 import { actionTile, backLink, badge, callout, capacityBar, kv, meterBar, notice, panel, rowLink } from "./components.ts";
 import {
   authMeter,
+  DESTRUCTION_LIMITATION,
   directionLabel,
   directionStatus,
   encryptionMeter,
@@ -25,7 +26,7 @@ import {
   recordModeLabel
 } from "./format.ts";
 import { readRole, sendDirection } from "./role.ts";
-import { hidePair } from "./hidden.ts";
+import { removePair } from "./removed.ts";
 import { PARTY_NAME } from "./format.ts";
 import { savePadFileButton } from "./courier.ts";
 import type { Ctx } from "./context.ts";
@@ -128,12 +129,15 @@ function retirePanel(ctx: Ctx, pairId: string): HTMLElement {
 
 // A dead pad. The statement stays exactly as honest as it was — nothing here
 // resets, restores or reuses anything. "Create a new pad" is the ordinary
-// create flow producing a NEW pad with a new id and new material; "Hide" is a
-// display preference and touches neither the store nor the tombstone.
-function renderDestroyed(ctx: Ctx, root: HTMLElement, info: { pairId: string; label: string }): void {
-  const onHide = (): void => {
-    hidePair(info.pairId);
-    ctx.toast("Disabled pad hidden. It is still permanently disabled.", "info");
+// create flow producing a NEW pad with a new id and new material. "Remove from
+// TruePad" is the product forgetting the pad: it drops out of the UI for good,
+// its old route stops resolving, and its name is never shown again. It does
+// NOT touch the store or the tombstone — the pair stays permanently unusable
+// and this pad file can never be added back.
+export function renderDestroyed(ctx: Ctx, root: HTMLElement, info: { pairId: string; label: string }): void {
+  const onRemove = (): void => {
+    removePair(info.pairId);
+    ctx.toast("Removed from TruePad.", "info");
     ctx.navigate({ name: "home" });
   };
 
@@ -160,7 +164,7 @@ function renderDestroyed(ctx: Ctx, root: HTMLElement, info: { pairId: string; la
           "div",
           { class: "stack-sm" },
           h("p", { text: "It can no longer send or open messages, and there is no way back." }),
-          h("p", { class: "faint", text: "Software can forget its reference to pad material; it cannot prove that flash forgot the bytes." })
+          h("p", { class: "faint", text: DESTRUCTION_LIMITATION })
         )
       }),
       h(
@@ -175,15 +179,14 @@ function renderDestroyed(ctx: Ctx, root: HTMLElement, info: { pairId: string; la
             { class: "btn primary", type: "button", on: { click: () => ctx.navigate({ name: "create" }) } },
             icon("plus"),
             h("span", { text: "Create a new pad" })
+          ),
+          h(
+            "button",
+            { class: "btn ghost", type: "button", on: { click: onRemove } },
+            h("span", { text: "Remove from TruePad" })
           )
         ),
-        h("hr", { class: "divider" }),
-        h(
-          "div",
-          { class: "stack-sm" },
-          h("button", { class: "linklike", type: "button", on: { click: onHide } }, h("span", { text: "Hide this disabled pad" })),
-          h("p", { class: "faint", text: "Hiding only takes it off your home screen. It stays permanently disabled, and this pad file can never be added back." })
-        )
+        h("p", { class: "faint", text: "Removing takes this pad out of TruePad for good. It stays permanently disabled, and this pad file can never be added back." })
       )
     )
   );

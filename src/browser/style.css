@@ -334,8 +334,20 @@ samp,
   max-width: var(--w-shell);
 }
 
+/* The empty home is ONE centred column — wordmark, subtitle, Create a pad, the
+   add-a-pad line, How does this work? — and nothing beside or beneath it. Each
+   child still stretches to the column, so the full-width mobile CTA keeps
+   working; what centres them is this one text-align plus each child's own
+   centring, never a stray left-aligned block hanging off the bottom. */
 .screen.landing {
   margin-block: auto;
+  text-align: center;
+}
+
+/* An error callout is the one landing child that is a block of prose, not a
+   centred line — it keeps the full column width and reads left-aligned. */
+.screen.landing > .callout {
+  text-align: start;
 }
 
 .footer {
@@ -825,30 +837,6 @@ samp,
 
 .list-actions {
   margin-top: var(--s3);
-}
-
-/* Disabled pads are deliberately NOT pad cards: no brass rule, no capacity, no
-   chevron affordance. Quiet, last on the page, and never mixed into the list of
-   pads you can actually use. */
-.disabled-pads {
-  margin-top: var(--s6);
-}
-
-.disabled-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
-  flex-wrap: wrap;
-  padding: var(--s2) 0;
-}
-
-.disabled-row-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ink-dim);
 }
 
 .home-links {

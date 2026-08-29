@@ -11,18 +11,21 @@
  * file", not courier bundle. "The other person", not peer. Directions, records,
  * witnesses and storage internals are Level 3 and live under Security.
  *
- * "Your pads" means pads you can USE. A permanently disabled pad is not one:
- * it can never send or open anything again, so it is kept out of the working
- * list and reachable only through a quiet disclosure at the bottom — and, once
- * hidden, not from here at all. That is display only. The tombstone that
- * enforces the destruction is untouched by anything on this screen.
+ * "Your pads" means pads you can USE, and it is the only list on this screen.
+ * A permanently disabled pad can never send or open anything again, so it is
+ * not one — and there is no archive, no count and no disclosure holding the
+ * dead ones either. With no usable pad this screen is a fresh install: one
+ * centred column, and nothing underneath it.
+ *
+ * All of that is display. The tombstone that enforces a destruction is
+ * untouched by anything here, and a removed pad stays permanently unusable.
  * ========================================================================= */
 
 import { h, icon, mount } from "./dom.ts";
 import { badge, callout, capacityBar } from "./components.ts";
 import { padHealthPercent, padStatusWord } from "./format.ts";
 import type { Ctx } from "./context.ts";
-import { isHidden } from "./hidden.ts";
+import { isRemoved } from "./removed.ts";
 import type { PairSummary } from "../engine/protocol.ts";
 
 const STEPS: [string, string][] = [
@@ -77,38 +80,6 @@ function padRow(ctx: Ctx, pair: PairSummary): HTMLElement {
   );
 }
 
-// One dead pad: its name, the word Disabled, and a way in. Deliberately not a
-// pad card — nothing here should read as something you can use.
-function disabledRow(ctx: Ctx, pair: PairSummary): HTMLElement {
-  return h(
-    "div",
-    { class: "disabled-row" },
-    h("span", { class: "disabled-row-name", text: pair.label || "Untitled pad" }),
-    badge({ label: "Disabled", tone: "danger" }),
-    h(
-      "button",
-      {
-        class: "linklike",
-        type: "button",
-        on: { click: () => ctx.navigate({ name: "pair", pairId: pair.pairId }) }
-      },
-      h("span", { text: "View" })
-    )
-  );
-}
-
-// Quiet, collapsed, and last on the screen — and absent entirely when there is
-// nothing disabled left to show.
-function disabledSection(ctx: Ctx, disabled: PairSummary[]): HTMLElement | null {
-  if (disabled.length === 0) return null;
-  return h(
-    "details",
-    { class: "quiet-details disabled-pads" },
-    h("summary", { text: "Show disabled pads" }),
-    h("div", { class: "qd-body" }, ...disabled.map((p) => disabledRow(ctx, p)))
-  );
-}
-
 export async function renderHome(ctx: Ctx, root: HTMLElement): Promise<void> {
   const reply = await ctx.engine.listPairs();
   const pairs = reply.ok ? reply.pairs : [];
@@ -140,10 +111,11 @@ export async function renderHome(ctx: Ctx, root: HTMLElement): Promise<void> {
     return;
   }
 
-  // The working list is pads you can use; the dead ones are separated out here
-  // and never mixed back in. Hiding only removes a dead pad from this screen.
-  const active = pairs.filter((p) => !p.destroyed);
-  const disabled = pairs.filter((p) => p.destroyed && !isHidden(p.pairId));
+  // The working list is pads you can use. Disabled pads are not shown here at
+  // all — not in a list, not behind a disclosure, not as a count — and removed
+  // ones are filtered out ahead of everything, so nothing on this screen can
+  // name one.
+  const active = pairs.filter((p) => !p.destroyed && !isRemoved(p.pairId));
 
   // --- no usable pad: the fresh-start screen, even if dead pads exist -----
   if (active.length === 0) {
@@ -169,8 +141,7 @@ export async function renderHome(ctx: Ctx, root: HTMLElement): Promise<void> {
             h("span", { text: "Add a shared pad" })
           )
         ),
-        howItWorks(),
-        disabledSection(ctx, disabled)
+        howItWorks()
       )
     );
     return;
@@ -184,8 +155,7 @@ export async function renderHome(ctx: Ctx, root: HTMLElement): Promise<void> {
       { class: "screen" },
       h("h1", { class: "list-title", text: "Your pads" }),
       h("div", { class: "pad-list" }, ...active.map((p) => padRow(ctx, p))),
-      h("div", { class: "btn-row list-actions" }, createBtn("primary"), addLink),
-      disabledSection(ctx, disabled)
+      h("div", { class: "btn-row list-actions" }, createBtn("primary"), addLink)
     )
   );
 }

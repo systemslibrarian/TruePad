@@ -7,13 +7,18 @@
  * softened language, no undo. The engine still requires the pair id as its
  * --confirm; the UI supplies that from the pad on screen, so the operator
  * confirms by intent rather than by transcribing a hex string.
+ *
+ * Succeeding lands on the disabled-pad screen itself rather than on a private
+ * receipt, so "what a dead pad looks like" is one screen with one wording,
+ * whether you just disabled it or came back to it later — and the way to get
+ * it out of TruePad for good is right there.
  * ========================================================================= */
 
 import { h, mount } from "./dom.ts";
 import { backLink, callout } from "./components.ts";
+import { renderDestroyed } from "./dashboard.ts";
+import { DESTRUCTION_LIMITATION } from "./format.ts";
 import type { Ctx } from "./context.ts";
-
-const LIMITATION = "Software can forget its reference to pad material; it cannot prove that flash forgot the bytes.";
 
 export async function renderDestroy(ctx: Ctx, root: HTMLElement, pairId: string): Promise<void> {
   const back = () => ctx.navigate({ name: "pair", pairId });
@@ -23,25 +28,9 @@ export async function renderDestroy(ctx: Ctx, root: HTMLElement, pairId: string)
   const label = status.ok ? status.pair.label : "";
 
   if (alreadyGone) {
-    mount(
-      root,
-      h(
-        "div",
-        { class: "screen" },
-        backLink(back, "Pad"),
-        h("header", { class: "screen-head" }, h("h1", { text: "Already disabled" })),
-        callout({
-          tone: "danger",
-          title: "This pad has been permanently disabled",
-          body: h(
-            "div",
-            { class: "stack-sm" },
-            h("p", { text: "It can no longer send or open messages. There is nothing left to disable." }),
-            h("p", { class: "faint", text: LIMITATION })
-          )
-        })
-      )
-    );
+    const list = await ctx.engine.listPairs();
+    const summary = list.ok ? list.pairs.find((p) => p.pairId === pairId) : undefined;
+    renderDestroyed(ctx, root, { pairId, label: summary?.label ?? "" });
     return;
   }
 
@@ -63,22 +52,7 @@ export async function renderDestroy(ctx: Ctx, root: HTMLElement, pairId: string)
       destroyBtn.disabled = !confirmBox.checked;
       return;
     }
-    mount(
-      root,
-      h(
-        "div",
-        { class: "screen" },
-        h("header", { class: "screen-head" }, h("h1", { text: reply.alreadyDestroyed ? "Already disabled" : "Pad disabled" })),
-        h("p", { class: "muted", text: "This pad can no longer send or open messages." }),
-        h("p", { class: "faint", text: reply.limitation }),
-        h("hr", { class: "divider" }),
-        h(
-          "div",
-          { class: "btn-row" },
-          h("button", { class: "btn", type: "button", on: { click: () => ctx.navigate({ name: "home" }) } }, h("span", { text: "Back to home" }))
-        )
-      )
-    );
+    renderDestroyed(ctx, root, { pairId, label });
     window.scrollTo({ top: 0, behavior: "auto" });
   }
 
@@ -93,7 +67,7 @@ export async function renderDestroy(ctx: Ctx, root: HTMLElement, pairId: string)
         "div",
         { class: "card" },
         h("p", { text: "This permanently disables this pad. It will no longer send or open any messages, and there is no way to bring it back." }),
-        h("p", { class: "faint", text: LIMITATION }),
+        h("p", { class: "faint", text: DESTRUCTION_LIMITATION }),
         h("label", { class: "confirm-row" }, confirmBox, h("span", { text: "I understand this cannot be undone." })),
         h(
           "div",
