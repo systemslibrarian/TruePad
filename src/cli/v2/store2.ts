@@ -498,7 +498,52 @@ function validateHead(raw: unknown): { head: HeadV2 } | { why: string } {
       };
     }
     rollback = { witnessClass: "separate-state-file", config: { path: raw.rollback.config.path } };
-  } else if (witnessClass === "platform-monotonic" || witnessClass === "remote-monotonic") {
+  } else if (witnessClass === "platform-monotonic") {
+    // The class-specific config for provider tpm2-nv-counter-v1 (§15.2). It
+    // binds the pair to ONE authority: the provider, the state file, the NV
+    // index, that index's TPM Name, and the authority id. All public — no
+    // secret, no credential, nothing pad-derived. Validated here so a
+    // hand-edited header cannot point a pair at an authority of a shape this
+    // build cannot reason about.
+    const configMismatch = keyMismatch(
+      raw.rollback.config,
+      ["provider", "statePath", "nvIndex", "nvName", "authorityId"],
+      "rollback.config"
+    );
+    if (configMismatch) {
+      return { why: configMismatch };
+    }
+    const cfg = raw.rollback.config;
+    if (cfg.provider !== "tpm2-nv-counter-v1") {
+      return {
+        why:
+          `rollback.config.provider must be "tpm2-nv-counter-v1" — the only platform-monotonic provider this build ` +
+          `implements (found ${JSON.stringify(cfg.provider)})`
+      };
+    }
+    if (typeof cfg.statePath !== "string" || !isAbsolute(cfg.statePath)) {
+      return { why: "rollback.config.statePath must be an absolute path" };
+    }
+    if (typeof cfg.nvIndex !== "string" || !/^0x[0-9a-f]{8}$/.test(cfg.nvIndex)) {
+      return { why: 'rollback.config.nvIndex must be a canonical hex handle like "0x01500016"' };
+    }
+    if (typeof cfg.nvName !== "string" || !/^[0-9a-f]{4,128}$/.test(cfg.nvName)) {
+      return { why: "rollback.config.nvName must be the NV index's TPM Name in lowercase hex" };
+    }
+    if (typeof cfg.authorityId !== "string" || !/^[0-9a-f]{32}$/.test(cfg.authorityId)) {
+      return { why: "rollback.config.authorityId must be 32 lowercase hex characters" };
+    }
+    rollback = {
+      witnessClass,
+      config: {
+        provider: cfg.provider,
+        statePath: cfg.statePath,
+        nvIndex: cfg.nvIndex,
+        nvName: cfg.nvName,
+        authorityId: cfg.authorityId
+      }
+    };
+  } else if (witnessClass === "remote-monotonic") {
     rollback = { witnessClass, config: { ...raw.rollback.config } };
   } else {
     return {

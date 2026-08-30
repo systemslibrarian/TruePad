@@ -443,7 +443,11 @@ describe("rollback witness end to end", { timeout: 120_000 }, () => {
     expect(readWitness(wa).witness[key].authenticationNextSequence).toBe(before + 1);
   });
 
-  it("gen --witness-class platform-monotonic is refused witness-unsupported, nothing written", () => {
+  it("gen --witness-class platform-monotonic requires an initialised authority; it never creates one", () => {
+    // platform-monotonic is IMPLEMENTED (provider tpm2-nv-counter-v1), so gen
+    // no longer refuses the class outright. What it will not do is conjure the
+    // authority: the state file must already have been initialised by
+    // `witness platform init`, which is the only thing that touches the TPM.
     const a = join(dir, "a");
     const source = sourceFile(2 * (16 + 32 * 1));
     const gen = run(
@@ -452,30 +456,35 @@ describe("rollback witness end to end", { timeout: 120_000 }, () => {
       "--encryption-bytes", "16",
       "--auth-records", "1",
       "--witness-class", "platform-monotonic",
-      "--witness-path", "/tmp/does-not-matter.json"
+      "--witness-path", join(dir, "no-such-platform-witness.json")
     );
-    expect(gen.code).toBe(2);
-    expect(gen.stderr).toContain("refused: witness-unsupported");
+    expect(gen.code).toBe(1);
+    expect(gen.stderr).toMatch(/cannot be read/);
+    expect(gen.stderr).toMatch(/witness platform init/);
     expect(existsSync(a)).toBe(false);
 
-    // One flag without the other is a usage error (exit 1); a relative path is too.
+    // A malformed authority is refused too, and still nothing is written.
+    const bogus = join(dir, "bogus-platform.json");
+    writeFileSync(bogus, JSON.stringify({ formatVersion: 1, provider: "nope" }));
+    const bad = run(
+      "gen", a,
+      "--source", sourceFile(2 * (16 + 32 * 1)),
+      "--encryption-bytes", "16", "--auth-records", "1",
+      "--witness-class", "platform-monotonic", "--witness-path", bogus
+    );
+    expect(bad.code).toBe(1);
+    expect(bad.stderr).toMatch(/violates its own shape/);
+    expect(existsSync(a)).toBe(false);
+
+    // One flag without the other is still a usage error.
     const lonely = run(
       "gen", a,
       "--source", sourceFile(2 * (16 + 32 * 1)),
       "--encryption-bytes", "16", "--auth-records", "1",
-      "--witness-class", "separate-state-file"
+      "--witness-class", "platform-monotonic"
     );
     expect(lonely.code).toBe(1);
-    expect(lonely.stderr).toContain("must be given together");
-
-    const relative = run(
-      "gen", a,
-      "--source", sourceFile(2 * (16 + 32 * 1)),
-      "--encryption-bytes", "16", "--auth-records", "1",
-      "--witness-class", "separate-state-file", "--witness-path", "relative/w.json"
-    );
-    expect(relative.code).toBe(1);
-    expect(relative.stderr).toContain("must be an absolute path");
+    expect(existsSync(a)).toBe(false);
   });
 
   it("gen --witness-class remote-monotonic is also refused witness-unsupported (N18, the other unimplemented class)", () => {
@@ -491,27 +500,44 @@ describe("rollback witness end to end", { timeout: 120_000 }, () => {
     expect(existsSync(a)).toBe(false);
   });
 
-  it("a store whose header already names platform/remote monotonic is refused witness-unsupported at LOAD (N18, the at-load cell)", () => {
+  it("a store whose header names remote-monotonic is refused witness-unsupported at LOAD (N18, the at-load cell)", () => {
     // Header-injection: a store whose rollback.witnessClass was set to an
     // unimplemented class must be refused by burn/open/status, not silently
-    // treated as none. loadStore2 accepts the shape; the verb preflight refuses.
-    for (const cls of ["platform-monotonic", "remote-monotonic"] as const) {
-      const a = join(dir, `load-${cls}`);
-      const source = sourceFile(2 * (16 + 32 * 2));
-      expect(run("gen", a, "--source", source, "--encryption-bytes", "16", "--auth-records", "2").code).toBe(0);
-      for (const half of ["a-to-b", "b-to-a"]) {
-        const hp = join(a, half, "head.json");
-        const head = JSON.parse(readFileSync(hp, "utf8"));
-        head.rollback = { witnessClass: cls, config: {} };
-        writeFileSync(hp, JSON.stringify(head));
-      }
-      const journalBefore = readFileSync(join(a, "a-to-b", "journal.log"), "utf8");
-      const burn = run("burn", a, "--as", "A", "hi");
-      expect(burn.code).toBe(2);
-      expect(burn.stderr).toContain("refused: witness-unsupported");
-      // Free refusal: no durable write.
-      expect(readFileSync(join(a, "a-to-b", "journal.log"), "utf8")).toBe(journalBefore);
+    // treated as none. remote-monotonic remains unimplemented in this build.
+    const a = join(dir, "load-remote");
+    const source = sourceFile(2 * (16 + 32 * 2));
+    expect(run("gen", a, "--source", source, "--encryption-bytes", "16", "--auth-records", "2").code).toBe(0);
+    for (const half of ["a-to-b", "b-to-a"]) {
+      const hp = join(a, half, "head.json");
+      const head = JSON.parse(readFileSync(hp, "utf8"));
+      head.rollback = { witnessClass: "remote-monotonic", config: {} };
+      writeFileSync(hp, JSON.stringify(head));
     }
+    const journalBefore = readFileSync(join(a, "a-to-b", "journal.log"), "utf8");
+    const burn = run("burn", a, "--as", "A", "hi");
+    expect(burn.code).toBe(2);
+    expect(burn.stderr).toContain("refused: witness-unsupported");
+    expect(readFileSync(join(a, "a-to-b", "journal.log"), "utf8")).toBe(journalBefore);
+  });
+
+  it("a platform-monotonic header with a malformed class config is refused at LOAD, nothing consumed", () => {
+    // The class config is validated by the store loader, so a hand-edited
+    // header cannot point a pair at an authority of a shape this build cannot
+    // reason about. An empty config is exactly that.
+    const a = join(dir, "load-platform");
+    const source = sourceFile(2 * (16 + 32 * 2));
+    expect(run("gen", a, "--source", source, "--encryption-bytes", "16", "--auth-records", "2").code).toBe(0);
+    for (const half of ["a-to-b", "b-to-a"]) {
+      const hp = join(a, half, "head.json");
+      const head = JSON.parse(readFileSync(hp, "utf8"));
+      head.rollback = { witnessClass: "platform-monotonic", config: {} };
+      writeFileSync(hp, JSON.stringify(head));
+    }
+    const journalBefore = readFileSync(join(a, "a-to-b", "journal.log"), "utf8");
+    const burn = run("burn", a, "--as", "A", "hi");
+    expect(burn.code).toBe(2);
+    expect(burn.stderr).toMatch(/rollback\.config/);
+    expect(readFileSync(join(a, "a-to-b", "journal.log"), "utf8")).toBe(journalBefore);
   });
 
   it("status reports the witness block per direction and refuses nothing when the witness is gone", () => {

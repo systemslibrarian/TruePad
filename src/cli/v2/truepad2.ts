@@ -87,6 +87,13 @@ import {
   type WitnessSnapshot
 } from "./witness.ts";
 import { CEREMONY_ASSERTIONS, ceremonyCreate, ceremonyVerify } from "./ceremony.ts";
+import {
+  initPlatformWitness,
+  platformAdvance,
+  platformPreflight,
+  validatePlatformState,
+  type PlatformConfig
+} from "./platform-witness.ts";
 
 export const BANNER2 =
   "truepad2: reuse-safe pad handling with authenticated envelopes (Store Format v2; docs/FORMAT-V2.md is the\n" +
@@ -105,6 +112,7 @@ export const USAGE2 = `usage:
   truepad2 retire       <dir> --direction a-to-b|b-to-a --through-sequence S [--through-offset O] [--reason TEXT]
   truepad2 destroy      <dir> --confirm PAIRID|destroy-unreadable-pair [--reason TEXT]
   truepad2 witness init <ABSOLUTE-PATH>
+  truepad2 witness platform init <ABSOLUTE-PATH> --nv-index 0xHANDLE [--provider tpm2-nv-counter-v1]
   truepad2 ceremony create <workspace> --medium-a DIR --medium-b DIR --source F --source F [--origin TEXT ...]
                         --encryption-bytes E --auth-records N [gen knobs] --assert-offline --assert-distinct-physics
                         --assert-tmpfs-workspace --assert-no-persistent-copy
@@ -398,8 +406,37 @@ function witnessPreflight(store: LoadedStore2): WitnessSnapshot | null {
   if (rollback.witnessClass === "none") {
     return null;
   }
+  if (rollback.witnessClass === "platform-monotonic") {
+    // The TPM-anchored authority (§15.2, provider tpm2-nv-counter-v1). Every
+    // refusal here is FREE: nothing is consumed, and a platform outage is an
+    // availability failure, never a downgrade to a weaker class.
+    const config = rollback.config as unknown as PlatformConfig;
+    const result = platformPreflight(config, store.head.pairId, store.head.direction);
+    if (!result.ok) {
+      throw new Refused2("witness-unreachable", `${result.message} Nothing was burned.`);
+    }
+    const entry = result.value.entry;
+    if (entry !== null) {
+      if (
+        store.effective.nextOffset < entry.encryptionNextOffset ||
+        store.effective.nextSequence < entry.authenticationNextSequence ||
+        store.effective.attemptsReserved < entry.attemptsReserved
+      ) {
+        throw new Refused2(
+          "witness-regressed",
+          `this store is behind its platform-monotonic witness: the TPM-anchored authority at ${config.statePath} ` +
+            `records encryptionNextOffset ${entry.encryptionNextOffset}, authenticationNextSequence ` +
+            `${entry.authenticationNextSequence}, and attemptsReserved ${entry.attemptsReserved}, but this store is ` +
+            `at nextOffset ${store.effective.nextOffset}, nextSequence ${store.effective.nextSequence}, and ` +
+            `attemptsReserved ${store.effective.attemptsReserved}. A store below its witness is the restored-store ` +
+            "signature (§9.4). Refusing before anything is consumed. Nothing was burned."
+        );
+      }
+    }
+    return result.value.snapshot;
+  }
   if (rollback.witnessClass !== "separate-state-file") {
-    // platform-monotonic / remote-monotonic: specified, unimplemented.
+    // remote-monotonic: specified, unimplemented.
     throw new Refused2(
       "witness-unsupported",
       `rollback.witnessClass "${rollback.witnessClass}" is specified by FORMAT-V2.md §15.2 but is UNIMPLEMENTED in ` +
@@ -484,8 +521,24 @@ function witnessPreflight(store: LoadedStore2): WitnessSnapshot | null {
 // captured — never a second, later read (§15.3).
 function witnessAdvance(store: LoadedStore2, snapshot: WitnessSnapshot | null, counters: WitnessCounters): void {
   const rollback = store.head.rollback;
+  if (rollback.witnessClass === "platform-monotonic") {
+    const config = rollback.config as unknown as PlatformConfig;
+    const result = platformAdvance(config, store.head.pairId, store.head.direction, counters, snapshot);
+    if (!result.ok) {
+      // Post-commit: the material is retired and the output MUST be withheld
+      // (§15.3 loss row). Loss is acceptable; anchoring a state the authority
+      // does not attest is not.
+      throw new Error(
+        `the durable state commit succeeded but the platform-monotonic witness could not be advanced: ` +
+          `${result.message} This record's pad material is already retired and is LOST; the output was withheld and ` +
+          "never released (FORMAT-V2.md §15.3). The store is never rolled back, no anchor is fabricated, and the " +
+          "class is never downgraded."
+      );
+    }
+    return;
+  }
   if (rollback.witnessClass !== "separate-state-file") {
-    // none: no witness to advance. platform/remote never reach here — their
+    // none: no witness to advance. remote-monotonic never reaches here — its
     // preflight already refused witness-unsupported.
     return;
   }
@@ -515,7 +568,8 @@ function witnessAdvance(store: LoadedStore2, snapshot: WitnessSnapshot | null, c
 // counters (or null for a fresh witness), and how the store compares.
 type WitnessReport =
   | { witnessClass: "none" }
-  | { witnessClass: "platform-monotonic" | "remote-monotonic"; supported: false }
+  | { witnessClass: "remote-monotonic"; supported: false }
+  | { witnessClass: "platform-monotonic"; provider: string; statePath: string; nvIndex: string; authorityId: string }
   | {
       witnessClass: "separate-state-file";
       path: string;
@@ -529,6 +583,13 @@ function witnessReport(store: LoadedStore2): WitnessReport {
   const rollback = store.head.rollback;
   if (rollback.witnessClass === "none") {
     return { witnessClass: "none" };
+  }
+  if (rollback.witnessClass === "platform-monotonic") {
+    // Read-only: status refuses nothing, and never increments the TPM. A
+    // preflight would settle a prepared commit, which is a mutation, so the
+    // report says what it can see without touching the authority.
+    const config = rollback.config as unknown as PlatformConfig;
+    return { witnessClass: "platform-monotonic", provider: config.provider, statePath: config.statePath, nvIndex: config.nvIndex, authorityId: config.authorityId };
   }
   if (rollback.witnessClass !== "separate-state-file") {
     return { witnessClass: rollback.witnessClass, supported: false };
@@ -580,18 +641,40 @@ function witnessRollbackFromFlags(witnessClass: string | undefined, witnessPath:
   if (witnessClass === undefined || witnessPath === undefined) {
     throw new Error("--witness-class and --witness-path must be given together, or neither");
   }
-  if (witnessClass === "platform-monotonic" || witnessClass === "remote-monotonic") {
+  if (witnessClass === "platform-monotonic") {
+    // --witness-path names an ALREADY-INITIALISED platform witness state file
+    // (`truepad2 witness platform init`). The pair's header copies that
+    // authority's identity — provider, state path, NV index, TPM Name,
+    // authority id — so a substituted state file or a re-created index is
+    // detected rather than silently adopted. gen never touches the TPM and
+    // never creates the authority.
+    if (!isAbsolute(witnessPath)) {
+      throw new Error(`--witness-path must be an absolute path (found ${JSON.stringify(witnessPath)})`);
+    }
+    const state = readPlatformStateForGen(witnessPath);
+    return {
+      witnessClass: "platform-monotonic",
+      config: {
+        provider: state.provider,
+        statePath: witnessPath,
+        nvIndex: state.nvIndex,
+        nvName: state.nvName,
+        authorityId: state.authorityId
+      }
+    };
+  }
+  if (witnessClass === "remote-monotonic") {
     throw new Refused2(
       "witness-unsupported",
       `--witness-class ${witnessClass} is specified by FORMAT-V2.md §15.2 but is UNIMPLEMENTED in this build: it is ` +
-        "refused, never silently downgraded to a weaker class. Use --witness-class separate-state-file, or none. " +
-        "Nothing was written."
+        "refused, never silently downgraded to a weaker class. Use --witness-class separate-state-file, " +
+        "platform-monotonic, or none. Nothing was written."
     );
   }
   if (witnessClass !== "separate-state-file") {
     throw new Error(
-      `--witness-class must be separate-state-file (platform-monotonic/remote-monotonic are refused as unsupported); ` +
-        `found ${JSON.stringify(witnessClass)}`
+      `--witness-class must be separate-state-file or platform-monotonic (remote-monotonic is refused as ` +
+        `unsupported); found ${JSON.stringify(witnessClass)}`
     );
   }
   if (!isAbsolute(witnessPath)) {
@@ -601,6 +684,41 @@ function witnessRollbackFromFlags(witnessClass: string | undefined, witnessPath:
     );
   }
   return { witnessClass: "separate-state-file", config: { path: witnessPath } };
+}
+
+// Read the authority a pair is about to bind to. It must already exist: gen
+// does not create a platform witness, and does not touch the TPM.
+function readPlatformStateForGen(statePath: string): {
+  provider: string;
+  nvIndex: string;
+  nvName: string;
+  authorityId: string;
+} {
+  let text: string;
+  try {
+    text = readFileSync(statePath, "utf8");
+  } catch (error) {
+    throw new Error(
+      `the platform witness state at ${statePath} cannot be read (${(error as Error).message}). Initialise the ` +
+        "authority first with `truepad2 witness platform init <state-path> --nv-index 0x...`. Nothing was written."
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`the platform witness state at ${statePath} does not parse as JSON (${(error as Error).message})`);
+  }
+  const validated = validatePlatformState(parsed);
+  if ("why" in validated) {
+    throw new Error(`the platform witness state at ${statePath} violates its own shape — ${validated.why}`);
+  }
+  return {
+    provider: validated.state.provider,
+    nvIndex: validated.state.nvIndex,
+    nvName: validated.state.nvName,
+    authorityId: validated.state.authorityId
+  };
 }
 
 // Resolve --record-bytes into a §1.1 recordPolicy.record field. No flag → the
@@ -1725,8 +1843,12 @@ export function destroy(args: Args2): void {
 // VALID witness remains outside separate-state-file's guarantee (§15.2).
 function witness(args: Args2): void {
   const sub = args.positional[1];
+  if (sub === "platform") {
+    platformInit(args);
+    return;
+  }
   if (sub !== "init") {
-    throw new Error("witness needs a subcommand: init");
+    throw new Error("witness needs a subcommand: init, or platform init");
   }
   const path = args.positional[2];
   if (path === undefined) {
@@ -1745,6 +1867,52 @@ function witness(args: Args2): void {
     "This is the ONLY way to create one: an empty or truncated file is refused everywhere else. It does not make " +
       "the witness rollback-proof — restoring an older VALID witness is outside this class's guarantee (§15.2)."
   );
+}
+
+// `truepad2 witness platform init <state-path> --nv-index 0x...`
+//
+// Adopts an ALREADY-PROVISIONED TPM 2.0 NV counter as a platform-monotonic
+// authority. TruePad never defines, undefines, or clears an NV index: those
+// touch platform ownership and authorization policy and must not hide inside a
+// pad tool. The operator provisions the counter (docs/CEREMONY.md shows the
+// tpm2_nvdefine invocation); this validates it — COUNTER type, 8 octets, no
+// TPMA_NV_ORDERLY — captures its TPM Name, proves increment access with exactly
+// one increment, and writes the canonical state file durably at 0600.
+function platformInit(args: Args2): void {
+  if (args.positional[2] !== "init") {
+    throw new Error("witness platform needs a subcommand: init");
+  }
+  const statePath = args.positional[3];
+  if (statePath === undefined) {
+    throw new Error("witness platform init needs the state path: truepad2 witness platform init <absolute-path> --nv-index 0x...");
+  }
+  const nvIndex = single(args, "nv-index");
+  if (nvIndex === undefined) {
+    throw new Error("witness platform init needs --nv-index (the TPM NV counter handle, e.g. 0x01500016)");
+  }
+  const provider = single(args, "provider");
+  if (provider !== undefined && provider !== "tpm2-nv-counter-v1") {
+    throw new Error(`--provider must be tpm2-nv-counter-v1 (the only platform-monotonic provider this build implements); found ${JSON.stringify(provider)}`);
+  }
+  const result = initPlatformWitness(statePath, nvIndex);
+  if (!result.ok) {
+    throw new Error(result.message);
+  }
+  const { config, anchor, created } = result.value;
+  err(
+    `${created ? "initialised" : "re-validated"} the platform-monotonic witness at ${config.statePath} ` +
+      `(provider ${config.provider}, NV index ${config.nvIndex}, TPM Name ${config.nvName}, authority ` +
+      `${config.authorityId}, anchor ${anchor}).`
+  );
+  err(
+    "One TPM counter value was consumed to prove increment access before any pad depends on this authority. " +
+      "TruePad did not define this index and will never undefine or clear it."
+  );
+  err(
+    "Scope: Linux, TPM 2.0, tpm2-tools. This resists RESTORE of the pair, the state file, or both together. It is " +
+      "NOT a claim against a compromised host, malicious firmware, or a subverted TPM."
+  );
+  out(JSON.stringify({ statePath: config.statePath, provider: config.provider, nvIndex: config.nvIndex, nvName: config.nvName, authorityId: config.authorityId, anchor }));
 }
 
 /* ---- ceremony (Phase 3; the verbs live in ceremony.ts) ---------------------- */
@@ -1786,7 +1954,7 @@ const ALLOWED_FLAGS: Record<string, readonly string[]> = {
   "clear-freeze": [],
   retire: ["direction", "through-sequence", "through-offset", "reason"],
   destroy: ["confirm", "reason"],
-  witness: [],
+  witness: ["nv-index", "provider"],
   ceremony: [...GEN_FLAGS, "medium-a", "medium-b", ...CEREMONY_ASSERTIONS.map((assertion) => assertion.flag)]
 };
 

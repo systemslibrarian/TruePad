@@ -423,6 +423,34 @@ Stated here rather than distributed as caveats:
   directory) and no more: a **hard link**, or two bind mounts or network paths
   onto one file, are indistinguishable, and two stores reaching one witness that
   way would not exclude each other. Keep one witness file, at one real path.
+- **`platform-monotonic` closes the restore attack, on one platform only.**
+  A separate-state-file cannot detect its own rollback: restore an old pair
+  AND its old witness together and every check passes, because the two agree
+  and there is no external truth to disagree with them. The
+  `tpm2-nv-counter-v1` provider supplies that truth — a TPM 2.0 NV counter
+  that is not in any backup. Provision a dedicated counter yourself; TruePad
+  never defines, undefines, or clears an NV index:
+
+  ```sh
+  # Operator, once, on the host. Note nt=1 (COUNTER) and NO "orderly".
+  tpm2_nvdefine -C o -s 8 -a "authread|authwrite|nt=1" 0x01500016
+
+  truepad2 witness platform init /absolute/path/platform-witness.json \
+      --nv-index 0x01500016
+
+  truepad2 gen <dir> --source F --encryption-bytes E --auth-records N \
+      --witness-class platform-monotonic \
+      --witness-path /absolute/path/platform-witness.json
+  ```
+
+  `init` validates the index (COUNTER, exactly 8 octets, **TPMA_NV_ORDERLY
+  absent**), records its TPM Name, and spends one counter value proving it can
+  increment before any pad depends on it. Scope: **Linux, TPM 2.0,
+  tpm2-tools** — not macOS, not Windows, not Secure Enclave. Every witness
+  advance costs one NV increment, and a successful `open` costs two, because
+  the attempt reservation and the high-water are separate security boundaries
+  that are never batched. It resists RESTORE; it is **not** a claim against a
+  compromised host, malicious firmware, or a subverted TPM.
 - **A replaced witness is caught only inside one operation's window.** From an
   operation's preflight to its advance, the whole witness is snapshotted and
   rechecked: a key that vanished, or any of the three counters going

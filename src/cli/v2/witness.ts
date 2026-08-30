@@ -180,7 +180,9 @@ function fsyncDir(dir: string): void {
 // over the target, fsync the directory. The parent directory is NOT created —
 // the operator chooses the witness path, and a missing directory (or a
 // read-only one) surfaces as a throw the caller turns into the §15.3 loss row.
-function writeWitnessDurably(path: string, data: string): void {
+// Exported so the platform-monotonic witness commits its state file with the
+// SAME §10 discipline — one durable-write implementation, not two.
+export function writeWitnessDurably(path: string, data: string): void {
   const dir = dirname(path);
   const tmp = `${path}.tmp.${process.pid}`;
   const fd = openSync(tmp, "w", FILE_MODE);

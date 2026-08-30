@@ -1631,11 +1631,58 @@ stated tradeoff, not a hidden one.
   path lives in a different failure domain (another medium, not covered
   by the same backup) and is never restored. Protection begins at the
   first witnessed commit; an entry-less witness accepts a fresh pair.
-- `"platform-monotonic"` — a TPM or platform monotonic counter. Specified
-  by this section's semantics with the assumption stated (the platform
-  enforces non-regression; the host is trusted to talk to the real
-  counter), but UNIMPLEMENTED in this build: gen and load refuse it,
-  `witness-unsupported`, fail closed.
+- `"platform-monotonic"` — a platform monotonic counter. **IMPLEMENTED in
+  this build for exactly ONE provider**, and no more:
+  **`tpm2-nv-counter-v1`** — Linux, TPM 2.0, a validated **non-ORDERLY** NV
+  index of type COUNTER, driven through the `tpm2-tools` suite. Not macOS,
+  not Windows, not Secure Enclave, not "all TPMs"; any other platform or
+  provider is refused, never approximated.
+
+  Config: `{ "provider": "tpm2-nv-counter-v1", "statePath": <absolute path>,
+  "nvIndex": "0x........", "nvName": <hex TPM Name>, "authorityId": <32 hex> }`.
+  All five are public: no credential, no secret, nothing pad-derived. The
+  witness ENTRY shape is unchanged — the same three counters.
+
+  It is two things with one invariant. `T` is the TPM NV counter: an external
+  authority that only counts up and, crucially, **does not live in any
+  backup**. `F` is a durable local state file holding the witness map, which a
+  uint64 cannot. The invariant is `F.anchor == T` (settled) or
+  `F.anchor == T + 1` (a commit interrupted before the hardware increment,
+  which the next preflight completes with exactly one increment). **Anything
+  else fails closed.** `F < T` is the state file behind the hardware — a
+  restore — and is refused permanently: the TPM is never lowered, and witness
+  counters are never guessed.
+
+  Provisioning is explicit and external. TruePad **never** runs
+  `tpm2_nvdefine`, `tpm2_nvundefine`, or a TPM clear: those touch platform
+  ownership and authorization policy and must not hide inside a pad tool. The
+  operator provisions a dedicated counter; `truepad2 witness platform init`
+  validates it (COUNTER, exactly 8 octets, **TPMA_NV_ORDERLY absent** — an
+  orderly index may defer NV persistence and lose increments across power
+  loss, which is the very rollback this class prevents), captures its **TPM
+  Name**, proves increment access with one increment, and writes the state
+  file durably at 0600. The Name is the index's cryptographic identity: a
+  handle deleted and re-created is the same number but a different authority,
+  and TruePad fails closed rather than auto-rebinding.
+
+  Cost, stated rather than hidden: **every witness advance is one TPM NV
+  increment**. A successful `open` therefore costs two — the attempt
+  reservation and the post-verification high-water are separate security
+  boundaries and are never batched to save a write. TPM increments may be
+  materially slower than file writes and NV endurance varies by
+  implementation; this class trades throughput for rollback resistance, and
+  `separate-state-file` remains available where that trade is not wanted.
+  ORDERLY is never used as a performance shortcut.
+
+  **Trust boundary, exactly.** This resists RESTORE — of the pair, of the
+  state file, or of both together — which is the attack a plain file cannot
+  see. TruePad trusts the host to be talking to the real TPM. It does **not**
+  claim resistance to a compromised host, malicious firmware, or a subverted
+  TPM: no counter inside a machine defends that machine against its owner. A
+  software TPM (swtpm) speaks the same commands and is useful for
+  interoperability testing, but its backing state can itself be snapshotted
+  and restored, so it earns **no part** of this claim and is never called a
+  monotonic authority.
 - `"remote-monotonic"` — a service enforcing forward-only state. Same
   semantics, assumption stated (the service is honest and available),
   same `witness-unsupported` refusal in this build, plus the metadata
