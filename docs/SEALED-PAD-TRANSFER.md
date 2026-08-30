@@ -1,6 +1,6 @@
 # Sealed Pad Transfer v1
 
-**STATUS: PHASE 0 — SPECIFIED, NOT IMPLEMENTED.**
+**STATUS: PHASE 0.6 — SPECIFIED, NOT IMPLEMENTED.**
 No code in `src/**` implements any of this. Nothing in the shipped product
 offers it. This document exists so that a later implementation phase has no
 cryptographic design decisions left to improvise.
@@ -796,7 +796,15 @@ AWAITING_CONFIRMATION  (transient, in-memory, NOT durable)
   │     the life of the request) and known to anyone who heard it, on a channel
   │     §8.2 does not require to be confidential — an offline target where the
   │     proof asserts there is none. It also closes session substitution: a
-  │     rejected package can never be committed later. Cost: one new request.
+  │     rejected package can never be committed later.
+  │
+  │     **Cost: a NEW PAD *and* a NEW RECEIVE REQUEST — not "one new
+  │     request".** By the time rejection is possible Alice has already sealed,
+  │     so §10.6's one-handoff marker on her pad is spent and that pad can
+  │     never be sealed again. Bob's request is likewise terminal. Recovery is
+  │     therefore: Alice generates a fresh pad, Bob creates a fresh receive
+  │     request, and the ceremony restarts from §8.1. Any wording that prices
+  │     rejection at one new request understates it by a whole pad.
   │
   │ operator confirms the §8 words
   ▼
@@ -828,12 +836,19 @@ COMPLETE  (pad imported, transfer private key logically destroyed)
 > `commitReceive` refuses unless its session is still the current one for that
 > `requestId`. Without this, Mallory's package could be opened, rejected, and
 > then still committed after Alice's was opened — importing the very pad the
-> operator refused. `packageIdentity` is what that check compares.
+> operator refused. `packageIdentity` is what that check compares, and it commits
+> to the **complete** TPS2 bytes — magic through the final GCM tag. An earlier
+> draft used `SHA-256(AAD)` while calling it "exactly which package"; the AAD is
+> only the public header, so two packages differing solely in ciphertext or tag
+> would have shared one identity. This is local bookkeeping **after** AEAD
+> verification, never a substitute for it.
 >
 > The session is **transient by design**. A crash loses it, leaves the request
 > `PENDING`, and consumes nothing — the operator re-opens the `.tps2` and the
-> sender confirmation is repeated. Losing a session is free; carrying one across
-> a crash would mean persisting decrypted pad bytes for no benefit.
+> sender confirmation is repeated. Losing a session costs nothing *on the
+> receiver axis*; it is `PAD-SPENT` overall, since a package existed to open
+> (§11). Carrying a session across a crash would mean persisting decrypted pad
+> bytes for no benefit.
 
 > **`import-pair` is a single committing transaction — there is no validate-only
 > mode.** `importImpl()` runs from staging straight through `writePairMeta` to
@@ -857,12 +872,18 @@ COMPLETE  (pad imported, transfer private key logically destroyed)
 
 > **`PENDING` requests expire.** A pending request carries a durable creation
 > time and a **time-to-live of 7 days**, after which it transitions to
-> `CANCELLED` and its `dk` is logically destroyed. Two reasons, both real: a
-> one-time private key with no expiry is an indefinite liability on the
-> recipient's device (§13 #22), and §6.3's fingerprint work factor degrades as
-> `2⁸⁸/T` with `T` requests live at once, so `T` must be bounded by something
-> other than the operator's memory. Expiry is checked on every access, and an
-> expired request refuses as FREE — it is never silently revived.
+> `CANCELLED` and its `dk` is logically destroyed. Expiry is checked on every
+> access, and an expired request refuses — never silently revived.
+>
+> **What the TTL is for, now that the fingerprint is 132 bits.** It is *not*
+> what makes request authentication strong. The 132-bit fingerprint stands on
+> its own (§6.3); an earlier draft's `2⁸⁸/T` multi-target argument is **stale**,
+> and on the same conservative accounting the figure is `2¹³²/T`, which at any
+> plausible `T` remains far out of reach. The TTL stays for three ordinary
+> reasons: a pending decapsulation key is an unnecessary long-lived liability
+> (§13 #22), bounding outstanding state is operationally useful, and
+> multi-target exposure exists generically. **Remove the TTL tomorrow and
+> request authentication does not become weak.**
 
 > **`PENDING → CONSUMED` is a compare-and-set, not a blind write.** It runs
 > under an exclusive lock scoped to the **`requestId`** and succeeds only if the
@@ -1019,7 +1040,8 @@ Ordering, under an exclusive lock (a Web Lock scoped to the `requestHash`):
 2. **re-check state** inside it;
 3. if **SEALED** → return the **exact stored package**; do **NOT** re-encapsulate;
 4. if **CONFIRMED** → encapsulate **once**, build the package, and **persist the
-   exact package bytes and `confirmValue` durably**;
+   exact package bytes and `confirmValue` durably** — as the single
+   `<pairId>/handoff.json` object of §10.9, in one atomic replace;
 5. **only after that persistence succeeds** may any package byte be released to
    the UI;
 6. a concurrent caller waits on the lock and receives the **same stored package**.
@@ -1047,7 +1069,7 @@ sender state too, returning SEALED to CONFIRMED and permitting a second
 encapsulation. The Browser Edition has no independent anti-rollback authority to
 appeal to here either (§10.4.1).
 
-## 10.6 What may be sealed — the pairing rule
+### 10.6 What may be sealed — the pairing rule
 
 This is security-critical and Phase 0 did not address it.
 
@@ -1092,10 +1114,10 @@ distribution channel:
    > same Wegman–Carter keys. No operator error, no rollback, no physical path
    > — just the protocol working as specified.
 
-   Phase 1 therefore records provenance on import: either the same durable
-   marker, or an `origin: "generated-here" | "imported"` field on `pair.json`.
-   **An imported pad can never be sealed onward.** The identical hole exists for
-   any pad imported by the ordinary courier path, and the same marker closes it.
+   Phase 1 therefore records provenance on import. **The representation is
+   frozen in §10.7 — one field, `origin` on `pair.json` — and Phase 1 has no
+   choice left to make.** An imported pad can never be sealed onward, whether it
+   arrived sealed or by ordinary courier.
 
 **Recovery when a transfer is lost is a NEW PAD, not a re-seal.** §10.2's
 accepted loss, a TTL expiry, and a cleared recipient all produce the same
@@ -1113,48 +1135,407 @@ is a two-time-pad generator with extra steps. Generating a new pad costs
 seconds; the alternative costs the security of every message the pad protects.
 A revocation ceremony could relax this and is explicitly out of scope for v1.
 
-**The limitation this rule still does not reach.** TruePad does not today record
-that a pad was handed off by the *physical* path, so an operator could seal a
-pad online **and** use "Save the pad file again" to give a copy to a third
-party. The marker in (2)/(3) is the place Phase 1 closes this. Until then it is
-an **OPERATOR** assumption: *one pad, one other person.*
+**The cross-mode gap is closed in §10.8, not left to the operator.** Rules
+(1)–(3) alone still permit the mixed path — seal pad P to Bob online, then use
+*"Save the pad file again"* to hand the same P to Charlie physically — because
+nothing today records that a pad left by the physical route. §10.8 freezes the
+policy that closes it. What remains an **OPERATOR** assumption after §10.8 is
+narrower and stated there.
 
 ---
+
+---
+
+### 10.7 Provenance — the frozen representation
+
+§10.6(3) requires provenance. Phase 0.5 offered Phase 1 a choice between "the
+same durable marker" and "an `origin` field on `pair.json`". **That choice is
+withdrawn. The representation is `origin` on `pair.json`, and only that.**
+
+**Why not the handoff marker.** The marker is `{ pairId, requestHash, at }`. An
+imported pad has no `requestHash` of its own on the courier path and no
+*sender-side* one on the sealed path, so recording provenance in it would mean
+inventing a sentinel `requestHash` and teaching rule (2)'s equality test to
+special-case that sentinel. Two different facts — *"this pad's one handoff is
+spent on request X"* and *"this pad did not originate here"* — would then share
+one record and one comparison. Overloading a security predicate to carry a
+second meaning is how the Phase 0.5 hole was created in the first place.
+
+**The frozen field.** `pair.json` gains exactly one field:
+
+```
+origin: "generated-here" | "imported"
+```
+
+Written by `gen` as `"generated-here"`, by every import path as `"imported"`.
+`origin` is a statement the installation makes about **itself**, and it is only
+as trustworthy as the origin it lives in: OPFS is reachable from the page as well
+as the worker, so script execution in the TruePad origin can rewrite it. That is
+endpoint compromise (§15), which already has everything; it is not a hole this
+field could close. What the field *does* close is the remote attacker's route,
+and that is the one that matters here.
+
+`pair.json` is browser-local: it is **not** among the six `BUNDLE_FILES`
+(`a-to-b/{head.json,secret.bin,journal.log}` and `b-to-a/{…}`), so a sender
+cannot put a chosen `origin` into a bundle and have the importer believe it. The
+value is written by the *importing* installation about itself.
+
+**Fail-closed, exactly like `witness`.** `readPairMeta` already refuses a
+`witness` value it does not recognise (`corrupt-pair-meta`). `origin` gets the
+same treatment: a present-but-unrecognised value is `corrupt-pair-meta`, not a
+default. Unknown *other* fields stay tolerated, as today.
+
+**The third state is `unknown`, and it is not a value on disk.** A `pair.json`
+with no `origin` — or no `pair.json` at all, which `readPairMeta` today answers
+with defaults — yields `origin = unknown` in memory. `unknown` is never written.
+
+### 10.7.1 `unknown` is not `generated-here`
+
+**A pad whose provenance is `unknown` may not be sealed.** This follows from
+§10.6(1) as a matter of fact, not of caution: TruePad cannot tell a
+locally-generated legacy pad from one that arrived by courier before this field
+existed, and it must not guess in the direction that produces a two-time pad.
+
+| `origin` | May be sealed (§10.6) | Everything else — send, open, export, destroy |
+| --- | --- | --- |
+| `"generated-here"` | yes, subject to §10.6(1), (2) and §10.8 | unchanged |
+| `"imported"` | **never** | unchanged |
+| `unknown` (absent field, or absent `pair.json`) | **never** | **unchanged** |
+
+`unknown` gates **sealing only**. Every pad that works today keeps working
+today: legacy pads send, open, export, and destroy exactly as before. The single
+new refusal is *"this pad cannot be sent by sealed transfer; generate a new pad
+for that"* — a cost of seconds, paid only by operators who want the new feature
+on an old pad.
+
+**No migration, no backfill, no "assume generated-here for pads older than X".**
+A backfill would have to guess, and a wrong guess is exactly the two-time pad.
+The absence of a field is information: it means *nobody recorded this*.
+
+### 10.7.2 The ordinary courier path records `imported` too
+
+§10.6(3) is usually read as being about sealed transfer. It is not. **Any**
+import must record `"imported"`, including the ordinary courier import that
+predates this document — otherwise Bob imports a pad file from a USB stick and
+seals it onward to Charlie, which is the same two-time pad by a different route.
+
+**Frozen write ordering.** It introduces no new failure window, because it adds
+no new write:
+
+1. `importImpl()` stages under `importing/<pairId>/` exactly as today;
+2. the commit sequence writes `pair.json` — **`origin: "imported"` is a field of
+   that same object, written by that same call**, never a second file and never
+   a later write;
+3. the commit completes by **removing `importing.json`**, exactly as today.
+
+A crash between (2) and (3) leaves `importing.json` present, so
+`committedPairExists()` still returns **false**, the pad is still not committed,
+and `discardIncompleteImport` still cleans it. A crash before (2) leaves no
+`pair.json`, hence `origin = unknown` on any partial remains — which §10.7.1
+already refuses to seal. **There is no ordering in which a committed pad exists
+without provenance**, and no ordering in which a crash upgrades a pad's
+provenance.
+
+`gen` is the mirror image: `origin: "generated-here"` is a field of the
+`pair.json` that creating the pad already writes. If that write is lost, the
+result is `unknown` — unsealable, fail-closed, and the operator generates
+another pad.
+
+### 10.8 Cross-mode handoff — physical and sealed
+
+**The problem.** Export is repeatable by design: `exportImpl` refuses only a
+destroyed pair, an incomplete import, and a missing pair, and the pad screen
+offers *"Save the pad file again"* so a lost courier copy can be re-delivered.
+Sealing is once-only. Two modes with different rules over one pad is a gap
+unless the policy spans both, and §10.6(2)'s marker only ever sees the sealed
+side.
+
+**The frozen policy: one pad, one handoff, whichever mode it used.**
+
+The handoff record of §10.9 gains a `mode` and is written by **both** paths:
+
+| First handoff | Then export again | Then seal |
+| --- | --- | --- |
+| none yet | allowed — records `mode: "physical"` | allowed (subject to §10.6, §10.7) |
+| `mode: "physical"` | **allowed, unchanged** — this is the re-delivery affordance | **refused** — `pad-already-handed-off` |
+| `mode: "sealed"` | **refused** — `pad-already-sealed` | refused unless the same `requestHash` (§10.6(2)) |
+
+Three deliberate asymmetries, each with its reason:
+
+* **Export after export stays allowed.** It is a shipped affordance with a real
+  purpose, and the physical courier's safety has always rested on the operator
+  knowing who they handed the medium to. Retroactively refusing it would break
+  working deployments to buy nothing the operator was not already assuming.
+* **Seal after export is refused.** TruePad cannot know whether an exported file
+  reached a third party, was a backup, or is still on the operator's disk. The
+  conservative reading is the only safe one, and the recovery — generate a new
+  pad — costs seconds.
+* **Export after seal is refused.** This is the one *new refusal on an existing
+  verb* that this document requires of Phase 1, and it is the row that
+  closes the gap §10.6 could not reach. Post-seal export has no legitimate
+  purpose: the recipient already holds the pad, delivered. Its only uses are a
+  hazardous backup of live material and the exact "seal to Bob, save to
+  Charlie" two-time pad.
+
+**What is still an operator assumption, stated narrowly.** A first export is
+recorded as a handoff whether the operator handed the file to someone or merely
+made a backup; TruePad cannot distinguish them, and deliberately assumes the
+worse. And nothing here constrains what a person does with a file that has
+already left: *n* physical copies of one pad remain *n* copies. The assumption
+that survives §10.8 is **not** "one pad, one other person" — it is the narrower
+**"a pad file, once exported, went to at most one other person."**
+
+### 10.9 The sender handoff record — one file, one atomic replace
+
+§10.5 persists sender state; §10.6(2) persists a marker; §20's `seal()` says the
+marker and the package are "ONE durable step". **Frozen: they are one object in
+one file, replaced atomically. Never two files, never two writes.**
+
+```
+<pairId>/handoff.json      ← the ONLY durable sender-side handoff state
+
+{
+  pairId,                  # 32 lowercase hex
+  mode: "physical" | "sealed",
+  at,                      # ISO-8601, informational only
+  # present iff mode == "sealed":
+  requestHash,             # 32 bytes, base64url — rule (2) compares THIS
+  package,                 # the EXACT TPS2 bytes, base64url
+  confirmValue             # the 11 bytes behind §8's words, base64url
+}
+```
+
+**Why one file.** Two files admit an interleaving in which one lands and the
+other does not, and both orders are harmful. A marker without a package **bricks
+the pad**: rule (2) refuses a re-seal of a package Alice never received. A
+package without a marker **releases confirmation words Alice cannot reproduce**,
+which §10.5 already names as the outcome to avoid. Neither is hypothetical —
+both are the ordinary result of a crash between two writes.
+
+**Write discipline (frozen).** Serialize the complete record, write it to a
+temporary name in the same directory, `flush`, then **replace** the target in one
+step; on any failure, remove the temporary and change nothing. This is the same
+durable-replace discipline the store already applies to `head.json`. The record
+is written **once**, before any package byte is released to the UI (§10.5 step
+5); it is never appended to and never partially updated.
+
+**One writer.** Every write happens under **`vfs.withLock(pairId)`** — the
+store's own pad lock (§10.10.1), which `seal`, `exportPad` and the importer all
+take. A pad's handoff state therefore has exactly one writer at a time, and that
+writer excludes the importer too.
+
+**Dismissal clears the package, never the record.** §10.5 says cleanup removes
+CONFIRMED and SEALED state when the operator dismisses a transfer. Applied
+literally to one file that would delete `handoff.json` — and with it rule (2)'s
+marker, re-opening the pad to a second seal by the ordinary act of tidying up.
+**Frozen: dismissal may clear `package` and `confirmValue`; `pairId`, `mode`,
+`at` and `requestHash` are permanent for the life of the pad.** A dismissed
+transfer is a spent handoff whose bytes are no longer kept, which is exactly what
+the operator asked for and nothing more. After dismissal, a repeat seal of the
+*same* `requestHash` is refused rather than re-encapsulated: §10.5's idempotent
+"return the stored package" needs the package, and inventing a second one is the
+double-encapsulation §10.5 exists to prevent.
+
+**Not a witness.** `handoff.json` is browser-local bookkeeping. A profile
+rollback can rewind it exactly as it can rewind sender state (§10.5) and
+receiver state (§10.4.1), and the Browser Edition has no independent authority to
+appeal to. This is recorded, not claimed away.
+
+### 10.10 The receive session across tabs
+
+§10.1's session is "transient, worker-only, in-memory". A browser profile can
+have several tabs open on TruePad, each with its own worker, so *in-memory* is
+per-worker — and Phase 0.5 never said what happens when two of them open
+packages for one request.
+
+**Frozen: one live receive session per request, held by a Web Lock for the
+session's entire lifetime.**
+
+1. `openSealed` acquires the Web Lock `"spt-recv:" ‖ requestId` **before**
+   decapsulating, and **holds it until the session ends** — by
+   `commitReceive`, by rejection, or by the worker going away.
+2. A second tab calling `openSealed` for the same `requestId` does not queue
+   behind it: it requests the lock with `ifAvailable`, fails immediately, and
+   refuses with *"this transfer is already open in another tab"*. Queueing would
+   let a second decapsulation start the moment the first session ended, which is
+   precisely the substitution §10.1 forbids.
+3. The lock releasing on worker teardown is the crash story: a closed tab drops
+   the lock, the transient session dies with it, the request stays `PENDING`,
+   and the operator re-opens the `.tps2` (§10.1). No durable cleanup, no lease,
+   no timeout to tune.
+
+**Why a Web Lock and not a durable flag.** A durable "session open" flag would
+survive the crash that the session itself does not, and would need reaping. The
+lock's lifetime is exactly the session's lifetime, which is the property wanted.
+
+**The lock spans two RPCs, so it must be released on four paths, not three.**
+`openSealed` and `commitReceive` are separate calls; the worker holds the lock by
+keeping the `navigator.locks.request` callback pending between them. It is
+released on commit, on rejection, and on worker teardown — and, **frozen here
+because it is the one an implementation forgets**, on an explicit
+`abandon(sessionId)` when the operator closes the transfer without deciding. Without
+`abandon`, an abandoned session blocks the request for its own tab as well as
+every other, and the only cure is closing the tab. `abandon` zeroizes the session
+exactly as rejection does but leaves the request `PENDING`: abandoning is not
+rejecting, and only rejection is terminal (§8.2.1).
+
+### 10.10.1 The frozen lock namespace
+
+Four scopes, and **no prefix keyed by two different things**. An earlier draft
+used `"spt-req:"` for the sender's `requestHash` *and* the receiver's
+`requestId`; they never collide (32-byte vs 16-byte values) but one prefix
+standing for two key types is a trap, not a design.
+
+| Scope | Lock | Held by |
+| --- | --- | --- |
+| a pad | **`vfs.withLock(pairId)`** — the store's existing pad lock | `seal`, `exportPad`, `import-pair`, `destroy` |
+| sender state for one request | `"spt-send:" ‖ requestHash` | `seal` |
+| a live receive session | `"spt-recv:" ‖ requestId` | `openSealed` … `commitReceive`/`reject`/`abandon` |
+| the receiver's request record | `"spt-req:" ‖ requestId` | the CAS, cancellation, expiry |
+
+**The pad lock is the store's own lock, not a new one.** A bespoke
+`"spt-seal:" ‖ pairId` would have been a *second* lock over the same pad, and
+two locks over one object exclude nothing: a seal reading `<pairId>/` and an
+import writing it would each hold their own and proceed. Sealed Pad Transfer
+takes the lock the importer already takes.
+
+**Why no deadlock, stated rather than assumed.** `seal` acquires pad → sender
+state; `commitReceive` acquires session → request → pad. A cycle would need
+someone holding a sender-state lock and waiting on a pad, session, or request
+lock. Only `seal` ever takes `"spt-send:"`, and it already holds the pad lock
+and takes nothing further. The wait-for graph therefore has no cycle. This is
+the argument that must be re-checked before **any** new lock is added.
+
+### 10.10.2 `commitReceive` lock ordering
+
+`commitReceive` runs inside the session, so it already holds
+`"spt-recv:" ‖ requestId`. It then needs the `requestId`-scoped lock for the CAS
+(§20) and the pairId scope for the import (`vfs.withLock(pairId)`).
+
+**Frozen order, outermost first:**
+
+```
+"spt-recv:" ‖ requestId      (already held, since openSealed)
+  → "spt-req:" ‖ requestId    (the CAS)
+    → vfs.withLock(pairId)    (the import)
+```
+
+Never the reverse, at any depth: **a request-scoped lock is always acquired
+before a pad-scoped lock on this path.** §20's `seal()` nests the other way —
+pad outermost, then `"spt-send:" ‖ requestHash` — and §10.10.1 shows why the
+combination still cannot cycle: nothing that holds `"spt-send:"` waits on
+anything. That argument, not the ordering rule, is what makes the pair safe, and
+it is the thing to re-check before adding a lock.
+
+The CAS lock and the pairId lock are released on the way out; the session lock
+is released last, when the session is forgotten.
+
+### 10.10.3 Terminal rejection destroys every session, everywhere
+
+§8.2.1 makes operator rejection **terminal**: the request moves to `CANCELLED`
+and `dk` is destroyed. For that to mean anything across tabs:
+
+1. The transition is written **durably first** — `PENDING → CANCELLED` with `dk`
+   logically destroyed — under the `"spt-req:" ‖ requestId` lock, before any UI
+   acknowledgement.
+2. The rejecting session is discarded immediately: its `padFileBytes`,
+   `confirmValue` and `packageIdentity` are zeroized and the session lock
+   released.
+3. **Any other session for that `requestId` is dead by construction**, not by
+   notification. §10.10 permits only one live session per request, so there is
+   no second session to hunt down. A tab that still displays a stale session
+   fails at its next call: `commitReceive` resolves the session, finds the
+   request `CANCELLED`, and refuses.
+4. `openSealed` on a `CANCELLED` request refuses before decapsulating (§20),
+   so a package for a rejected round can never be re-opened — including the
+   package that was rejected.
+
+**No cross-tab message is required, and none is trusted.** A `BroadcastChannel`
+notice may be sent to make other tabs *look* correct sooner, but it is a UI
+courtesy: correctness rests entirely on the durable `CANCELLED` state and the
+single-session rule, both of which a tab that missed the message still hits.
 
 ---
 
 ## 11. Failure taxonomy
 
-**FREE** = no receive request consumed, nothing changed.
-**LOSS** = the request is consumed; the operator must create a new one.
-A LOSS is never reported as "nothing changed".
+**A failure has two independent costs, and one table column cannot carry both.**
 
-| Failure | Class |
+* **Receiver axis — the receive request.**
+  `REQUEST-FREE` = the request was not consumed and is still usable.
+  `REQUEST-LOST` = the request is consumed; Bob must create a new one.
+* **Sender axis — the one handoff.** It records what *this attempt* did.
+  `HANDOFF-UNSPENT` = this attempt did not seal.
+  `HANDOFF-SPENT` = this attempt sealed, so §10.6's one-handoff record is
+  burned. **That pad can never be sealed again, whatever happened at Bob's
+  end.** Recovery costs a new pad, not a retry.
+  A refusal caused by a handoff *already* spent by an earlier ceremony is
+  `HANDOFF-UNSPENT` on this axis — this attempt changed nothing — and the pad
+  is of course still spent. That row says so in its own text.
+
+**Who can observe which axis.** The two axes are observed by **different
+people**, which is why neither party's screen can simply print the Outcome
+column. Bob's installation knows the receiver axis exactly and can only *infer*
+the sender axis — a forged package means no genuine pad was ever sealed. Alice's
+installation knows the sender axis exactly and learns the receiver axis only if
+Bob tells her. So: **each side is shown the axis it actually knows**, and the
+Outcome column below is the *ceremony's* cost as an outside observer with both
+halves would score it. It is the ledger this document reasons in, not a string
+to render.
+
+**`REQUEST-FREE` is narrower than it sounds on a `PAD-SPENT` row.** Bob's request
+is genuinely still `PENDING` and still usable — but not with the same pad, since
+Alice's is spent. In practice a `PAD-SPENT` outcome means Alice generates a new
+pad and seals *that* to Bob's surviving request. The request being reusable is
+what saves Bob from reading twelve words aloud again; it does not save the pad.
+
+**Never report a failure as "nothing changed" once the handoff is spent.** The
+earlier one-dimensional table did exactly that: every row after `seal()` said
+FREE, which was true of Bob's request and false of Alice's pad. An operator
+reading "nothing changed" after a mid-ceremony failure would reasonably retry
+with the same pad — and §10.6 will refuse, correctly but confusingly, unless the
+failure told the truth the first time. The honest three outcomes are:
+
+| Outcome | Means |
 | --- | --- |
-| malformed receive request | FREE |
-| unsupported transfer version | FREE |
-| unsupported suite | FREE |
-| request not found / cancelled | FREE |
-| request already consumed | FREE (refused before decapsulation) |
-| requestId / requestHash mismatch | FREE |
-| request fingerprint not confirmed by operator | FREE (sender side; nothing sealed) |
-| malformed sealed package | FREE |
-| oversized sealed package | FREE |
-| KEM decapsulation failure | FREE |
-| AEAD verification failure | FREE |
-| derived-nonce mismatch (§7.4) | FREE — checked after AEAD verification |
-| receive session lost, unknown, or already used | FREE — re-open the package |
-| sender confirmation not accepted | FREE (returns to `PENDING`) |
-| container malformed / wrong file set / bad pairId (pre-flight) | FREE |
-| header reconciliation failure, or a non-`none` `rollback.witnessClass` (a CLI-origin store) | FREE — `loadStore()` runs in the pre-flight on a scratch copy |
-| duplicate pair (`pair-exists`) | FREE |
-| destroyed pair (`pair-destroyed`) | FREE |
-| request consumed concurrently (compare-and-set lost) | FREE |
-| any failure strictly **after** the CAS — storage mid-commit, or a pairId-scoped state change (a concurrent `destroy` or courier import) landing between the pre-flight and the commit | **LOSS** — the only LOSS class |
+| `FREE` | `REQUEST-FREE` **and** `HANDOFF-UNSPENT` — genuinely nothing changed |
+| `PAD-SPENT` | `REQUEST-FREE` but `HANDOFF-SPENT` — Bob's request survives; **Alice needs a new pad** |
+| `LOSS` | `REQUEST-LOST` and `HANDOFF-SPENT` — new pad *and* new request |
+
+`FREE` is reserved for the pre-seal rows. It is not a synonym for "recoverable".
+
+| Failure | Receiver axis | Sender axis | Outcome |
+| --- | --- | --- | --- |
+| malformed receive request | `REQUEST-FREE` | `HANDOFF-UNSPENT` | FREE |
+| unsupported transfer version | `REQUEST-FREE` | `HANDOFF-UNSPENT` | FREE |
+| unsupported suite | `REQUEST-FREE` | `HANDOFF-UNSPENT` | FREE |
+| request fingerprint not confirmed by operator (§8.1) | `REQUEST-FREE` | `HANDOFF-UNSPENT` | FREE |
+| sender's pad ineligible to seal (§10.6: imported, legacy, or already handed off) | `REQUEST-FREE` | `HANDOFF-UNSPENT` | FREE — refused before `seal()` |
+| request not found / cancelled / expired | `REQUEST-FREE` | `HANDOFF-SPENT` | **PAD-SPENT** |
+| request already consumed | `REQUEST-FREE` | `HANDOFF-SPENT` | **PAD-SPENT** — refused before decapsulation |
+| requestId / requestHash mismatch | `REQUEST-FREE` | `HANDOFF-SPENT` | **PAD-SPENT** |
+| malformed sealed package | `REQUEST-FREE` | `HANDOFF-SPENT` | **PAD-SPENT** |
+| oversized sealed package | `REQUEST-FREE` | `HANDOFF-SPENT` | **PAD-SPENT** |
+| KEM decapsulation failure | `REQUEST-FREE` | `HANDOFF-SPENT` | **PAD-SPENT** |
+| AEAD verification failure | `REQUEST-FREE` | `HANDOFF-SPENT` | **PAD-SPENT** |
+| derived-nonce mismatch (§7.4) | `REQUEST-FREE` | `HANDOFF-SPENT` | **PAD-SPENT** — checked after AEAD verification |
+| receive session lost, unknown, or already used | `REQUEST-FREE` | `HANDOFF-SPENT` | **PAD-SPENT** — re-open the package |
+| operator rejects the §8.2 confirmation words | **`REQUEST-LOST`** | `HANDOFF-SPENT` | **LOSS** — rejection is terminal (§8.2.1); the request moves to `CANCELLED` |
+| container malformed / wrong file set / bad pairId (pre-flight) | `REQUEST-FREE` | `HANDOFF-SPENT` | **PAD-SPENT** |
+| header reconciliation failure, or a non-`none` `rollback.witnessClass` (a CLI-origin store) | `REQUEST-FREE` | `HANDOFF-SPENT` | **PAD-SPENT** — `loadStore()` runs in the pre-flight on a scratch copy |
+| duplicate pair (`pair-exists`) | `REQUEST-FREE` | `HANDOFF-SPENT` | **PAD-SPENT** |
+| destroyed pair (`pair-destroyed`) | `REQUEST-FREE` | `HANDOFF-SPENT` | **PAD-SPENT** |
+| request consumed concurrently (compare-and-set lost) | `REQUEST-FREE` | `HANDOFF-SPENT` | **PAD-SPENT** |
+| any failure strictly **after** the CAS — storage mid-commit, or a pairId-scoped state change (a concurrent `destroy` or courier import) landing between the pre-flight and the commit | **`REQUEST-LOST`** | `HANDOFF-SPENT` | **LOSS** |
+
+Two rows are `REQUEST-LOST`: the terminal rejection of §8.2.1, and any failure
+after the CAS. Every other post-seal row leaves Bob's request reusable and
+Alice's pad spent — which is precisely why the second column has to exist.
 
 **Every check that can be made without committing MUST be made while the request
 is still `PENDING`.** Only a failure that can occur strictly *after* `CONSUMED`
-is durable is a LOSS.
+is durable is `REQUEST-LOST`. This is a statement about the **receiver axis
+only** — it never makes the sender's handoff unspent.
 
 This requires an explicit **pre-flight**, because §10.2 orders the `CONSUMED`
 compare-and-set *before* the import commit, and `import-pair` has no
@@ -1182,20 +1563,22 @@ runs, in the worker, on a private copy, touching nothing:
 > pad permanently unimportable in that browser — while the real importer would
 > have cleaned it and completed.
 
-All six are FREE, and they cover every ordinary mistake: a corrupt bundle, a
+All six are `REQUEST-FREE` — `PAD-SPENT` overall, since reaching them means a
+package was sealed — and they cover every ordinary mistake: a corrupt bundle, a
 duplicate pairId, a tombstoned pair. `loadStore()` belongs in the pre-flight too: its inputs are entirely the bundle
 bytes plus the pairId/direction cross-check, all deterministic, so it runs on a
 private scratch copy and its refusals — including a CLI-origin store whose
 frozen witness class the browser cannot honour — are FREE. What remains
-genuinely LOSS is only **storage failing mid-commit**, because that is the sole
+genuinely `REQUEST-LOST` is only **storage failing mid-commit**, because that is the sole
 refusal reachable after the one-time key has been spent.
 
-An earlier draft of this document classified the importer refusals as LOSS
-outright, which would have turned every ordinary mistake into a permanent
-transfer loss; a later one classified them FREE without saying how, which would
-have reported a consumed request as "nothing changed". Neither is acceptable,
-and the pre-flight is what makes the FREE classification true rather than
-convenient.
+An earlier draft classified the importer refusals as LOSS outright, which would
+have turned every ordinary mistake into a permanent transfer loss; a later one
+classified them FREE without saying how, which would have reported a consumed
+request as "nothing changed"; the version after that said how, but still owed the
+operator the other half — those rows are `REQUEST-FREE` and `HANDOFF-SPENT`, not
+"nothing changed". The pre-flight is what makes the `REQUEST-FREE` half true
+rather than convenient; the second axis is what keeps the sentence honest.
 
 Decapsulation and AEAD failures are reported as **one** indistinguishable
 outcome ("this package could not be opened for this request") so the protocol
@@ -1282,14 +1665,20 @@ TruePad** and is not addressed by this protocol.
 | 36 | "Clear site data" on the recipient | `dk` destroyed; a retained `.tps2` becomes inert | — | **LOSS, not replay** — commonly confused with #34 |
 | 37 | Two sender tabs seal concurrently | **Refused** — the second sees SEALED and returns the same package | `requestHash`-scoped lock + durable SEALED state (§10.5) | A full profile rollback can rewind SEALED |
 | 38 | Receive-session substitution after confirmation | **Refused** — `commitReceive(sessionId)` takes no pad bytes | Opaque worker-held session (§10.1) | Session is transient; a crash costs a re-open, not a pad |
-| 39 | Same pad sealed to **two** recipients | **Refused** — genesis-only, one handoff marker per pairId | §10.6 pairing rule | Does **not** cover the physical "Save the pad file again" path — an OPERATOR assumption |
+| 39 | Same pad sealed to **two** recipients | **Refused** — genesis-only, one handoff record per pairId | §10.6 pairing rule | Now also covers the physical path — see #47 |
 | 40 | Old `.tps2` replayed after the pair was destroyed | Refused `pair-destroyed` in the pre-flight | Existing tombstone | FREE (#18) |
-| 41 | **Bob re-seals a pad he imported**, to Charlie | **Refused** — sealing requires `origin == "generated-here"` | §10.6(3) provenance marker written on import | Phase 0.5's first draft did **not** stop this: the marker lives in the sealer's origin and `pair.json` is not in the bundle. It was the largest hole the falsification rounds found |
+| 41 | **Bob re-seals a pad he imported**, to Charlie | **Refused** — sealing requires `origin == "generated-here"` | §10.7 `origin` on `pair.json`, written by **every** import path | Phase 0.5's first draft did **not** stop this: provenance lives in the sealer's origin and `pair.json` is not in the bundle. It was the largest hole the falsification rounds found |
 | 42 | Alice speaks her words first on an observable channel | Her fixed target becomes known and grindable offline | Receiver-first (§8.2) — an **OPERATOR** assumption | Even violated, the grind is 2⁸⁸ X-Wing encapsulations (~2¹⁰³⁺ ops), not SHA-256 |
 | 43 | Rejected package committed after a later one is opened | **Refused** — rejection is terminal and one session is live per request | §10.1 | Phase 0.5's first draft returned a rejected round to PENDING, which permitted exactly this |
 | 44 | Seal called with caller-supplied pad bytes | **Not possible** — `seal(body, pairId)` reads the live store | §20, §18 | The first draft's `seal(body, padFileBytes)` let stale genesis bytes pass the genesis check |
-| 45 | Two sender tabs seal one genesis pad to **different** requests | **Refused** — the pairId lock is outermost and the handoff marker is checked inside it | §10.6(2), lock order in §20 | The requestHash lock alone did not contend across different requests |
+| 45 | Two sender tabs seal one genesis pad to **different** requests | **Refused** — the pairId lock is outermost and `handoff.json` is read inside it | §10.6(2), lock order in §20 | The requestHash lock alone did not contend across different requests |
 | 46 | X-Wing draft revision drift | Suite `0x0001` is frozen by **this** document | §2.2.1 | A future revision becomes suite `0x0002`; it does not mutate `0x0001` |
+| 47 | **Seal to Bob, then "Save the pad file again" to Charlie** | **Refused** — export after a sealed handoff is `pad-already-sealed` | §10.8 cross-mode policy; one `handoff.json` per pairId (§10.9) | The one existing-verb behaviour change Phase 1 owes. The reverse order (export, then seal) is refused too |
+| 48 | Pad imported by **ordinary courier**, then sealed onward | **Refused** — the courier import writes `origin: "imported"` in the same `pair.json` the commit already writes | §10.7.2 | Same two-time pad as #41 by a different route |
+| 49 | Legacy pad (no `origin` field) sealed | **Refused** — `unknown` is not `generated-here`; no backfill, no guess | §10.7.1 | Gates **sealing only**; legacy pads send, open, export and destroy unchanged |
+| 50 | Two tabs open the **same** package, or two packages for one request | **Refused** — `openSealed` takes `"spt-recv:"‖requestId` with `ifAvailable` and holds it for the session's life | §10.10 | Deliberately does **not** queue: queueing would let a second decapsulation begin the instant the first session ended |
+| 51 | Crash between the handoff marker and the sealed package | **Not possible** — one file, one atomic replace | §10.9 | Two writes would either brick the pad or release words Alice cannot reproduce |
+| 52 | Stale tab commits after the operator rejected in another tab | **Refused** — `CANCELLED` is written durably before any acknowledgement, and `commitReceive` re-checks | §10.10.3 | Correctness rests on durable state, never on a `BroadcastChannel` notice |
 
 ---
 
@@ -1560,16 +1949,19 @@ seal(body, pairId):                                 # WORKER
     requestHash ← requestFingerprint(body).requestHash
 
     # LOCK ORDER: pairId lock OUTERMOST, then requestHash. Never the reverse.
-    acquire lock "spt-seal:" ‖ pairId
-      require pair.json origin == "generated-here"          # §10.6(3)
+    acquire vfs.withLock(pairId)                    # the store's pad lock
+      require pair.json origin == "generated-here"          # §10.7
+          # absent field or absent pair.json => unknown => REFUSE (§10.7.1)
       require NOT exists(<pairId>/destroyed.json)
       (ab, ba) ← loadStore(<pairId>/a-to-b), loadStore(<pairId>/b-to-a)
       require both directions at GENESIS from the LIVE store:               # §10.6(1)
           nextOffset == 0 and nextSequence == 0 and attemptsReserved == 0
-      marker ← read handoff marker for pairId
-      require marker is absent, or marker.requestHash == requestHash        # §10.6(2)
+      h ← read <pairId>/handoff.json                                # §10.9
+      require h is absent
+           or (h.mode == "sealed" and h.requestHash == requestHash)   # §10.6(2)
+           # h.mode == "physical" => REFUSE pad-already-handed-off    # §10.8
 
-      acquire lock "spt-req:" ‖ requestHash
+      acquire lock "spt-send:" ‖ requestHash        # §10.10.1
         state ← sender state for requestHash
         if state == SEALED:  return state.package, state.confirmWords  # no re-encapsulation
         require state == CONFIRMED
@@ -1588,19 +1980,38 @@ seal(body, pairId):                                 # WORKER
     (ct, tag) ← AES-256-GCM-Encrypt(key, nonce, AAD, padFileBytes)
         confirm ← HKDF-Expand(PRK, u8(len(DS_CONFIRM)) ‖ DS_CONFIRM ‖ AAD, 11)
 
-        # ONE durable step: the handoff marker AND the sealed package together.
-        # Nothing is released before this succeeds — a package Alice cannot
-        # reproduce is worse than no package.
-        durably persist { marker { pairId, requestHash, at },
-                          state = SEALED { package = header ‖ ct ‖ tag,
-                                           confirmValue = confirm } }
+        # ONE file, ONE atomic replace (§10.9). Not two writes: a marker
+        # without a package bricks the pad, a package without a marker
+        # releases words Alice cannot reproduce. Nothing is released before
+        # this succeeds.
+        atomically replace <pairId>/handoff.json with
+            { pairId, mode: "sealed", at,
+              requestHash,
+              package = header ‖ ct ‖ tag,
+              confirmValue = confirm }
         zeroize padFileBytes
       release locks
 
     return package, confirmationWords88(confirm)
     # Alice's words stay MASKED until she marks Bob's as received (§8.2)
 
+exportPad(pairId):                                  # WORKER — §10.8
+    acquire vfs.withLock(pairId)               # same lock as seal(); one writer
+      require pair exists, NOT destroyed, NOT mid-import   # unchanged from today
+      h ← read <pairId>/handoff.json
+      require h is absent or h.mode == "physical"   # sealed => pad-already-sealed
+      if h is absent:
+          atomically replace <pairId>/handoff.json with
+              { pairId, mode: "physical", at }
+      container ← packContainer(...)           # unchanged from today
+    release lock
+    return container
+
 openSealed(pkg) -> sessionId:                       # WORKER
+    # ONE live session per request, for the session's whole lifetime (§10.10).
+    acquire lock "spt-recv:" ‖ pkg.requestId WITH ifAvailable
+      → unavailable ⇒ refuse "already open in another tab"; do NOT queue
+    # held from here until commitReceive, rejection, or worker teardown
     parse per §7.1; refuse on magic/version/suite/length/trailing bytes
     look up PENDING request by pkg.requestId
       → not found | cancelled | consumed | expired  ⇒ refuse (FREE)
@@ -1625,7 +2036,11 @@ openSealed(pkg) -> sessionId:                       # WORKER
     # another otherwise-valid bundle between confirmation and import.
     session ← { sessionId: random(16),
                 requestId, requestHash,
-                packageIdentity: SHA-256(AAD),      # exactly which package
+                packageIdentity: SHA-256(COMPLETE TPS2 bytes,
+                                          magic .. final GCM tag),
+                                       # NOT SHA-256(AAD) — the AAD is only the
+                                       # 1195-byte header and commits to
+                                       # neither the ciphertext nor the tag
                 padFileBytes,                       # held, not returned
                 confirmValue: confirm }
     hold session in transient worker-only memory   # NOT durable, by design
@@ -1634,6 +2049,8 @@ openSealed(pkg) -> sessionId:                       # WORKER
 
 commitReceive(sessionId):                          # after the operator confirms
     # The ONLY input is an opaque handle. No caller may supply pad bytes.
+    # LOCK ORDER (§10.10.2), outermost first:
+    #   "spt-recv:"‖requestId  (already held)  →  "spt-req:"‖requestId  →  pairId
     session ← resolve(sessionId)  or refuse (FREE — session lost or unknown)
     padFileBytes ← session.padFileBytes            # the EXACT bytes that
                                                    # produced the words Bob read
@@ -1644,19 +2061,35 @@ commitReceive(sessionId):                          # after the operator confirms
     require loadStore(<scratch>/a-to-b) and loadStore(<scratch>/b-to-a) both succeed
         # reconciliation, and rollback:none-only — a CLI-origin store refuses here.  FREE
     require both heads' pairId == container pairId
-        and the two halves are a matched A->B / B->A pair                            # FREE
+        and the two halves are a matched A->B / B->A pair                # PAD-SPENT
         # <scratch> lives OUTSIDE <pairId>/ and importing/<pairId>/ (§10.1),
         # and is removed on every exit path
-    require NOT exists(<pairId>/destroyed.json)         # pair-destroyed, FREE
-    require NOT committedPairExists(<pairId>)           # pair-exists,    FREE
+    require NOT exists(<pairId>/destroyed.json)    # pair-destroyed, PAD-SPENT
+    require NOT committedPairExists(<pairId>)      # pair-exists,    PAD-SPENT
 
-    under a lock scoped to requestId:
-        CAS: PENDING → CONSUMED, durably           # B4; a lost CAS aborts FREE
-    # from here on, any failure is LOSS and MUST be reported as such
+    acquire lock "spt-req:" ‖ requestId            # inside the session lock
+        CAS: PENDING → CONSUMED, durably      # B4; a lost CAS aborts PAD-SPENT
+    # from here on, any failure is LOSS (§11: REQUEST-LOST and HANDOFF-SPENT)
+    # and MUST be reported as such — never as "nothing changed"
     commit the EXISTING import with session.padFileBytes   # first import-pair call
     logically destroy dk
-    forget the session                             # one-shot; never reusable
+    forget the session; release "spt-req:" then "spt-recv:"   # session lock last
     advise deleting the .tps2 file (§10.4)
+
+reject(sessionId):                                  # §8.2.1, §10.10.3
+    acquire lock "spt-req:" ‖ session.requestId
+        durably: PENDING → CANCELLED, dk logically destroyed   # BEFORE any ack
+    zeroize session.padFileBytes, confirmValue, packageIdentity
+    forget the session; release "spt-req:" then "spt-recv:"
+    # No other session can exist for this requestId (§10.10), so there is
+    # nothing to notify. A BroadcastChannel notice is UI courtesy only.
+
+abandon(sessionId):                                 # §10.10 — closed, not decided
+    zeroize session.padFileBytes, confirmValue, packageIdentity
+    forget the session; release "spt-recv:" ‖ requestId
+    # The request stays PENDING. Abandoning is NOT rejecting; only rejection
+    # is terminal. Without this the session lock outlives the operator's
+    # intent and blocks the request until the tab closes.
 ```
 
 **The invariant that outranks everything here:**
