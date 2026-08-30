@@ -54,17 +54,25 @@ Recorded as facts with status, because the suite freeze depends on them.
 | **RFC 7748** — X25519 | RFC 7748, January 2016 | **IETF Standards Track RFC** | Yes — the traditional component |
 | **NIST SP 800-227** — Recommendations for KEMs | **Final, September 2025** | **Published NIST Special Publication** | Yes — §4.6.2 *approves* general-purpose key combiners (Eq. 14/15) and cites X-Wing |
 | **X-Wing** — general-purpose hybrid KEM | `draft-connolly-cfrg-xwing-kem-10`, 2 March 2026, expires 3 September 2026 | **Internet-Draft. Independent Submission (ISE). Intended status Informational. NOT adopted by CFRG. NOT an RFC.** The draft itself states it "is not endorsed by the IETF and has no formal standing in the IETF standards process." | Yes, with the status stated — see §2 |
+| X-Wing — status re-checked 2026-08-30 | still `-10`; **no newer revision has appeared** | unchanged from Phase 0 | suite `0x0001` stands unmodified |
 | X-Wing security proof | Barbosa, Connolly, Duarte, Kaiser, Schwabe, Varner, Westerbaan, *X-Wing: The Hybrid KEM You've Been Looking For* | **Peer-reviewed**, IACR Communications in Cryptology 2024; ePrint 2024/039 | Supporting evidence |
-| **X25519MLKEM768** (TLS) | `draft-ietf-tls-ecdhe-mlkem` | IETF TLS WG draft; widely deployed **in TLS** | **NO — see below** |
+| **RFC 10024** — *Post-Quantum Traditional (PQ/T) Hybrid Key Agreement Mechanisms for TLS 1.3* (X25519MLKEM768) | **Proposed Standard, August 2026** (formerly `draft-ietf-tls-ecdhe-mlkem`) | **Published IETF Proposed Standard** — not a draft | **NO, and the RFC itself says why — see below** |
 | ML-KEM in browser WebCrypto | WICG *Modern Algorithms in the Web Cryptography API*, Draft Community Group Report, 29 June 2026 | **Draft, not shipping in browsers** | Implementation note, §14 |
 
-**X25519MLKEM768 is explicitly rejected for this protocol.** Its "combiner" is
-bare concatenation `ss_ML-KEM ‖ ss_X25519`, which is then fed into the **TLS 1.3
-key schedule**, where the handshake transcript is folded in as salt and HKDF
-derives the session key. The combining work is done by TLS, not by the
-construction. Lifting the concatenation out of TLS and calling it a KEM would be
-an ad-hoc construction wearing a standard's name. That is exactly the mistake
-this section exists to avoid.
+**X25519MLKEM768 is standardized — and is still rejected for this protocol, on
+the standard's own authority.** Its "combiner" is bare concatenation
+`ss_ML-KEM ‖ ss_X25519`, fed into the **TLS 1.3 key schedule**, where the
+handshake transcript is folded in and HKDF derives the session key. The
+combining work is done by TLS, not by the construction. RFC 10024's Security
+Considerations say so directly:
+
+> "The security analysis relies crucially on the TLS 1.3 message transcript, and
+> one cannot assume a similar hybridization is secure in other protocols."
+
+Both facts are recorded because both matter: **X25519MLKEM768 is now RFC 10024,
+a Proposed Standard**, and **transplanting it into TruePad's non-TLS transfer
+would be exactly the error its own Security Considerations warn against.** Being
+standardized does not make a construction portable.
 
 **No finalized, general-purpose X25519 + ML-KEM-768 hybrid KEM standard exists
 as of this date.** That is the honest state of the world, and the suite below is
@@ -103,15 +111,119 @@ secure, which is the exact hybrid property this protocol wants.
 **Sizes (X-Wing):** encapsulation key **1216 B** · decapsulation key **32 B**
 (seed) · ciphertext **1120 B** · shared secret **32 B**.
 
-### 2.2 The freeze, and what "X-Wing" means in this document
+### 2.2 The COMPLETE frozen construction
 
-The construction in §2.1 is **reproduced normatively here**. Suite `0x0001` is
-defined by *this document*, and it happens to equal
-`draft-connolly-cfrg-xwing-kem-10`. If a later X-Wing draft or RFC changes the
-construction, **suite `0x0001` does not change** — a future suite `0x0002` would
-track it, and old packages remain openable. This is why the suite registry
-exists. TruePad must never ship something called X-Wing that is not the X-Wing
-it was proven to be.
+Phase 0 reproduced the combiner and left `KeyGen`/`Encaps`/`Decaps` as calls.
+That left cryptographic choices for Phase 1, which Phase 0 existed to eliminate.
+**Suite `0x0001` freezes the whole of `draft-connolly-cfrg-xwing-kem-10`**, and
+it is reproduced here so that after this document there is no question of the
+form *"how should we implement `XWing.KeyGen`?"*
+
+**Sizes.** `sk` 32 · `pk` 1216 · `ct` 1120 · `ss` 32.
+
+```
+XWingLabel = 5c 2e 2f 2f 5e 5c            # 6 bytes: ASCII "\./" then "/^\"
+
+def expandDecapsulationKey(sk):           # sk is the packed 32-byte seed
+    expanded = SHAKE256(sk, 96)           # 96 OCTETS (the draft writes 96*8 bits)
+    (pk_M, sk_M) = ML-KEM-768.KeyGen_internal(expanded[0:32],    # d
+                                              expanded[32:64])   # z
+    sk_X = expanded[64:96]                                       # X25519 scalar
+    pk_X = X25519(sk_X, X25519_BASE)
+    return (sk_M, sk_X, pk_M, pk_X)
+
+def GenerateKeyPair():
+    sk = random(32)
+    (sk_M, sk_X, pk_M, pk_X) = expandDecapsulationKey(sk)
+    return sk, concat(pk_M, pk_X)         # pk = pk_M[0:1184] ‖ pk_X[1184:1216]
+
+def GenerateKeyPairDerand(sk):            # for test vectors ONLY
+    (sk_M, sk_X, pk_M, pk_X) = expandDecapsulationKey(sk)
+    return sk, concat(pk_M, pk_X)
+
+def Encapsulate(pk):
+    pk_M = pk[0:1184]
+    pk_X = pk[1184:1216]
+    ek_X = random(32)
+    ct_X = X25519(ek_X, X25519_BASE)
+    ss_X = X25519(ek_X, pk_X)
+    (ss_M, ct_M) = ML-KEM-768.Encaps(pk_M)     # MUST do the FIPS 203 §7.2
+                                               # encapsulation-key check
+    ss = Combiner(ss_M, ss_X, ct_X, pk_X)
+    ct = concat(ct_M, ct_X)                    # ct_M[0:1088] ‖ ct_X[1088:1120]
+    return (ss, ct)
+
+def EncapsulateDerand(pk, eseed):         # for test vectors ONLY; eseed is 64 B
+    pk_M = pk[0:1184]
+    pk_X = pk[1184:1216]
+    ek_X = eseed[32:64]
+    ct_X = X25519(ek_X, X25519_BASE)
+    ss_X = X25519(ek_X, pk_X)
+    (ss_M, ct_M) = ML-KEM-768.EncapsDerand(pk_M, eseed[0:32])
+    ss = Combiner(ss_M, ss_X, ct_X, pk_X)
+    ct = concat(ct_M, ct_X)
+    return (ss, ct)
+
+def Decapsulate(ct, sk):
+    (sk_M, sk_X, pk_M, pk_X) = expandDecapsulationKey(sk)
+    ct_M = ct[0:1088]
+    ct_X = ct[1088:1120]
+    ss_M = ML-KEM-768.Decapsulate(ct_M, sk_M)  # NOT required to perform the
+                                               # decapsulation-key check
+    ss_X = X25519(sk_X, ct_X)
+    return Combiner(ss_M, ss_X, ct_X, pk_X)
+
+def Combiner(ss_M, ss_X, ct_X, pk_X):
+    return SHA3-256(concat(ss_M, ss_X, ct_X, pk_X, XWingLabel))   # 134 B in
+```
+
+**Validation, exactly as the draft has it — and no more.**
+`Encaps` **MUST** perform the FIPS 203 §7.2 encapsulation-key check and raise on
+failure. `Decaps` is **NOT** required to perform the decapsulation-key check.
+
+> **On the all-zero X25519 result: draft-10 explicitly declines to mandate a
+> check, and TruePad does not add one.** Adding an ad-hoc contributory-behaviour
+> check would take suite `0x0001` outside the construction that was proven, and
+> would break interoperability with any conforming X-Wing implementation, for a
+> property X-Wing's own security argument does not rest on — the combiner hashes
+> `ct_X` and `pk_X` alongside `ss_X`, and IND-CCA follows from ML-KEM-768 **or**
+> gap-CDH on Curve25519. Adding checks to a frozen suite because they feel
+> prudent is precisely how a "hybrid standard" stops being the thing that was
+> analysed.
+
+**Cryptographic dependencies of this suite, in full:** ML-KEM-768 (FIPS 203),
+X25519 (RFC 7748), **SHAKE-256** (key expansion), **SHA3-256** (combiner), and
+**SHA3-512** — the last two via ML-KEM-768's internals and via X-Wing's own
+security argument, which models **SHA3-256, SHA3-512 and SHAKE-256 as random
+oracles**. §16.1 lists all of them; reducing this to "the SHA3-256 combiner"
+would understate what the construction assumes.
+
+### 2.2.1 The freeze rule
+
+Suite `0x0001` is defined by **this document**, and equals
+`draft-connolly-cfrg-xwing-kem-10` (re-verified 2026-08-30: still `-10`, no
+newer revision). If a later X-Wing draft or RFC changes anything above, **suite
+`0x0001` does not change** — a future suite `0x0002` tracks it and old packages
+stay openable. TruePad must never ship something called X-Wing that is not the
+X-Wing that was proven.
+
+### 2.2.2 Reference vectors required before Phase 1 ships
+
+Phase 1 **MUST** validate against, at minimum:
+
+1. `GenerateKeyPairDerand(sk)` for a fixed 32-byte `sk` → expected `pk` (1216 B)
+   and the intermediate `expanded` 96 bytes;
+2. `EncapsulateDerand(pk, eseed)` for a fixed 64-byte `eseed` → expected `ct`
+   (1120 B) and `ss` (32 B);
+3. `Decapsulate(ct, sk)` → the same `ss`;
+4. the `Combiner` alone over a fixed 134-byte input.
+
+> **Provenance caveat, recorded rather than assumed.** draft-10's own test
+> vectors carry editorial qualification and are an Internet-Draft artifact, not
+> a validated standard's. Before production use, Phase 1 **MUST** additionally
+> cross-check against at least one **independent** X-Wing implementation, and
+> record which one and at what version. A vector that only agrees with itself
+> proves nothing.
 
 ### 2.3 The approved fallback, recorded now
 
@@ -292,58 +404,51 @@ requestHash = H_ds(DS_REQUEST_FP, canonicalRequestBody)        [32 bytes]
 suite, requestId, and the encapsulation key. Substituting any of them changes
 the fingerprint.
 
-### 6.3 Words: 8 words, 88 bits
+### 6.3 Request words: 12 words, 132 bits
 
-Take `requestHash[0..11)` — the first **11 bytes = 88 bits** — as a big-endian
-88-bit integer, and split it into **8 indices of 11 bits each**, most
-significant first. Index *i* selects word *i* from a pinned 2048-word list.
+The Phase-0 draft rendered 88 bits here and *conceded in the same breath* that
+Bitcoin-scale SHA-256 capability defeats it in about 36 hours. That is not an
+acceptable margin for the control whose failure means **Alice encrypts the
+entire pad to the attacker**. A control that is documented as breakable by an
+adversary tier that demonstrably exists is not a control; 88 bits is withdrawn
+here and the request fingerprint is raised to a 128-bit class.
 
-**Why 8 and not 6.** The attack is a *second preimage*: Mallory must produce a
-different request whose fingerprint matches the one Bob will read aloud.
+**Rendering — `requestWords132`.** Take `requestHash[0..17)` — the first **17
+bytes** — as a big-endian 136-bit integer `n`. Discard the **low 4 bits**, i.e.
+use `m = n >> 4`, a **132-bit** value. Split `m` into **12 indices of 11 bits**,
+most-significant first: index *i* (0-based) is `(m >> (121 - 11·i)) & 0x7FF`.
+Shifts are therefore 121, 110, 99, 88, 77, 66, 55, 44, 33, 22, 11, 0 — an exact,
+non-overlapping partition of all 132 bits. Each index selects one word from the
+pinned 2048-word list (§6.4).
 
-The unit matters, and getting it wrong would overstate the margin by fifteen
-orders of magnitude. Mallory does **not** grind keypairs — he needs exactly
-one. §5.1 hands him **16 freely chosen `requestId` bytes**, which are a
-constraint on honest generators and not on him, so a trial is one SHA-256 over a
-1270-byte preimage ≈ **20 compressions**. The cost is therefore **≈2⁹² SHA-256
-compressions**, not 2⁸⁸ key generations — and the table below quotes the
-conservative 2⁸⁸ floor rather than that figure.
+**Work factors**, on the same declared basis as before — one SHA-256 compression
+per trial, a conservative floor that credits the attacker with an amortisation
+he does not have (`requestId` sits in block 0 of the 20-block preimage, so a
+real trial costs ~20 compressions, i.e. ≈2¹³⁶):
 
-| Words | Bits | Commodity GPU (2³⁴/s) | Large GPU cluster (2⁵⁰/s) | Bitcoin-scale SHA-256 ASIC (2⁷¹/s) |
+| Rendering | Bits | Commodity GPU (2³⁴/s) | Large GPU cluster (2⁵⁰/s) | Bitcoin-scale ASIC (2⁷¹/s) |
 | --- | --- | --- | --- | --- |
-| 4 | 44 | ~17 minutes — **broken** | instant | instant |
-| 6 | 66 | ~136 years | **~18 hours** | **~31 ms** |
-| **8** | **88** | ~6 × 10⁸ years | ~8 700 years | **~36 hours** |
+| 8 words *(withdrawn)* | 88 | ~6 × 10⁸ y | ~8 700 y | **~36 hours** |
+| **12 words** | **132** | ~1 × 10²² y | ~1.5 × 10¹⁷ y | **~7 × 10¹⁰ years** |
 
-Cells charge the attacker **one compression per trial** — a floor that credits
-him with an amortisation he does not actually have. `requestId` sits at body
-offset 3, hence preimage offset 38, inside SHA-256 **block 0** of the 20-block
-1270-byte preimage, so no midstate is reusable and a real trial costs the full
-~20 compressions: ≈2⁹² in total, or roughly 30 days at the ASIC tier. The
-conservative figure is quoted so the published margin cannot be an overclaim.
+At the ASIC tier the floor is 2⁶¹ seconds ≈ 73 billion years, against a universe
+of ~1.4 × 10¹⁰. The margin no longer depends on the attacker's budget, on the
+7-day TTL, on consumer hardware, or on anyone's guess about whether TruePad is a
+target — **none of which are security properties**, and all of which the Phase-0
+draft leaned on to some degree.
 
-Eight words is chosen against the first two tiers. Six is rejected because it is
-**~18 hours at cluster scale and milliseconds at ASIC scale** — not because six
-is theoretically weak, but because it is practically reachable.
+Twelve words is more to read aloud than eight. That is the price of the control
+whose failure is total, and it is paid once per pad.
 
-**Against the third tier the fingerprint alone does not exclude the attack, and
-this document does not pretend otherwise.** Note carefully *which* channel the
-attacker needs: **none of the side channel.** He substitutes Bob's TPR2 on the
-**request** channel — which this protocol already assumes is unauthenticated —
-with a colliding request; Alice's fingerprint matches; Bob then reads his
-genuine words over a genuine authenticated side channel; and they match.
-Grinding the fingerprint is precisely the technique for *not* needing a
-side-channel position. The 7-day `PENDING` TTL (§10.1) bounds the grinding
-window, and at 2⁷¹/s that window is ~2⁹⁰ compressions — which is to say the ASIC
-tier does complete the conservative-floor grind inside one TTL. That is the
-honest reason this concession is stated rather than rounded away, and it is the
-strongest argument for physical exchange (§16.5) over any online path.
-
-With `T` requests live at once, the work to hit *some* target is 2⁸⁸/T, which is
-why §10.1 imposes a `PENDING` time-to-live.
-
-The words are a **fingerprint**. They are not a password, not a key, not KEM
-randomness, and not a shared secret. They are never fed into any derivation.
+> **All twelve are compared. A position challenge is UX, never security margin.**
+> Asking the operator to echo a random 2–3 positions ("read me words 2, 5 and 7")
+> is worth adding, because it catches someone who glances at the first and last
+> word and says "yes". But checking 3 of 12 eleven-bit words compares **33
+> bits**, not 132, and it **MUST NOT replace the normative comparison of the
+> full fingerprint**. Un-compared words contribute nothing and are never credited
+> to the margin. The same applies to §8: the 88-bit confirmation argument assumes
+> **all eight** words are actually compared, and if an implementation ever
+> compares fewer, the number in that argument changes accordingly.
 
 ### 6.4 The wordlist
 
@@ -354,12 +459,27 @@ and identified by the SHA-256 of the canonical newline-separated file.
 **Intended list: BIP-39 English** (`bitcoin/bips`, `bip-0039/english.txt`),
 which meets all of the above and is the most widely transcribed such list.
 
-> **Open item carried to Phase 1 (the only one):** the BIP-39 wordlist's licence
-> was not confirmed during this survey and **must** be verified before
-> vendoring. If it proves unsuitable, any list meeting the requirements above is
-> substituted. This affects **no key, ciphertext, or package byte** — the
-> wordlist is a *rendering* of the fingerprint, not an input to it — but both
-> parties must share the same list, which is why it is pinned by hash.
+**Provenance — resolved as far as this phase honestly can.** BIP-39's own
+specification text declares `License: MIT`, and the list is published at
+`bitcoin/bips` as `bip-0039/english.txt`. That sentence covers the BIP document;
+it does not by itself settle every provenance question for the standalone
+`english.txt` asset, and this document does not pretend it does.
+
+Before vendoring, Phase 1 **MUST**: verify the exact source and applicable
+licence of the file; preserve any required attribution or licence notice;
+vendor the exact 2048-word file; pin its **SHA-256 over the canonical
+newline-separated content**; and test that it has exactly 2048 entries, all
+lowercase ASCII, all unique, with **unique 4-character prefixes** and canonical
+newline handling. **If the licence cannot be established cleanly, a differently
+licensed 2048-word list meeting the same requirements is substituted before
+Phase 1 ships** — the list is a *rendering*, so this changes no package byte,
+though both parties must share the same list, which is what the hash pin is for.
+
+> **TruePad's display is not a BIP-39 mnemonic**, and must never be described as
+> one. There is no seed, no entropy, no checksum word, and no wallet. TruePad
+> uses a pinned human-readable wordlist to render fingerprint **bits** for a
+> spoken comparison. The words are never key material, never a password, and
+> never an input to any derivation.
 
 ---
 
@@ -465,9 +585,32 @@ encapsulation randomness being fresh. Re-sealing is therefore **not** idempotent
 which is exactly why §10.5 requires the *same package* to be re-shared rather
 than a new one produced.
 
-Uniqueness of (key, nonce) does **not** rest on CSPRNG freshness. The CSPRNG is
-still trusted for the `requestId` and for KEM key generation and encapsulation
-(§17), and that trust is now stated in §16.1 rather than left implicit.
+**Re-audit of the exact invariant, claimed no more strongly than it is earned.**
+
+- **No circularity.** `PRK ← (requestHash, ss)`; `padHash ← padFileBytes`;
+  `nonce ← (PRK, padHash)`; `AAD ∋ nonce`; `key ← (PRK, AAD)`. Strictly acyclic.
+- **Same `PRK` + same plaintext** → same `(key, nonce)`. Safe **only because the
+  plaintext is identical**, which is AES-GCM's one permitted repetition: an
+  identical (key, nonce, plaintext, AAD) yields an identical ciphertext and
+  leaks nothing new.
+- **Same `PRK` + different plaintext** → different `padHash` → different nonce →
+  different AAD → different key. Uniqueness therefore rests on **SHA-256
+  collision resistance over the pad file**, which is a *computational*
+  assumption and is named as one, not smuggled in as a structural guarantee.
+- **What this removes and what it does not.** It removes the dependency on
+  CSPRNG *freshness* for (key, nonce) uniqueness — a duplicated RNG state no
+  longer produces a catastrophic repetition with different plaintexts. It does
+  **not** make the construction independent of randomness: the CSPRNG is still
+  trusted for `requestId`, for X-Wing key generation, and for encapsulation, and
+  a duplicated RNG state still repeats `ss` and therefore `PRK`. The honest
+  claim is *"(key, nonce) uniqueness does not additionally depend on nonce
+  freshness"*, not *"uniqueness is independent of all randomness"*.
+- **Divergence is caught.** `openSealed` re-derives the nonce and compares
+  (§20), so a build disagreeing about `len(DS_PAD)` refuses instead of silently
+  forking.
+- **Domain separators** remain exact and computed, never hard-coded (§6.2).
+
+All of this is stated in §16.1's assumption list rather than left implicit.
 
 Maximum plaintext: **16 MiB** (`16 777 216` bytes), comfortably above the
 largest legitimate pad file (~11.5 MB) and far below AES-GCM's limits. A
@@ -495,7 +638,72 @@ confirmValue = HKDF-Expand( PRK,
                             L = 11 )                            [88 bits]
 ```
 
-rendered as 8 words by the §6.3 procedure and the same wordlist.
+rendered as **8 words = 88 bits** by `confirmationWords88`: take
+`confirmValue[0..11)` as a big-endian 88-bit integer and split it into **8**
+indices of 11 bits, shifts 77, 66, 55, 44, 33, 22, 11, 0, from the same pinned
+wordlist (§6.4).
+
+The two ceremonies are deliberately named apart — `requestWords132` and
+`confirmationWords88` — because they render different values at different
+strengths for different threat models, and confusing them would be easy and bad.
+
+#### 8.2.1 Why 88 bits is defensible here, proved separately
+
+This is **not** "88 is fine because the other one is stronger". They are
+independent ceremonies and this one gets its own argument.
+
+The request fingerprint faces an **offline, known-target** grind: the target is
+computable from public data, so an attacker can search at hardware speed with no
+interaction. The confirmation faces neither of those conditions.
+
+- **The target is unknown.** `confirmValue` derives from `PRK`, hence from the
+  X-Wing shared secret. Under §6 having succeeded, Mallory holds neither Alice's
+  encapsulation randomness nor Bob's `dk`, so he cannot compute Alice's words.
+  There is nothing to grind *toward*.
+- **The receiver reads first (§8.2).** Bob commits to the package he actually
+  opened before Alice speaks, so hearing Bob does not hand Mallory a target for
+  Alice's value either — it hands him a value he must have already matched.
+- **Each attempt is an online, human-rate trial.** For Mallory's package to be
+  accepted, *his* `confirmValue` must equal what Alice reads. He cannot test a
+  candidate without sending a package and having a human compare. Success
+  probability per attempt is 2⁻⁸⁸.
+
+Now the adversarial cases §4 requires:
+
+| Scenario | Outcome |
+| --- | --- |
+| Mallory sends **many** candidate packages | Each is one online trial at 2⁻⁸⁸. Bob opens one at a time, reads its words, and they mismatch. Nothing accumulates: distinct packages give independent `ss`, so this is sampling, not grinding |
+| Mallory **hears Bob read first** | Bob's words are for the package Bob opened. If that is Mallory's, Mallory already knows them; if it is Alice's, Mallory cannot have produced them. Hearing them yields no search target |
+| **Alice does not reveal on mismatch** | Normative: on mismatch Alice's words stay masked and the transfer is abandoned. Mallory learns one bit ("wrong"), not 88 |
+| **Retries / abandoned attempts** | Alice's target is **fixed for the life of the request** — §10.5 stores one package and never re-encapsulates. The argument therefore does **not** rest on a moving target; it rests on the target never being spoken into a round that survives. That is what makes rejection **terminal** (§10.1): once Alice's words are said aloud, the round ends one way or the other |
+| **Observable but authenticated side channel** | Covered by receiver-first: an eavesdropper hears committed values, never a target to grind |
+| **Malicious package ordering** | Mallory racing his package in first only means Bob opens Mallory's and reads *its* words; Alice's then mismatch and the transfer is **abandoned terminally**. Ordering buys no advantage, and the rejected session cannot be committed afterwards |
+
+The distinguishing property is that **the confirmation has no offline oracle**.
+**Four** conditions carry that, and every one is normative rather than advisory,
+because dropping any of them turns this section from a proof into a hope:
+
+1. **receiver-first** (§8.2) — Bob commits before Alice speaks;
+2. **no reveal on mismatch** — Alice's words stay masked and the round ends;
+3. **rejection is terminal** (§10.1) — a spoken target never outlives its round;
+4. **one live session per request** (§10.1) — a rejected package cannot be
+   committed later.
+
+Conditions 3 and 4 were **missing** from the first Phase-0.5 draft, and their
+absence made the proof false: an abandoned round left Alice's fixed target known
+and grindable offline for up to seven days.
+
+**Premises this argument assumes and cannot itself enforce**, stated in §6.1's
+voice: that Bob opens **one package at a time** rather than collecting
+candidates and choosing after hearing Alice, and that **all eight words** are
+compared. Both are **OPERATOR** assumptions.
+
+**On severity, so the repair is not over-scoped:** even in the violated case the
+grind is 2⁸⁸ **X-Wing encapsulations** — roughly 2¹⁰³–2¹⁰⁸ operations, with no
+ASIC tier in existence for ML-KEM — not 2⁸⁸ SHA-256 compressions. **88 bits does
+not need to rise.** The conditions are made normative because the section is
+written as a proof and the spec relies on it as one, not because the number was
+close.
 
 Alice sees these after sealing. Bob sees them **only** for a package he actually
 decapsulated and AEAD-verified.
@@ -503,6 +711,11 @@ decapsulated and AEAD-verified.
 > **THE RECEIVER READS FIRST.** Bob speaks his words before Alice speaks hers.
 > Alice MUST NOT emit her words until a package she sealed has been delivered,
 > and the UI keeps hers masked until she marks Bob's as received.
+>
+> Like the comparisons themselves, this ordering is an **OPERATOR** assumption:
+> TruePad can mask a field and order its buttons, but it cannot hear who spoke
+> first. §8.2.1's proof depends on it, so it is named as an assumption rather
+> than presented as a property the software enforces.
 
 This ordering is normative, not etiquette. The side channel is required to be
 *authenticated*; it is **not** required to be *confidential*. If Alice speaks
@@ -576,7 +789,14 @@ PENDING ────── cancel, or 7-day TTL expiry ──────► CAN
   ▼
 AWAITING_CONFIRMATION  (transient, in-memory, NOT durable)
   │
-  ├── operator rejects ──► back to PENDING   (nothing consumed; retry allowed)
+  ├── operator rejects ──► CANCELLED  (terminal; dk destroyed; FREE)
+  │     Rejection is TERMINAL, not a retry. §8.2.1's proof requires that a
+  │     confirmation value spoken aloud never outlives its round: returning to
+  │     PENDING would leave Alice's target fixed (§10.5 stores one package for
+  │     the life of the request) and known to anyone who heard it, on a channel
+  │     §8.2 does not require to be confidential — an offline target where the
+  │     proof asserts there is none. It also closes session substitution: a
+  │     rejected package can never be committed later. Cost: one new request.
   │
   │ operator confirms the §8 words
   ▼
@@ -590,6 +810,31 @@ COMPLETE  (pad imported, transfer private key logically destroyed)
 `AWAITING_CONFIRMATION` is deliberately **not**: a crash there simply returns to
 `PENDING`, having consumed nothing.
 
+> **The decrypted pad bytes never leave the worker, and are never handed back
+> in.** `openSealed` returns an opaque `sessionId` and the confirmation words;
+> the plaintext is held in a transient worker-only session alongside the
+> `requestId`, the `requestHash`, the package identity, and the `confirmValue`.
+> `commitReceive(sessionId)` then imports **those same held bytes**.
+>
+> The Phase-0 signature `commitReceive(requestId, padFileBytes)` reintroduced
+> the plaintext as a caller-supplied argument at the commit boundary, which let
+> the UI substitute a *different but otherwise perfectly valid* bundle between
+> the moment the operator compared Alice's words and the moment the pad was
+> imported. The words would have attested one pad and the importer would have
+> committed another. That signature is withdrawn.
+>
+> **One live session per request, enforced.** A new `openSealed` for a given
+> `requestId` atomically destroys and zeroes any prior session for it, and
+> `commitReceive` refuses unless its session is still the current one for that
+> `requestId`. Without this, Mallory's package could be opened, rejected, and
+> then still committed after Alice's was opened — importing the very pad the
+> operator refused. `packageIdentity` is what that check compares.
+>
+> The session is **transient by design**. A crash loses it, leaves the request
+> `PENDING`, and consumes nothing — the operator re-opens the `.tps2` and the
+> sender confirmation is repeated. Losing a session is free; carrying one across
+> a crash would mean persisting decrypted pad bytes for no benefit.
+
 > **`import-pair` is a single committing transaction — there is no validate-only
 > mode.** `importImpl()` runs from staging straight through `writePairMeta` to
 > the removal of `importing.json`, which is the commit. Calling it "to validate"
@@ -600,6 +845,15 @@ COMPLETE  (pad imported, transfer private key logically destroyed)
 > Non-mutating **existence lookups** against `<pairId>/` are permitted and are
 > *required* by §11's pre-flight; `unpackContainer()`, `validateBundleFileSet()`
 > and `loadStore()` equivalents run on a private scratch copy outside both paths.
+
+> **`requestId` collisions are handled, not assumed away.** `requestId` is the
+> receiver's own lookup key and lock scope, so a collision is a storage question
+> even though it is not a security identity. Generation **retries** on a local
+> collision with any existing `PENDING`, `CANCELLED`, `CONSUMED` or `COMPLETE`
+> record. On arrival, a package must match **both** the `requestId` **and** the
+> full stored canonical request — the recorded `requestHash` — **before any
+> private-key use**. `requestId` alone never selects security state; it only
+> finds the candidate record whose `requestHash` then has to agree.
 
 > **`PENDING` requests expire.** A pending request carries a durable creation
 > time and a **time-to-live of 7 days**, after which it transitions to
@@ -626,8 +880,9 @@ COMPLETE  (pad imported, transfer private key logically destroyed)
 TruePad's governing rule decides this: **loss is acceptable; reuse is not.** If
 the request were consumed *after* the import, a crash between them would leave a
 `PENDING` request whose one-time key had already successfully opened a package —
-reusable. Consuming first means a crash between the two loses the transfer (the
-operator makes a new request and the sender re-seals).
+reusable. Consuming first means a crash between the two loses the transfer — and because
+§10.6 spends the pad's one handoff on the first seal, recovery is a **new pad**,
+not a re-seal of the old one.
 
 **The ordering and its durability are two different claims, and only one of them
 is unconditional.** The *ordering* is unconditional: nothing releases a pad
@@ -660,10 +915,10 @@ adds nothing to this; it reuses it exactly.
 | After decapsulation, before AEAD verify | yes | yes | no | yes | Re-open the package |
 | After AEAD verify, before confirmation | yes | yes | no | yes | Re-open; words shown again |
 | After confirmation, before `CONSUMED` durable | yes | yes | no | yes | Re-open the package |
-| **After `CONSUMED` durable, before import commit** | **NO** | logically destroyed | no | **NO** | **Transfer lost.** New request; sender re-seals. *This is the accepted loss.* |
-| After import commit, before request cleanup | no | logically destroyed | **yes** | no | Cleanup is idempotent |
+| **After `CONSUMED` durable, before import commit** | **NO** | **still present** — destruction happens after the import commit (§20) | no | **NO** | **Transfer lost.** The pad's one handoff is spent: generate a **new pad** (§10.6). The stranded `dk` is destroyed by the same cleanup that reaps the CONSUMED record; until then it is a live key for a package that will never be imported |
+| After import commit, before request cleanup | no | **still present** until cleanup runs | **yes** | no | Cleanup is idempotent, and destroying `dk` is part of it |
 | Storage full during the pre-flight scratch copy (**pre**-CAS) | yes | yes | no | yes | FREE — free space, re-open the package |
-| Storage full during the importer's staging or copy loop (**post**-CAS) | **NO** | logically destroyed | no | **NO** | **Transfer lost** — the same accepted loss as above: new request, sender re-seals |
+| Storage full during the importer's staging or copy loop (**post**-CAS) | **NO** | **still present** until cleanup | no | **NO** | **Transfer lost** — the same accepted loss: generate a **new pad** (§10.6) |
 | Browser killed at any point | as above | as above | as above | as above | State machine is the recovery |
 | Two tabs, same request, different packages | **NO** — the second CAS fails | — | one only | no | The `requestId`-scoped compare-and-set is what prevents this |
 | **Power loss** between the `CONSUMED` flush and the medium | **NOT CLAIMED** | — | — | — | OPFS documents no power-loss semantics (`PRODUCT-CLAIMS.md` row 13). The ordering holds; the durability of the write is BROWSER-OP, not native |
@@ -679,30 +934,192 @@ adds nothing to this; it reuses it exactly.
 - Replay can never create a second independently consumable pad **in the
   installation that holds the pending request** — the existing importer refuses
   `pair-exists` against that origin's OPFS. The qualifier is load-bearing and is
-  the code's own: *"a pair with id … already exists **in this browser**"*. A
-  saved `.tps2` re-opened in another browser profile, another browser, or after
-  "clear site data" **does** reproduce the pad, because the sealed package is a
-  durable copy of it. **The recipient must delete the package after a successful
-  import.** This is the same property the existing courier export already has —
-  Sealed Pad Transfer adds a long-lived encrypted copy, not a new failure class.
+  the code's own: *"a pair with id … already exists **in this browser**"*.
+
+  > **Correction to the Phase-0 draft, which was cryptographically wrong here.**
+  > Phase 0 said a saved `.tps2` opened "in another browser profile, another
+  > browser, or after clear-site-data" reproduces the pad. **It does not.** The
+  > package does not contain Bob's one-time decapsulation key; that key lives
+  > only in the origin's worker-confined OPFS. A fresh origin has no `dk`, so
+  > under the stated computational assumptions the file is inert there. Phase 0
+  > contradicted its own threat matrix, which correctly said a stolen package
+  > alone is useless.
+  >
+  > The accurate model has three cases:
+  >
+  > | Attacker holds | Result |
+  > | --- | --- |
+  > | `.tps2` **alone** | A computationally encrypted archive. **Not** presently openable — no `dk` |
+  > | `.tps2` **+ a matching `dk`** (a restored, cloned, or still-`PENDING` recipient state) | Decrypts; reproduces the pad. This is the real risk, and it is §9's profile-rollback case, not a property of the file |
+  > | `.tps2` **+ a future break** of the delivery cryptography | May become readable later — §14 |
+  >
+  > Deleting the package after import therefore remains **strongly recommended
+  > hygiene**, but for the honest reason: it removes an archive that becomes
+  > readable if the recipient key state is ever restored, or if the delivery
+  > cryptography is broken later. Not because the file is a plaintext-equivalent
+  > copy of the pad — it is not.
+  >
+  > And TruePad cannot promise deletion at all: copies already sent through
+  > email, chat, cloud storage, backups, or another device are beyond any button
+  > this application can render.
 - Replay can never resurrect a destroyed pair: the existing importer refuses
   `pair-destroyed`, and `destroyImpl` writes the tombstone *before* it overwrites
   or unlinks anything, so even an interrupted destroy still refuses.
 
+#### 10.4.1 The rollback boundary — inherited, not improved
+
+Every "never" above is scoped to **the current, non-rolled-back Browser origin
+state**, and Sealed Pad Transfer gets no stronger rollback claim than the
+Browser Edition already has. The receive-request record, the recipient `dk`, and
+the browser-local witness all live in the **same** OPFS failure domain, so a
+restoration of that domain restores them together — the witness cannot testify
+against a rollback that carried it along.
+
+| Event | Pending `dk` | Consumed state | Replay possible? |
+| --- | --- | --- | --- |
+| Ordinary crash / tab kill | survives | survives | no — §10.2 ordering holds |
+| **Full profile restore** | **restored** | **rolled back** | **YES** — a consumed request can return to `PENDING` with its `dk`, and a retained `.tps2` then decrypts again |
+| **Cloned profile / OPFS copy** | **duplicated** | duplicated | **YES** — the clone can consume the same package independently |
+| "Clear site data" | **destroyed** | destroyed | no — this is **LOSS**, not replay: the `dk` is gone and a retained `.tps2` becomes inert. Recovery is a **new pad** (§10.6) |
+| Power loss around the `CONSUMED` flush | see §10.3 | not claimed | see §10.3 |
+
+The two rows that matter point in opposite directions and are routinely
+confused: **clear-site-data destroys the key and causes loss; profile
+restore/clone restores the key and permits replay.** Only the second is a
+security event, and it is the same event `PRODUCT-CLAIMS.md` row 17 and
+`BROWSER-SECURITY.md` §2 already document for pads themselves.
+
+This is why `platform-monotonic` exists for the *witness*, and why nothing
+analogous exists here: a browser origin has no external authority to appeal to.
+An operator who restores an old profile can replay a transfer, and TruePad
+cannot detect it.
+
 ### 10.5 Sender re-sealing
 
-**One receive request → one sealed package.** Sender-side state here is keyed by
-the **complete request body**, not by `requestId` (§5.1). After a package exists
-for a given body, the *exact* package may be saved, re-saved, and re-shared
-freely. Re-sealing produces a **different** package — `XWing.Encaps` is
-randomized, so a second seal yields a different `ct_kem`, a different `ss`, and
-different §8 confirmation words — which is precisely why the *existing* package
-must be re-shared rather than a new one generated.
-TruePad does not silently produce a second, independently encapsulated package
-for R as though it were the same operation — two valid packages for one request
-would give Bob a choice he has no basis to make, and would give Mallory a
-plausible reason to send a third. Re-sealing requires an explicit new operation
-and says so.
+**One receive request → one sealed package**, enforced by a durable transaction
+rather than by convention. Phase 0 stated the rule and specified no mechanism,
+so two tabs could both observe CONFIRMED, both run the **randomized**
+`XWing.Encaps`, and produce two valid packages with two different confirmation
+values — leaving Bob a choice he has no basis to make, and Mallory a plausible
+reason to send a third.
+
+**Sender state, keyed by the complete canonical request body** (or equivalently
+its full `requestHash` — never by `requestId`, which the requester chooses and
+which §5.1 gives no uniqueness guarantee):
+
+```
+ABSENT ──confirm──► CONFIRMED ──seal──► SEALING ──persist──► SEALED
+                                                             { package bytes,
+                                                               confirmValue }
+```
+
+Ordering, under an exclusive lock (a Web Lock scoped to the `requestHash`):
+
+1. **acquire the lock**;
+2. **re-check state** inside it;
+3. if **SEALED** → return the **exact stored package**; do **NOT** re-encapsulate;
+4. if **CONFIRMED** → encapsulate **once**, build the package, and **persist the
+   exact package bytes and `confirmValue` durably**;
+5. **only after that persistence succeeds** may any package byte be released to
+   the UI;
+6. a concurrent caller waits on the lock and receives the **same stored package**.
+
+**If persistence fails before release, no package leaves the worker.** The
+alternative — releasing bytes that were never recorded — is how Alice ends up
+reading confirmation words for a package she cannot reproduce.
+
+**CONFIRMED, defined exactly** (§11 of the closure brief): it is an **OPERATOR
+declaration** — *"the full 12 request words matched over the side channel"* —
+and never a cryptographic proof that the comparison happened. It is bound to the
+canonical body byte-for-byte; it is **one-shot**; it is **invalidated by any
+edit** of the pasted code; it carries the same **7-day TTL** as a pending
+request; and confirmation of body *B* can never authorize sealing body *B′*.
+Cleanup removes CONFIRMED and SEALED state when the operator dismisses the
+transfer, and a crash in `SEALING` leaves CONFIRMED intact — the seal is simply
+retried, which is safe because nothing was released.
+
+Re-sharing is free and expected: the **exact same package** may be saved and
+sent as often as transport requires. What is refused is a *second independent
+encapsulation* for the same request.
+
+**Rollback limitation, same as everywhere.** A full profile restore can rewind
+sender state too, returning SEALED to CONFIRMED and permitting a second
+encapsulation. The Browser Edition has no independent anti-rollback authority to
+appeal to here either (§10.4.1).
+
+## 10.6 What may be sealed — the pairing rule
+
+This is security-critical and Phase 0 did not address it.
+
+**Audit of today's behaviour.** `exportImpl` (`verbs.ts`) refuses only a
+destroyed pair, an incomplete import, and a missing pair. There is **no
+once-only guard and no handoff state anywhere in the codebase**, and the pad
+screen deliberately offers *"Save the pad file again"* — re-export is a feature,
+so that a lost courier copy can be re-delivered.
+
+That is safe for a *physical* courier, where the operator hands one medium to
+one person and knows they did. It is **not** safe to inherit unchanged into an
+online transfer, where re-sealing to a second request is one click and leaves no
+trace. If Alice seals the same live pad to Bob **and** to Charlie, both hold the
+same directional material and both will consume it independently — **a two-time
+pad**, which is the worst outcome this product has.
+
+**The frozen v1 rule.** Sealed Pad Transfer is a **pairing ceremony**, not a
+distribution channel:
+
+1. **Locally generated, at genesis, only.** A pad may be sealed only by the
+   installation that **generated** it, and only while it is at genesis — both
+   directions with `nextOffset`, `nextSequence` and `attemptsReserved` all zero,
+   read from the **live store**, never from bytes a caller supplied. `loadStore`
+   already returns all three as a pure non-mutating read, so this is checkable.
+2. **One pad → one sealed handoff, ever.** A durable per-`pairId` **handoff
+   marker** `{ pairId, requestHash, at }` is written when a package is first
+   sealed. A seal is refused when a marker exists whose `requestHash` **differs**
+   from the body being sealed. (Equality is permitted, so retrying an
+   interrupted seal of the *same* request is not bricked by its own marker.)
+3. **The marker is also written on IMPORT.** This is the rule that Phase 0.5's
+   first draft missed, and it is the largest hole the falsification rounds
+   found. The marker lives in the *sealer's* origin; it is **not** in the sealed
+   plaintext — `packContainer()` carries exactly the six `BUNDLE_FILES`, and
+   `pair.json` (`{ pairId, label, createdAt, witness }`) is neither in the bundle
+   nor carries an origin field. So without this rule, a pad that *arrives* by
+   sealed transfer lands at genesis with no marker and passes (1) and (2)
+   unchanged:
+
+   > Alice seals pad P to Bob → Bob imports it at genesis → **Bob seals the same
+   > pairId to Charlie.** Alice and Charlie now hold the same directional
+   > material, both starting at offset 0: keystream reuse **and** reuse of the
+   > same Wegman–Carter keys. No operator error, no rollback, no physical path
+   > — just the protocol working as specified.
+
+   Phase 1 therefore records provenance on import: either the same durable
+   marker, or an `origin: "generated-here" | "imported"` field on `pair.json`.
+   **An imported pad can never be sealed onward.** The identical hole exists for
+   any pad imported by the ordinary courier path, and the same marker closes it.
+
+**Recovery when a transfer is lost is a NEW PAD, not a re-seal.** §10.2's
+accepted loss, a TTL expiry, and a cleared recipient all produce the same
+situation: the request is spent, and a *new* request has a new body and hence a
+new `requestHash`, which rule (2) refuses. That collision is resolved in favour
+of rule (2), deliberately and at a stated cost:
+
+> **The pad's one handoff is spent. Generate a new pad and repeat the ceremony;
+> the old pad can never be re-sealed.**
+
+The permissive alternative — "allow a re-seal when the transfer failed" — is
+rejected because **the sender cannot distinguish "Bob never imported" from "Bob
+imported and says he didn't."** A protocol that takes the sender's word for that
+is a two-time-pad generator with extra steps. Generating a new pad costs
+seconds; the alternative costs the security of every message the pad protects.
+A revocation ceremony could relax this and is explicitly out of scope for v1.
+
+**The limitation this rule still does not reach.** TruePad does not today record
+that a pad was handed off by the *physical* path, so an operator could seal a
+pad online **and** use "Save the pad file again" to give a copy to a third
+party. The marker in (2)/(3) is the place Phase 1 closes this. Until then it is
+an **OPERATOR** assumption: *one pad, one other person.*
+
+---
 
 ---
 
@@ -726,6 +1143,7 @@ A LOSS is never reported as "nothing changed".
 | KEM decapsulation failure | FREE |
 | AEAD verification failure | FREE |
 | derived-nonce mismatch (§7.4) | FREE — checked after AEAD verification |
+| receive session lost, unknown, or already used | FREE — re-open the package |
 | sender confirmation not accepted | FREE (returns to `PENDING`) |
 | container malformed / wrong file set / bad pairId (pre-flight) | FREE |
 | header reconciliation failure, or a non-`none` `rollback.witnessClass` (a CLI-origin store) | FREE — `loadStore()` runs in the pre-flight on a scratch copy |
@@ -842,8 +1260,8 @@ TruePad** and is not addressed by this protocol.
 | 14 | AEAD forgery | Refused | AES-256-GCM, full 128-bit tag | — |
 | 15 | Truncated package | Refused — length arithmetic | Fixed layout | — |
 | 16 | Oversized package | Refused before decryption | 16 MiB cap | — |
-| 17 | Duplicate pair import | Refused `pair-exists` | **Existing** importer | **Only within this origin's OPFS.** A saved `.tps2` opened in another profile/browser, or after site data is cleared, reproduces the pad — two parties burning the same offsets is a two-time pad. Delete the package after import. Inherited from the existing courier export, not introduced here |
-| 18 | Destroyed-pair resurrection | Refused `pair-destroyed` | **Existing** tombstone | LOSS class |
+| 17 | Duplicate pair import | Refused `pair-exists` | **Existing** importer | Only within this origin's OPFS. See #31–#33 for what a saved `.tps2` can and cannot do |
+| 18 | Destroyed-pair resurrection | Refused `pair-destroyed` | **Existing** tombstone, checked in the pre-flight | **FREE** — the pre-flight runs before the CAS, so nothing is consumed. Only a destroy landing *after* a successful pre-flight and *after* the CAS is LOSS, which is the race in §11's final row |
 | 19 | Crash before consumption | Request still usable | §10.3 | — |
 | 20 | Crash after consumption | Transfer lost; never reusable after a crash, browser kill, or killed tab | §10.2 ordering | **Power loss between the `CONSUMED` flush and the medium is not claimed** (§10.2, §10.3) |
 | 21 | Crash during import | Inactive retryable pair | **Existing** staging | — |
@@ -851,11 +1269,27 @@ TruePad** and is not addressed by this protocol.
 | 23 | Stolen sealed package only | Useless without the decapsulation key | KEM | HNDL — §14 |
 | 24 | Stolen plaintext pad | **Total compromise** of that pair | — | Out of scope; destroy the pair |
 | 25 | Future PQ break | Archived packages may become openable | **ML-KEM-768 alone against a quantum adversary** — a CRQC breaks X25519 outright, so the hybrid covers a *classical* ML-KEM break, not this one | §14 |
-| 26 | Future symmetric break | Archives compromised | **SHA3-256** (the X-Wing combiner), **HKDF-SHA-256**, or **AES-256-GCM** — any one alone suffices | §14 |
+| 26 | Future symmetric break | Archives compromised | **SHA3-256**, **SHA3-512**, **SHAKE-256** (all three are X-Wing random-oracle assumptions; SHAKE-256 also expands the seed), **HKDF-SHA-256**, or **AES-256-GCM** — any one alone suffices | §14, §2.2 |
 | 27 | Compromised endpoint | **No protection** | — | §15 |
 | 28 | CSPRNG state duplication or repetition | Key generation and encapsulation repeat | **No protection** — platform CSPRNG. (key, nonce) uniqueness is unaffected: §7.4 derives the nonce | §7.4, §16.1, §17 |
 | 29 | Two tabs, one pending request, two packages | Refused — the second compare-and-set fails | `requestId`-scoped CAS (§10.1) | The existing importer does not prevent this: its lock is pairId-scoped |
-| 30 | 2⁸⁸-capable attacker MITM on the **request** channel | **Fingerprint collision — §6 defeated** with no side-channel presence | Nothing in the fingerprint excludes this tier; the 7-day TTL only bounds the window | §6.3 — the honest limit, and the argument for physical exchange (§16.5) |
+| 30 | Offline request-fingerprint grind at the **new** strength | **Refused** — 132 bits, floor 2⁶¹ s ≈ 7 × 10¹⁰ years even at Bitcoin-scale ASIC | `requestWords132` (§6.3) | Assumes all 12 words are actually compared |
+| 31 | **Active malicious UI with worker-RPC authority** | **NO PROTECTION** — it submits its own body, confirms it, and seals | None. There is no trusted input path to the worker | **Classified as endpoint compromise** (§15, §18). Withdrawn Phase-0 claim |
+| 32 | Partial word comparison (operator checks 3 of 12) | Only 33 bits actually compared | Position challenge is UX only | Un-compared words are never credited (§6.3) |
+| 33 | `.tps2` stolen **alone** | **Inert** — holds no decapsulation key | X-Wing + AEAD | Archive risk only: §34, §35 |
+| 34 | `.tps2` + **restored or cloned recipient `dk`** | **Decrypts; pad reproduced** | None — the key came back with the profile | **Full profile restore / OPFS clone** (§10.4.1). The real risk the Phase-0 draft mis-attributed to the file |
+| 35 | `.tps2` + future delivery-crypto break | May become readable later | — | §14, harvest-now-decrypt-later |
+| 36 | "Clear site data" on the recipient | `dk` destroyed; a retained `.tps2` becomes inert | — | **LOSS, not replay** — commonly confused with #34 |
+| 37 | Two sender tabs seal concurrently | **Refused** — the second sees SEALED and returns the same package | `requestHash`-scoped lock + durable SEALED state (§10.5) | A full profile rollback can rewind SEALED |
+| 38 | Receive-session substitution after confirmation | **Refused** — `commitReceive(sessionId)` takes no pad bytes | Opaque worker-held session (§10.1) | Session is transient; a crash costs a re-open, not a pad |
+| 39 | Same pad sealed to **two** recipients | **Refused** — genesis-only, one handoff marker per pairId | §10.6 pairing rule | Does **not** cover the physical "Save the pad file again" path — an OPERATOR assumption |
+| 40 | Old `.tps2` replayed after the pair was destroyed | Refused `pair-destroyed` in the pre-flight | Existing tombstone | FREE (#18) |
+| 41 | **Bob re-seals a pad he imported**, to Charlie | **Refused** — sealing requires `origin == "generated-here"` | §10.6(3) provenance marker written on import | Phase 0.5's first draft did **not** stop this: the marker lives in the sealer's origin and `pair.json` is not in the bundle. It was the largest hole the falsification rounds found |
+| 42 | Alice speaks her words first on an observable channel | Her fixed target becomes known and grindable offline | Receiver-first (§8.2) — an **OPERATOR** assumption | Even violated, the grind is 2⁸⁸ X-Wing encapsulations (~2¹⁰³⁺ ops), not SHA-256 |
+| 43 | Rejected package committed after a later one is opened | **Refused** — rejection is terminal and one session is live per request | §10.1 | Phase 0.5's first draft returned a rejected round to PENDING, which permitted exactly this |
+| 44 | Seal called with caller-supplied pad bytes | **Not possible** — `seal(body, pairId)` reads the live store | §20, §18 | The first draft's `seal(body, padFileBytes)` let stale genesis bytes pass the genesis check |
+| 45 | Two sender tabs seal one genesis pad to **different** requests | **Refused** — the pairId lock is outermost and the handoff marker is checked inside it | §10.6(2), lock order in §20 | The requestHash lock alone did not contend across different requests |
+| 46 | X-Wing draft revision drift | Suite `0x0001` is frozen by **this** document | §2.2.1 | A future revision becomes suite `0x0002`; it does not mutate `0x0001` |
 
 ---
 
@@ -875,8 +1309,14 @@ same one:
 > delivered.** A one-time pad delivered under computational protection inherits
 > that protection's lifetime.
 
-The hybrid suite is chosen so that **no single primitive break opens the
-archive** — but the popular shorthand "the attacker must break both" is *false*
+**No single KEM component-family failure necessarily defeats the X-Wing hybrid
+under its stated assumptions.** That property is real, and it is the only one
+the hybrid buys — it does **not** extend to the delivery stack, which depends
+additionally on SHA3-256, SHA3-512, SHAKE-256, HKDF-SHA-256, AES-256-GCM, the
+platform CSPRNG, endpoint integrity, and both operator ceremonies. An earlier
+draft wrote "no single primitive break opens the archive", which is false: a
+break of the combiner or of the DEM opens it with no KEM work at all. The
+popular shorthand "the attacker must break both" is *false*
 for the adversary this section posits, and stating it would be an overclaim. A
 cryptanalytically relevant quantum computer breaks X25519 outright, so against
 **that** adversary **ML-KEM-768 alone carries the entire claim**. The hybrid's
@@ -887,9 +1327,11 @@ Precisely, an attacker needs **one** of:
 
 1. the hybrid KEM — meaning **ML-KEM-768 against a quantum adversary**, or
    **X25519 against a classical adversary who cryptanalyses ML-KEM**;
-2. the **SHA3-256** combiner, inside which §2.1 places the entire X-Wing
-   security argument;
-3. the DEM — **HKDF-SHA-256** or **AES-256-GCM**.
+2. **SHA3-256, SHA3-512, or SHAKE-256** — X-Wing's security argument models all
+   three as random oracles (§2.2), and SHAKE-256 additionally expands the
+   decapsulation seed, so a break there is a break of key generation itself;
+3. the DEM — **HKDF-SHA-256** or **AES-256-GCM**;
+4. the **platform CSPRNG**, for key generation and encapsulation (§17).
 
 The archive's security is the **weakest** of these, not their sum. "Remote" is
 not "impossible", and the OTP theorem does not reach backwards to cover the
@@ -912,12 +1354,16 @@ exported elsewhere. The KEM solves none of these, and is not claimed to.
 ### 16.1 What may be said
 
 > **Hybrid post-quantum / traditional protected pad delivery**, under the
-> computational assumptions of X25519, ML-KEM-768, **SHA3-256 as the X-Wing
-> combiner**, HKDF-SHA-256 and AES-256-GCM; **on the platform CSPRNG actually
+> computational assumptions of X25519, ML-KEM-768, **SHA3-256, SHA3-512 and
+> SHAKE-256** (X-Wing models all three as random oracles, and SHAKE-256 expands
+> the decapsulation seed), HKDF-SHA-256 and AES-256-GCM; **on the platform CSPRNG actually
 > producing fresh, unpredictable bytes** for key generation, encapsulation and
 > the `requestId`; and conditional on the operator actually having performed
-> both human comparison ceremonies — which TruePad cannot observe, and which are
-> therefore OPERATOR assumptions, not verification results.
+> both human comparison ceremonies **in full** (all 12 request words, all 8
+> confirmation words), **the receiver-first ordering** of §8.2, and the
+> recipient opening **one package at a time** — none of which TruePad can
+> observe, and all of which are therefore OPERATOR assumptions, not verification
+> results.
 
 After import, messages use **OTP confidentiality** and **one-time Wegman–Carter
 authentication**, unchanged, with their own separate claims.
@@ -997,35 +1443,51 @@ Two crown jewels stay out of the UI thread:
 2. **unwrapped pad-file bytes** — staged and imported inside the worker; they
    never enter ordinary DOM state.
 
-> **The worker, not the UI, owns the fingerprint ceremony.** A boolean
-> `confirmed` arriving from the UI is **never** sufficient. Such a flag has no
-> subject: a UI-thread adversary — a browser extension, injected script, or
-> tampered bundle chunk — could call `seal(body_attacker, confirmed = true)` and
-> receive the entire pad sealed to its own key, as a *public* artifact §18
-> otherwise permits the UI to hold. That defeats the control §6.1 calls the
-> single most important thing this protocol must prevent, and §15's
-> endpoint-compromise disclaimer does not cover it, because §18 exists precisely
-> to make partial compromise survivable.
+> **The worker owns the confirmation RECORD. It cannot own human intent.**
 >
-> Instead the worker records the confirmation **keyed by the request bytes**:
+> A boolean `confirmed` arriving from the UI is never sufficient, because it has
+> no subject: an honest-but-buggy UI could confirm body *B* and then seal *B′*.
+> The worker therefore records the confirmation **keyed by the request bytes**:
 >
 > ```
 > confirmRequestFingerprint(body):                 # worker
 >     requestHash ← H_ds(DS_REQUEST_FP, body)
 >     record CONFIRMED { requestHash, body, at } in worker-confined storage
->     return requestHash, words88(requestHash[0..11))
+>     return requestHash, requestWords132(requestHash)
 > ```
 >
 > and `seal()` requires a CONFIRMED record whose stored `body` equals the body
 > being sealed, **byte for byte**. The record is one-shot per `requestHash` and
-> is discarded on any edit of the pasted code, which also closes the
-> time-of-check/time-of-use gap where an operator verifies body *B* and `seal()`
-> re-reads *B′*.
+> is discarded on any edit of the pasted code.
 >
-> A stronger form, recommended if the Phase-1 UX budget allows: the worker issues
-> a random 2–3 position challenge ("read me words 2, 5 and 7") and seals only on
-> a correct echo. That also defends against an operator who compares only the
-> first and last words. The body-keyed record above is the floor, not the ideal.
+> **What this buys, exactly:** it closes time-of-check/time-of-use and body
+> substitution. A UI *bug* can no longer seal a body the operator never saw.
+>
+> **What it does NOT buy, stated plainly because the Phase-0 draft claimed
+> otherwise:** it does **not** authenticate human intent against an *active
+> malicious* UI. The Phase-0 text argued that body-keying defeated a UI-thread
+> adversary. That argument is **wrong**, and it is withdrawn. TPR2 is public,
+> `requestHash` is public, and the safety words are computable from public data —
+> so a script with authority to invoke the transfer worker API can simply submit
+> its **own** body, call `confirmRequestFingerprint` on it, and then `seal()`.
+> Every check passes, because every input was legitimate; the only thing missing
+> is a human, and the worker cannot see humans. A position challenge (§6.3) does
+> not help either: the challenge words are computable from the same public data.
+>
+> **There is no trusted input path from the operator to the worker in the browser
+> architecture, and this document does not invent one.** No "secure attention"
+> property exists to appeal to. Therefore, normatively:
+>
+> > **An attacker with arbitrary Sealed-Pad worker-RPC authority is classified as
+> > ENDPOINT COMPROMISE for transfer authorization (§15), not as an attacker the
+> > ceremonies defend against.**
+>
+> Worker confinement still earns its keep — pad bytes need not be copied into
+> ordinary DOM state, recipient private keys stay worker-confined, and exact-body
+> records close accidental substitution. It is a real boundary against bugs and
+> against passive exposure. It is not a boundary against code that already runs
+> with the application's own authority, and claiming otherwise would be exactly
+> the kind of promoted engineering action this project forbids.
 
 For sending, the pad is **not** exported in plaintext to the UI so the UI can
 encrypt it. The worker reads the store, serializes the existing pad file, seals
@@ -1069,23 +1531,52 @@ receiveRequestEncode(body):
 
 requestFingerprint(body):                           # pure function
     requestHash ← SHA-256( u8(len(DS_REQUEST_FP)) ‖ DS_REQUEST_FP ‖ body )
-    return requestHash, words88(requestHash[0..11))  # half-open: bytes 0..10
+    return requestHash, requestWords132(requestHash)
 
 confirmRequestFingerprint(body):                    # WORKER — B2
     (requestHash, words) ← requestFingerprint(body)
     record CONFIRMED { requestHash, body, at } in worker-confined storage
     return requestHash, words                        # one-shot; dropped on edit
 
-words88(b11):                                       # 11 bytes → 8 words
+requestWords132(requestHash):                       # 17 bytes → 12 words
+    n ← big-endian integer of requestHash[0..17)    # 136 bits
+    m ← n >> 4                                      # 132 bits; low 4 discarded
+    for i in 0..11: idx[i] ← (m >> (121 - 11·i)) & 0x7FF
+    return [ WORDLIST[idx[0]], …, WORDLIST[idx[11]] ]
+
+confirmationWords88(b11):                           # 11 bytes → 8 words
     n ← big-endian integer of b11                   # 88 bits
     for i in 0..7:  idx[i] ← (n >> (77 - 11·i)) & 0x7FF
     return [ WORDLIST[idx[0]], …, WORDLIST[idx[7]] ]
 
-seal(body, padFileBytes):                           # WORKER
+seal(body, pairId):                                 # WORKER
+    # The caller names the PAD, never its bytes. §18 forbids exporting the pad
+    # in plaintext so the UI can encrypt it; taking padFileBytes here would also
+    # make the genesis check (§10.6) evaluate a snapshot the caller chose rather
+    # than the live store — sealing weeks-old genesis bytes to a second
+    # recipient would pass every check and produce a two-time pad.
     require body parses per §5.1, version 0x01, suite 0x0001
     require a CONFIRMED record exists whose stored body == body, BYTE FOR BYTE
-    require |padFileBytes| ≤ 16 777 216
     requestHash ← requestFingerprint(body).requestHash
+
+    # LOCK ORDER: pairId lock OUTERMOST, then requestHash. Never the reverse.
+    acquire lock "spt-seal:" ‖ pairId
+      require pair.json origin == "generated-here"          # §10.6(3)
+      require NOT exists(<pairId>/destroyed.json)
+      (ab, ba) ← loadStore(<pairId>/a-to-b), loadStore(<pairId>/b-to-a)
+      require both directions at GENESIS from the LIVE store:               # §10.6(1)
+          nextOffset == 0 and nextSequence == 0 and attemptsReserved == 0
+      marker ← read handoff marker for pairId
+      require marker is absent, or marker.requestHash == requestHash        # §10.6(2)
+
+      acquire lock "spt-req:" ‖ requestHash
+        state ← sender state for requestHash
+        if state == SEALED:  return state.package, state.confirmWords  # no re-encapsulation
+        require state == CONFIRMED
+        state ← SEALING
+
+        padFileBytes ← packContainer(pairId, the six BUNDLE_FILES read here)
+        require |padFileBytes| ≤ 16 777 216
     (ct_kem, ss) ← XWing.Encaps(ek from body)       # ct_kem 1120 B, ss 32 B
     PRK   ← HKDF-Extract(salt = requestHash, IKM = ss)
     padHash ← SHA-256( u8(len(DS_PAD)) ‖ DS_PAD ‖ padFileBytes )   # not on the wire
@@ -1095,11 +1586,21 @@ seal(body, padFileBytes):                           # WORKER
     AAD ← header
     key ← HKDF-Expand(PRK, u8(len(DS_AEAD_KEY)) ‖ DS_AEAD_KEY ‖ AAD, 32)
     (ct, tag) ← AES-256-GCM-Encrypt(key, nonce, AAD, padFileBytes)
-    confirm ← HKDF-Expand(PRK, u8(len(DS_CONFIRM)) ‖ DS_CONFIRM ‖ AAD, 11)
-    return (header ‖ ct ‖ tag), words88(confirm)
+        confirm ← HKDF-Expand(PRK, u8(len(DS_CONFIRM)) ‖ DS_CONFIRM ‖ AAD, 11)
+
+        # ONE durable step: the handoff marker AND the sealed package together.
+        # Nothing is released before this succeeds — a package Alice cannot
+        # reproduce is worse than no package.
+        durably persist { marker { pairId, requestHash, at },
+                          state = SEALED { package = header ‖ ct ‖ tag,
+                                           confirmValue = confirm } }
+        zeroize padFileBytes
+      release locks
+
+    return package, confirmationWords88(confirm)
     # Alice's words stay MASKED until she marks Bob's as received (§8.2)
 
-openSealed(pkg):                                    # WORKER
+openSealed(pkg) -> sessionId:                       # WORKER
     parse per §7.1; refuse on magic/version/suite/length/trailing bytes
     look up PENDING request by pkg.requestId
       → not found | cancelled | consumed | expired  ⇒ refuse (FREE)
@@ -1118,10 +1619,25 @@ openSealed(pkg):                                    # WORKER
     require pkg.nonce == HKDF-Expand(PRK, u8(len(DS_NONCE)) ‖ DS_NONCE ‖ padHash, 12)
 
     confirm ← HKDF-Expand(PRK, u8(len(DS_CONFIRM)) ‖ DS_CONFIRM ‖ AAD, 11)
-    hold padFileBytes in the worker            # B3: the importer is NOT called
-    return words88(confirm)                    # Bob reads these FIRST (§8.2)
 
-commitReceive(requestId, padFileBytes):            # after the operator confirms
+    # OPAQUE WORKER-ONLY SESSION. The decrypted bytes NEVER leave the worker and
+    # are never re-supplied by the caller — otherwise the UI could substitute
+    # another otherwise-valid bundle between confirmation and import.
+    session ← { sessionId: random(16),
+                requestId, requestHash,
+                packageIdentity: SHA-256(AAD),      # exactly which package
+                padFileBytes,                       # held, not returned
+                confirmValue: confirm }
+    hold session in transient worker-only memory   # NOT durable, by design
+    return session.sessionId, confirmationWords88(confirm)
+                                               # Bob reads these FIRST (§8.2)
+
+commitReceive(sessionId):                          # after the operator confirms
+    # The ONLY input is an opaque handle. No caller may supply pad bytes.
+    session ← resolve(sessionId)  or refuse (FREE — session lost or unknown)
+    padFileBytes ← session.padFileBytes            # the EXACT bytes that
+                                                   # produced the words Bob read
+
     # PRE-FLIGHT — non-mutating, all failures FREE (§11)
     require unpack(padFileBytes) is well-formed and is exactly the 6 expected files
     require pairId is 32 lowercase hex
@@ -1137,9 +1653,10 @@ commitReceive(requestId, padFileBytes):            # after the operator confirms
     under a lock scoped to requestId:
         CAS: PENDING → CONSUMED, durably           # B4; a lost CAS aborts FREE
     # from here on, any failure is LOSS and MUST be reported as such
-    commit the EXISTING import with padFileBytes   # B3 — first call to import-pair
+    commit the EXISTING import with session.padFileBytes   # first import-pair call
     logically destroy dk
-    tell the operator to delete the .tps2 file     # B10
+    forget the session                             # one-shot; never reusable
+    advise deleting the .tps2 file (§10.4)
 ```
 
 **The invariant that outranks everything here:**
@@ -1161,23 +1678,27 @@ Details may name them exactly.
 
 **Sender:** *Send pad securely online* → *Ask the other person to create a
 receive code* → **[Paste receive code]** → *Read these words to the other person
-and check they match* · WORD × 8 → **[The words matched]** → **[Seal pad]** →
+and check they match* · WORD × 12 → **[The words matched]** → **[Seal pad]** →
 **[Save sealed pad]** / **[Share sealed pad]** → *Ask them to read their
 confirmation words to you first* → **[Their words matched]** → *Now read these
 back to them* · WORD × 8
 
 **Recipient:** *Receive a pad* → **[Create receive code]** → *Send this code to
 the other person; check these words with them before they seal the pad*
-· WORD × 8 → … → *Choose the sealed pad file* → *Read these confirmation words
+· WORD × 12 → … → *Choose the sealed pad file* → *Read these confirmation words
 to the sender **first**, then check theirs match* · WORD × 8 → **[The words
-matched]** → **[Add pad]** → *Delete the sealed pad file — it is a complete copy
-of the pad* → **[Delete sealed file]**
+matched]** → **[Add pad]** → *This sealed file holds an encrypted copy of the
+pad. Delete it when you no longer need it — keeping it preserves an archive that
+could be read if this device's key state is restored, or if the delivery
+cryptography is broken in future.* → **[Delete sealed file]**
 
 Two things in that flow are normative, not cosmetic. **The recipient reads the
 confirmation words first** (§8.2) — so the sender's are revealed only after she
-marks the recipient's as received, and never before. And **the recipient deletes
-the sealed file** (§10.4) — it is a durable copy of the pad, and leaving it
-behind is what makes the cross-installation two-time pad possible.
+marks the recipient's as received, and never before. And **the recipient is told to delete the sealed file** (§10.4) — not because
+the file alone is a usable pad (it is not; it holds no decapsulation key) but
+because it is an archive that becomes readable if this device's key state is
+restored or the delivery cryptography is later broken. The button cannot reach
+copies already in email, chat, cloud storage, or backups, and does not claim to.
 
 Buttons say *"The words matched"*, not *"I verified"*: TruePad observes a click,
 not a comparison (§6.1).

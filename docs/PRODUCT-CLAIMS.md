@@ -220,7 +220,9 @@ blurred:
 
 | | Physical exchange | Sealed Pad Transfer |
 | --- | --- | --- |
-| Delivery claim | can support the conditional **information-theoretic** path | **computational** — X25519 + ML-KEM-768, HKDF-SHA-256, AES-256-GCM |
+| Delivery claim | can support the conditional **information-theoretic** path | **computational** — X25519 + ML-KEM-768, SHA3-256/512, SHAKE-256, HKDF-SHA-256, AES-256-GCM |
+| Recipient authentication | you are looking at them | a **12-word, 132-bit** fingerprint compared over an authenticated side channel — an OPERATOR declaration, never a verification result |
+| Against a compromised endpoint | the pad is exposed anyway | **no protection**, and specifically: an active script with transfer-worker authority is classified as endpoint compromise, not as an attacker the ceremonies stop |
 | Harvest-now-decrypt-later | no exposure from delivery | an archived package is attackable later; breaking it yields the pad, and the pad yields every archived message it protected |
 | Status | **shipped** | **specified, not implemented** |
 
