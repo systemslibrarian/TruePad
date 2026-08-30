@@ -163,6 +163,204 @@ provenance; it cannot verify where the bytes came from and does not claim to.
 | `src/cli/truepad-pad.ts` | `gen` / `burn` / `open` / `status`, the banner, exit codes |
 | `bin/truepad-pad.mjs` | Plain-JS launcher: Node-version gate, then the `.ts` entry |
 
+## What TruePad actually does
+
+Three layers. The first is a theorem, the second is a bound, and the third is
+almost all of the code.
+
+### 1. Encryption — the one-time pad
+
+```
+C = P XOR K
+
+P = plaintext
+K = unused one-time secret material
+C = ciphertext
+```
+
+That is the whole cipher. It does not depend on factoring, discrete logarithms,
+lattices, or any other computational hardness assumption — there is no problem
+here for an attacker to be clever about.
+
+If `K` is **genuinely uniformly random**, **secret from the adversary**,
+**independent of the messages it protects**, **at least as long as the
+plaintext**, and **never reused**, then the confidentiality result is
+information-theoretic: the ciphertext alone tells an adversary nothing about
+the plaintext beyond its length.
+
+Every word of that condition is load-bearing, and **no software can prove those
+source assumptions.** TruePad does not claim to. It states them, records what
+you declared, and says plainly that it cannot check them.
+
+### 2. Authentication — one-time Wegman–Carter
+
+Confidentiality is not integrity. An XOR ciphertext is trivially malleable: flip
+a bit of `C` and you flip the same bit of `P`. So every v2 record carries a
+128-bit `wc-one-time-v1` tag over its authenticated envelope fields, spending 32
+bytes of pad material per record whether or not the record ever verifies.
+
+That is what stops a modified ciphertext — or modified authenticated envelope
+metadata — from simply being accepted as genuine. The bound is exact and stated
+exactly: **ε = 65540 · 2^-128** per attempt at the 1 MiB record cap, and at most
+`verifyAttemptLimit` attempts per record. It is a bound with a number attached,
+which is the only kind of authentication claim this project makes.
+
+### 3. Operational machinery — keeping the hypotheses true
+
+The equation above is one line. Almost everything else in this repository
+exists because a real system has to keep that line's hypotheses true over time,
+across crashes, copies, and restores:
+
+- consume each encryption byte exactly once
+- consume authentication material under its one-time rules
+- persist that consumption **before** releasing any output
+- refuse replayed, late, or retired material
+- detect rollback, to the extent the configured witness permits
+- keep a destroyed pad from quietly coming back
+- and, where configured on Linux with a TPM, anchor the whole thing to a
+  hardware monotonic counter that a restore cannot rewind
+
+> **The XOR is the simple part. The machinery keeps the word "one-time" true.**
+
+Not every deployment gets every layer. The Browser Edition's witness is
+browser-local; the CLI's `separate-state-file` is a plain file with the limits
+`docs/FORMAT-V2.md` §15 spells out; `platform-monotonic` requires a TPM you
+provisioned. Each is documented as exactly what it is, and never as the others.
+
+---
+
+## Two kinds of randomness, and only one of them is a ceremony
+
+**Generate for me** — the default. The Browser Edition calls
+`crypto.getRandomValues()`, a cryptographically secure platform random
+generator (CSPRNG). Its source claim rests on **platform and computational
+assumptions**. TruePad does not call this physically proven randomness and does
+not promote this path to an unconditional information-theoretic source claim.
+
+**External True OTP ceremony** — under Advanced options. You supply the
+material. TruePad combines every selected source **exactly by XOR**:
+
+```
+M[i] = S1[i] XOR S2[i] XOR … XOR Sn[i]
+```
+
+No hash. No KDF. No extractor. No whitening. Every source independently
+supplies the complete `L = 2·(E + 32·N)` bytes; sources are never concatenated
+and never split between them.
+
+The theorem this buys, stated carefully:
+
+> If at least one combined source is actually uniform and independent of the
+> others, the combined material is uniform.
+
+Uniformity is one hypothesis, not the premise. For the full one-time-pad
+secrecy claim, the source carrying the guarantee must **also** remain secret
+from the adversary, be **independent of the messages it protects**, and the
+resulting pad material must be **used only once**.
+
+> **TruePad cannot determine whether a supplied file is truly random.**
+
+Selecting the ceremony is a declaration you make. It is never a result TruePad
+computed.
+
+---
+
+## What about quantum computers?
+
+TruePad is **not** "post-quantum cryptography" in the usual ML-KEM / ML-DSA
+sense. It is not a lattice scheme, and it is not competing in that space.
+
+The one-time-pad confidentiality theorem predates modern public-key
+cryptography and does not rest on a computational problem for an attacker to
+solve. Under the genuine OTP assumptions, handing the adversary a classical
+supercomputer, a cryptographically relevant quantum computer, or unlimited
+computational power does not reveal additional information about the plaintext
+from the ciphertext alone. Shor's algorithm does not attack an XOR against
+uniform secret material; Grover's does not turn an information-theoretic
+construction into a computational one.
+
+> With genuine uniformly random, secret, independent, never-reused pad
+> material, OTP confidentiality is **information-theoretic** rather than
+> computational. Quantum computing does not change that theorem.
+
+**And immediately, the qualification that makes the sentence honest:**
+
+> TruePad's default device-generated source is a platform CSPRNG and therefore
+> carries platform/computational source assumptions. The stronger
+> information-theoretic source claim is **conditional** on the external source
+> assumptions actually being true — and TruePad cannot verify them.
+
+So: *quantum-resistant by construction; when genuine one-time random material
+satisfies the full OTP assumptions, the confidentiality claim is
+information-theoretic rather than computational.* That sentence never travels
+without the paragraph above it. TruePad is not labelled "unconditionally
+secure", "quantum proof", or "perfect secrecy achieved" — those phrases drop
+the assumptions, which is the only part that was ever in question.
+
+Note also what this section is about: **confidentiality**. Authentication is a
+separate, computational-in-the-relevant-sense bound (§2 above), and it does not
+become information-theoretic because the cipher is.
+
+---
+
+## Walk through a real message
+
+A real v2 envelope, as `truepad2 burn` emits it:
+
+```json
+{"formatVersion":2,"pairId":"ed5825e73edd8beb9962abfed3826985","direction":"A->B","sequence":1,"startOffset":4,"ciphertextLength":5,"ciphertext":"1ab8b8a130","tag":"a4354c856b5c7fba93b3d49f95c55f86"}
+```
+
+| field | what it is |
+| --- | --- |
+| `pairId` | which pad this message belongs to |
+| `direction` | which side of the shared pad sent it |
+| `sequence` | which one-time authentication record was spent |
+| `startOffset` | where the consumed one-time-pad region begins |
+| `ciphertextLength` | how many ciphertext bytes this record carries |
+| `ciphertext` | the OTP-encrypted payload |
+| `tag` | the 128-bit Wegman–Carter authenticator |
+
+The same envelope, in TP2 Compact Transport v1 (`docs/COMPACT-TRANSPORT.md`):
+
+```
+TP2:AQLtWCXnPt2L65liq_7TgmmFAAEEBRq4uKEwpDVMhWtcf7qTs9SflcVfhg
+```
+
+199 characters against 62. **These are two representations of the same
+authenticated envelope. The short TP2 form changes transport size, not the
+cryptography.** The tag is computed over the envelope's semantic fields and
+over neither representation's text, so it is byte-identical either way.
+
+Notice how little of it is ciphertext: five bytes of payload inside an envelope
+that must also say which pad, which direction, which authentication record, and
+where in the pad the material came from. Those fields are authenticated
+alongside the ciphertext — that is why they are there rather than inferred.
+
+---
+
+## Ciphertext may travel publicly. The pad file may not.
+
+This is the distinction most one-time-pad explanations skip, and it is the one
+that decides whether any of the above survives contact with reality.
+
+**Anyone who obtains the pad material can read the messages it protects and
+forge authenticated messages within the material they hold.** Not "eventually",
+not "with enough compute" — immediately, by construction. The pad is the whole
+secret.
+
+So for an end-to-end information-theoretic secrecy claim, delivery of the pad
+file must **also** not depend on a merely computationally secure channel.
+Physical handoff on removable media is the clearest True OTP ceremony.
+
+Email, Dropbox, Google Drive, OneDrive, ordinary cloud storage, and encrypted
+messengers **do not** preserve that claim. They may be perfectly good
+*computationally* secure ways to move a file — but that is a different
+guarantee, not a weaker version of the same one. Move the pad that way and the
+end-to-end claim becomes computational, whatever the pad material was.
+
+---
+
 ## truepad2 — Store Format v2: authenticated envelopes
 
 `truepad2` is the Wegman–Carter seam named above, actually built — as Store

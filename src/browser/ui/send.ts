@@ -11,7 +11,8 @@
  * ========================================================================= */
 
 import { h, icon, mount } from "./dom.ts";
-import { decodeEnvelope2 } from "../../core/envelope2.ts";
+import { decodeEnvelope2, type EnvelopeV2 } from "../../core/envelope2.ts";
+import { bytesToHex } from "../../core/hex.ts";
 import { encodeCompactEnvelope2 } from "../../core/compact-envelope2.ts";
 import { backLink, callout, copyButton, filePicker, payloadBlock, saveBytesButton, screenHead } from "./components.ts";
 import { fmtBytes, fmtInt } from "./format.ts";
@@ -94,6 +95,109 @@ export async function renderSend(ctx: Ctx, root: HTMLElement, pairId: string, mo
   refresh();
 }
 
+// §29 — what is actually inside the thing the user just copied.
+//
+// Every value here is read from the SAME EnvelopeV2 the compact string decodes
+// to. Nothing is reconstructed for display, and nothing is re-derived: the
+// compact form, this breakdown, and the canonical JSON below are three views of
+// one envelope, and if they could ever disagree the codec would be broken.
+//
+// Read-only, and no pad byte appears. Ciphertext and tag are the message's own
+// public bytes — they travel on the wire — and the secret material that
+// produced them is never on this screen.
+function insideBlock(compact: string, env: EnvelopeV2): HTMLElement {
+  const field = (name: string, value: string, what: string, mono = false): HTMLElement =>
+    h(
+      "div",
+      { class: "field-explained" },
+      h("div", { class: "fe-head" }, h("code", { class: "fe-name", text: name }), h("span", { class: mono ? "fe-value mono" : "fe-value", text: value })),
+      h("span", { class: "fe-what", text: what })
+    );
+
+  const ciphertextHex = bytesToHex(env.ciphertext);
+  const shownCiphertext = ciphertextHex.length > 96 ? `${ciphertextHex.slice(0, 96)}… (${env.ciphertextLength} bytes)` : ciphertextHex;
+
+  return h(
+    "details",
+    { class: "quiet-details" },
+    h("summary", { text: "What's inside this encrypted message?" }),
+    h(
+      "div",
+      { class: "qd-body" },
+      h(
+        "p",
+        {
+          text:
+            "Most of the compact message is not ciphertext. It carries the information TruePad needs to identify " +
+            "the pad material and authentication record that belong to this message. Those fields are authenticated " +
+            "along with the ciphertext."
+        }
+      ),
+      h(
+        "div",
+        { class: "field-list" },
+        field("pairId", env.pairId, "Which pad this message belongs to.", true),
+        field("direction", env.direction, "Which side of the shared pad sent it."),
+        field("sequence", fmtInt(env.sequence), "Which one-time authentication record was spent."),
+        field("startOffset", fmtInt(env.startOffset), "Where the one-time-pad bytes used for this ciphertext begin."),
+        field("ciphertextLength", fmtInt(env.ciphertextLength), "How many ciphertext bytes this record carries."),
+        field("ciphertext", shownCiphertext, "The actual OTP-encrypted payload.", true),
+        field("tag", bytesToHex(env.tag), "The 128-bit one-time Wegman–Carter authentication tag.", true)
+      ),
+      h("p", { class: "faint", text: `The whole message is ${fmtInt(compact.length)} characters.` })
+    )
+  );
+}
+
+// §30 — what the machine actually did, in three sentences a person can hold.
+// Explanatory copy, never a stronger claim than the product's own: the deep
+// machinery is named as existing and pointed at, not recited here.
+function whatTruePadDid(ctx: Ctx): HTMLElement {
+  return h(
+    "details",
+    { class: "quiet-details" },
+    h("summary", { text: "What TruePad did" }),
+    h(
+      "div",
+      { class: "qd-body" },
+      h(
+        "div",
+        { class: "field-list" },
+        h(
+          "div",
+          { class: "field-explained" },
+          h("div", { class: "fe-head" }, h("code", { class: "fe-name", text: "Encryption" }), h("span", { class: "fe-value mono", text: "C = P XOR K" })),
+          h("span", { class: "fe-what", text: "A one-time pad: your message combined with unused secret material from this pad, one byte for one byte." })
+        ),
+        h(
+          "div",
+          { class: "field-explained" },
+          h("div", { class: "fe-head" }, h("code", { class: "fe-name", text: "Authentication" }), h("span", { class: "fe-value", text: "128-bit tag" })),
+          h("span", { class: "fe-what", text: "A one-time Wegman–Carter tag, so a changed message cannot pass as genuine." })
+        ),
+        h(
+          "div",
+          { class: "field-explained" },
+          h("div", { class: "fe-head" }, h("code", { class: "fe-name", text: "Used once" }), h("span", { class: "fe-value", text: "recorded before sending" })),
+          h("span", { class: "fe-what", text: "TruePad records which pad bytes and which authentication record this message spent, before releasing it, so ordinary use cannot spend them twice." })
+        )
+      ),
+      h("p", { class: "faint", text: "The XOR is the simple part. Most of TruePad exists to keep the word \u201cone-time\u201d true outside the equation." }),
+      h(
+        "p",
+        { class: "faint" },
+        h("span", { text: "The details of that machinery, and exactly what it does and does not promise, are under " }),
+        h(
+          "button",
+          { class: "linklike", type: "button", on: { click: () => ctx.navigate({ name: "security" }) } },
+          h("span", { text: "Security" })
+        ),
+        h("span", { text: "." })
+      )
+    )
+  );
+}
+
 function renderReady(ctx: Ctx, root: HTMLElement, pairId: string, envelope: string, usedBytes: number): void {
   // The worker's result stays canonical §6.2 JSON — the engine protocol is not
   // reshaped to make a screen shorter. What changes is only what a person is
@@ -144,6 +248,11 @@ function renderReady(ctx: Ctx, root: HTMLElement, pairId: string, envelope: stri
           "div",
           { class: "qd-body" },
           h("p", { text: `This used ${fmtInt(usedBytes)} byte${usedBytes === 1 ? "" : "s"} of your pad and one message slot. It cannot be undone.` }),
+          // The educational half of Details. Compact transport must not hide
+          // what TruePad is: the breakdown decodes the very string the user
+          // just copied, so what is explained is what was sent.
+          compact === null || !decoded.ok ? null : insideBlock(compact, decoded.envelope),
+          whatTruePadDid(ctx),
           // Level 3. The same message in TruePad's technical form, for
           // interoperability and debugging. Deliberately not framed as the
           // stronger or more real one: the two are the same envelope, and the

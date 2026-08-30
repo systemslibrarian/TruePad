@@ -187,3 +187,49 @@ test("compact transport: TP2 is what you copy, canonical JSON is one disclosure 
   await aliceContext.close();
   await bobContext.close();
 });
+
+test("Details explains what is inside the compact message, from the compact message", async ({ page }) => {
+  await createPad(page, "Explain me");
+  await page.getByRole("button", { name: "Start using TruePad" }).click();
+  const compact = await sendMessage(page, "test");
+
+  // Opens Details, then the Canonical JSON disclosure inside it.
+  const json = JSON.parse(await canonicalJsonOf(page));
+  // The breakdown is read from the SAME envelope the compact string decodes to,
+  // so it must agree with that JSON field for field.
+  await page.locator("summary").filter({ hasText: "What's inside this encrypted message?" }).click();
+  for (const [name, explanation] of [
+    ["pairId", "Which pad this message belongs to."],
+    ["direction", "Which side of the shared pad sent it."],
+    ["sequence", "Which one-time authentication record was spent."],
+    ["startOffset", "Where the one-time-pad bytes used for this ciphertext begin."],
+    ["ciphertextLength", "How many ciphertext bytes this record carries."],
+    ["ciphertext", "The actual OTP-encrypted payload."],
+    ["tag", "The 128-bit one-time Wegman–Carter authentication tag."]
+  ] as const) {
+    await expect(page.locator(".fe-name").filter({ hasText: name }).first()).toBeVisible();
+    await expect(page.getByText(explanation)).toBeVisible();
+  }
+  // Values match the canonical JSON — one envelope, three views.
+  await expect(page.locator(".field-explained").filter({ hasText: "pairId" })).toContainText(json.pairId);
+  await expect(page.locator(".field-explained").filter({ hasText: "tag" }).first()).toContainText(json.tag);
+  await expect(page.locator(".field-explained").filter({ hasText: "direction" })).toContainText(json.direction);
+
+  // The load-bearing framing: most of the message is not ciphertext.
+  await expect(page.getByText(/Most of the compact message is not ciphertext/)).toBeVisible();
+  // No pad material is on this screen — only the message's own public bytes.
+  expect(compact.startsWith("TP2:")).toBe(true);
+
+  // "What TruePad did", in three lines, with the machinery pointed at rather
+  // than recited into a beginner screen.
+  await page.locator("summary").filter({ hasText: "What TruePad did" }).click();
+  await expect(page.getByText("C = P XOR K")).toBeVisible();
+  await expect(page.getByText(/one-time Wegman–Carter tag/)).toBeVisible();
+  await expect(page.getByText(/The XOR is the simple part/)).toBeVisible();
+  // The deep machinery is pointed at, not recited into a beginner screen.
+  const body = await page.locator("body").innerText();
+  for (const jargon of ["tombstone", "TPM", "rollback witness", "journal", "attempt reservation"]) {
+    expect(body, `"${jargon}" must not appear on the send screen`).not.toContain(jargon);
+  }
+  await expect(page.getByRole("button", { name: "Security" }).first()).toBeVisible();
+});

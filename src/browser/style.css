@@ -1765,6 +1765,61 @@ input[type="radio"] {
   color: var(--ember);
 }
 
+/* Field-by-field explanation under Details. A ledger, not a form: the name and
+   its value on one line, the plain-English meaning underneath in the quiet
+   colour, so the eye can skim names or read explanations without either
+   competing. */
+.field-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.field-explained {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding-bottom: var(--s3);
+  border-bottom: 1px dashed var(--panel-edge);
+}
+
+.field-explained:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.fe-head {
+  display: flex;
+  gap: var(--s3);
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.fe-name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--gold);
+}
+
+.fe-value {
+  flex: 1 1 12rem;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.fe-value.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.fe-what {
+  font-size: var(--fs-sm);
+  color: var(--ink-faint);
+  line-height: 1.5;
+}
+
 /* ---- source list -------------------------------------------------------- */
 
 .source-list {
