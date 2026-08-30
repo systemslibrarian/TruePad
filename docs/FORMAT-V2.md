@@ -1710,15 +1710,23 @@ stated tradeoff, not a hidden one.
   and restored, so it earns **no part** of this claim and is never called a
   monotonic authority.
 
-  **Validation status.** Implementation complete, and **tpm2-tools / swtpm
-  interoperability validated** in CI: a real emulator and real tools exercise
-  the command syntax, the `tpm2_nvreadpublic` YAML shape, NV attribute
-  rendering, raw 8-octet counter parsing, unwritten-counter behaviour, the
-  authorization model, increment semantics, Name retrieval, and the restore
-  refusal end to end. **PHYSICAL TPM HARDWARE VALIDATION HAS NOT BEEN
-  PERFORMED.** An emulator run cannot upgrade that statement, because the
-  property under test — that the counter cannot be rolled back — is exactly
-  the property an emulator does not have.
+  **Validation status: IMPLEMENTATION + TPM2-TOOLS/SWTPM INTEROPERABILITY
+  VALIDATED.** A GitHub Actions job runs a real `swtpm` and real `tpm2-tools`
+  against the real CLI on every push, and it gates on: command syntax and TCTI
+  setup, the `tpm2_nvreadpublic` YAML shape, NV attribute rendering, raw
+  8-octet big-endian counter parsing, freshly-defined/unwritten counter
+  behaviour (`TPMA_NV_WRITTEN` clear, `TPM_RC_NV_UNINITIALIZED` on read), the
+  Name changing across the first write, zero-cost repeat initialisation, a
+  platform-monotonic pair advancing the anchor, the restore refusal, Name
+  mismatch on redefinition, the TCG counter semantics that stop a re-created
+  counter resuming lower, and the ORDERLY / ordinary / wrong-size refusals.
+
+  **PHYSICAL TPM HARDWARE VALIDATION HAS NOT BEEN PERFORMED.** An emulator run
+  cannot upgrade that statement, and this one does not: swtpm's backing state
+  is a directory that can be snapshotted and restored, so the very property
+  being claimed — that the counter cannot be rolled back — is the one property
+  an emulator does not have. The job proves TruePad speaks TPM correctly. It
+  proves nothing about hardware monotonicity.
 - `"remote-monotonic"` — a service enforcing forward-only state. Same
   semantics, assumption stated (the service is honest and available),
   same `witness-unsupported` refusal in this build, plus the metadata
