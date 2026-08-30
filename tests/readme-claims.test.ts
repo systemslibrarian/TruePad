@@ -122,6 +122,44 @@ describe("the quantum section carries its assumptions", () => {
     expect(nearby("quantum-resistant by construction", /never travels without/)).toBe(true);
   });
 
+  it("does NOT classify the Wegman-Carter bound as computational", () => {
+    // The regression this guards: an earlier draft called authentication a
+    // "computational-in-the-relevant-sense bound", which contradicts the
+    // binding spec outright — FORMAT-V2.md's thesis says authentication is
+    // information-theoretic with exactly the epsilon of §5, and §5 says the
+    // bound "holds against unbounded computation". A nonzero epsilon is not a
+    // computational assumption.
+    expect(FLAT).not.toMatch(/computational-in-the-relevant-sense/i);
+
+    // Any sentence putting "computational" near the authentication
+    // construction must be about the SOURCE, not the theorem.
+    const sentences = FLAT.split(/(?<=[.!?])\s+/);
+    for (const sentence of sentences) {
+      const aboutAuth = /Wegman|wc-one-time|forgery bound|\btag\b/i.test(sentence);
+      const callsItComputational = /\bcomputational(ly)?\b/i.test(sentence);
+      if (!aboutAuth || !callsItComputational) continue;
+      // Allowed only when the sentence is about where the K/R bytes came from,
+      // or is explicitly denying the classification.
+      const aboutSource = /CSPRNG|source|generator|deployment|platform|not computational|also not computational/i.test(sentence);
+      expect(aboutSource, `authentication called computational without a source framing: ${sentence}`).toBe(true);
+    }
+  });
+
+  it("states the authentication theorem AND its source qualification, together", () => {
+    // Both halves must be present and near each other, so neither can drift
+    // away and leave the other standing alone.
+    expect(FLAT).toMatch(/information-theoretic forgery bound/);
+    expect(FLAT).toMatch(/holds against unbounded computation/);
+    expect(FLAT).toMatch(/A nonzero ε is not the same thing as a computational assumption/);
+    expect(nearby("information-theoretic forgery bound", /Wegman|wc-one-time/i)).toBe(true);
+    expect(nearby("information-theoretic forgery bound", /65540|ε/)).toBe(true);
+    // ...and the source qualification is right there with it.
+    expect(nearby("information-theoretic forgery bound", /CSPRNG/)).toBe(true);
+    expect(FLAT).toMatch(/inherits that generator's platform and computational\s*assumptions/);
+    expect(FLAT).toMatch(/not something software established/);
+    expect(FLAT).toMatch(/for the cipher or for the tag/);
+  });
+
   it("never asserts the standalone overclaims", () => {
     const FORBIDDEN = [
       /\bunconditionally secure\b/i,
@@ -131,8 +169,9 @@ describe("the quantum section carries its assumptions", () => {
       /\bunbreakable\b/i
     ];
     expect(assertedIn(README, FORBIDDEN)).toEqual([]);
-    // And authentication is not swept into the confidentiality claim.
-    expect(FLAT).toMatch(/Authentication is a\s*separate/);
+    // And authentication is still named as a SEPARATE claim — corrected, not
+    // merged into the confidentiality one.
+    expect(FLAT).toMatch(/Authentication, which is a separate claim/);
   });
 });
 
