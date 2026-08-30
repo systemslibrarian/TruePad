@@ -31,6 +31,7 @@ import {
   type CanonicalFields
 } from "../../core/wc-one-time.ts";
 import { decodeEnvelope2, encodeEnvelope2, type EnvelopeV2 } from "../../core/envelope2.ts";
+import { decodeEnvelopeTransport2 } from "../../core/compact-envelope2.ts";
 import { buildFrame, frameCapacity, parseFrame } from "../../core/frame2.ts";
 import { combineSources, partition, requiredSourceLength } from "../../core/partition2.ts";
 import type {
@@ -657,7 +658,13 @@ async function openImpl(vfs: Vfs, req: Req<"open">): Promise<OpenResult> {
     const prefix = storeDir(pairId, direction);
 
     // O0 — structural, free, before any secret is touched.
-    const decoded = decodeEnvelope2(req.envelope);
+    // O0 — structural, free, before any secret is touched. Either spelling of
+    // the SAME envelope is accepted here: canonical §6.2 JSON, or the TP2
+    // compact transport, which decodes to an EnvelopeV2 and then goes through
+    // exactly this pipeline. A malformed TP2 input is refused AS compact and
+    // never re-tried as JSON. JSON behaviour and refusal precedence are
+    // unchanged.
+    const decoded = decodeEnvelopeTransport2(req.envelope);
     if (!decoded.ok) {
       throw new EngineRefused(decoded.reason, decoded.message);
     }

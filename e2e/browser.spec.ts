@@ -27,9 +27,22 @@ async function sendMessage(page: Page, message: string): Promise<string> {
   await page.locator("textarea").fill(message);
   await page.getByRole("button", { name: "Encrypt message" }).click();
   await expect(page.getByText("Encrypted message ready")).toBeVisible();
+  // What a normal person is handed is the compact spelling — TP2:…, not 200
+  // characters of JSON. The canonical JSON is the same envelope and is still
+  // there, one disclosure down, for anyone who wants it.
   const envelope = (await page.locator(".codeblock").first().textContent())?.trim() ?? "";
-  expect(envelope).toContain('"formatVersion":2');
+  expect(envelope).toMatch(/^TP2:[A-Za-z0-9_-]+$/);
+  expect(envelope).not.toContain('"formatVersion":2');
   return envelope;
+}
+
+// The same message in TruePad's technical form, from under Details.
+async function canonicalJsonOf(page: Page): Promise<string> {
+  await page.getByText("Details", { exact: true }).click();
+  await page.locator("summary").filter({ hasText: "Canonical JSON" }).click();
+  const json = (await page.locator(".codeblock").nth(1).textContent())?.trim() ?? "";
+  expect(json).toContain('"formatVersion":2');
+  return json;
 }
 
 test("a non-technical happy path: create → save pad → send → import → open", async ({ browser }, testInfo) => {
@@ -118,4 +131,59 @@ test("the operational UI refuses to run inside a frame (and never starts the wor
   const framed = page.frameLocator('iframe[title="embedded-truepad"]');
   await expect(framed.getByText("TruePad will not run inside a frame")).toBeVisible();
   await expect(framed.getByRole("button", { name: "Create a pad" })).toHaveCount(0);
+});
+
+test("compact transport: TP2 is what you copy, canonical JSON is one disclosure down, both open", async ({ browser }, testInfo) => {
+  const aliceContext = await browser.newContext();
+  const alice = await aliceContext.newPage();
+  await createPad(alice, "Compact chat");
+
+  const padPath = testInfo.outputPath("compact.pad");
+  const [download] = await Promise.all([
+    alice.waitForEvent("download"),
+    alice.getByRole("button", { name: "Save pad for other person" }).click()
+  ]);
+  await download.saveAs(padPath);
+  await alice.getByRole("button", { name: "Start using TruePad" }).click();
+
+  // Normal UX: the short form, and no JSON in sight.
+  const compact = await sendMessage(alice, "compact please");
+  expect(compact.length).toBeLessThan(120);
+
+  // Advanced: the SAME envelope in technical form, available but secondary.
+  const json = await canonicalJsonOf(alice);
+  expect(json).toContain('"direction":"A->B"');
+  await expect(alice.getByText(/same encrypted message in TruePad's technical JSON form/)).toBeVisible();
+  // ...and the compact form is never framed as the weaker one.
+  await expect(alice.locator("body")).not.toContainText("more secure");
+  await expect(alice.locator("body")).not.toContainText("compressed");
+
+  // Bob imports the pad and opens the COMPACT message — no mode selector.
+  const bobContext = await browser.newContext();
+  const bob = await bobContext.newPage();
+  await bob.goto("/");
+  await bob.getByRole("button", { name: "Add a shared pad" }).click();
+  await bob.getByPlaceholder("e.g. Chat with Sam").fill("Compact chat");
+  await bob.locator('input[type="file"]').setInputFiles(padPath);
+  await bob.getByRole("button", { name: "Add pad" }).click();
+  await expect(bob.getByRole("heading", { name: "Compact chat" })).toBeVisible();
+
+  await bob.getByRole("button", { name: "Open message" }).click();
+  await bob.locator("textarea").fill(compact);
+  await bob.getByRole("button", { name: "Open message" }).last().click();
+  await expect(bob.getByText("compact please")).toBeVisible();
+
+  // A second message, opened from its canonical JSON, on the same pad.
+  await alice.getByRole("button", { name: "Back to pad" }).click();
+  const compact2 = await sendMessage(alice, "json please");
+  const json2 = await canonicalJsonOf(alice);
+  expect(compact2.startsWith("TP2:")).toBe(true);
+  await bob.getByRole("button", { name: "Back to pad" }).click();
+  await bob.getByRole("button", { name: "Open message" }).first().click();
+  await bob.locator("textarea").fill(json2);
+  await bob.getByRole("button", { name: "Open message" }).last().click();
+  await expect(bob.getByText("json please")).toBeVisible();
+
+  await aliceContext.close();
+  await bobContext.close();
 });

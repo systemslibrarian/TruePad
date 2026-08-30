@@ -587,6 +587,17 @@ touched):
 - `ciphertextLength > maxCiphertextBytes` is `oversize-ciphertext`,
   checked on the declared length before the hex is even decoded.
 
+
+**Presentation codecs (non-normative for the wire).** §6.2 remains the canonical
+Envelope v2 wire representation, and nothing in this section changes.
+Implementations MAY additionally expose the **TP2 Compact Transport v1**
+presentation codec (`docs/COMPACT-TRANSPORT.md`), which decodes bijectively to
+an `EnvelopeV2` *before* the existing §6 validation and authentication pipeline
+runs. Compact transport bytes are **not** authentication canonical bytes: the
+tag is computed over the §5 canonical semantic fields and over neither
+representation's text. A conforming implementation that speaks only §6.2 JSON
+is complete.
+
 ### 6.3 Parse → canonical-bytes projection
 
 The wire envelope is human-readable, so the projection from parsed fields

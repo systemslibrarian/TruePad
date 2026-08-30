@@ -54,6 +54,7 @@ import {
   type CanonicalFields
 } from "../../core/wc-one-time.ts";
 import { decodeEnvelope2, encodeEnvelope2, type EnvelopeV2 } from "../../core/envelope2.ts";
+import { decodeEnvelopeTransport2, encodeCompactEnvelope2 } from "../../core/compact-envelope2.ts";
 import { buildFrame, frameCapacity, parseFrame } from "../../core/frame2.ts";
 import { combineSources, partition, requiredSourceLength } from "../../core/partition2.ts";
 import { acquireLock } from "../lock.ts";
@@ -105,7 +106,7 @@ export const USAGE2 = `usage:
   truepad2 gen          <dir> --source FILE [--source FILE ...] [--origin TEXT ...] --encryption-bytes E --auth-records N
                         [--verify-attempt-limit 8] [--max-auth-lookahead 64] [--freeze-threshold 32]
                         [--witness-class separate-state-file --witness-path ABSOLUTE-PATH] [--record-bytes F]
-  truepad2 burn         <dir> --as A|B (TEXT | --in FILE)
+  truepad2 burn         <dir> --as A|B (TEXT | --in FILE) [--compact]
   truepad2 open         <dir> --as A|B (ENVELOPE-JSON | --in FILE)
   truepad2 status       <dir>
   truepad2 clear-freeze <dir>
@@ -183,6 +184,11 @@ export function directionFor2(role: Party, op: "burn" | "open"): PadDirection {
 
 export type Args2 = { positional: string[]; flags: Map<string, string[]> };
 
+// Flags that are their own value. Kept explicit so the strict grammar stays
+// strict: an unknown flag is still refused rather than silently swallowing the
+// next argument.
+const PRESENCE_FLAGS = new Set(["compact"]);
+
 export function parseArgs2(argv: string[]): Args2 {
   const positional: string[] = [];
   const flags = new Map<string, string[]>();
@@ -193,7 +199,11 @@ export function parseArgs2(argv: string[]): Args2 {
       // Ceremony assertions are presence flags (ceremony.ts owns the list
       // and the statements): the operator asserts by naming the flag, and
       // there is no value to consume.
-      if (CEREMONY_ASSERTIONS.some((assertion) => assertion.flag === name)) {
+      // Presence flags carry no value: the ceremony assertions (ceremony.ts
+      // owns the list and the statements — the operator asserts by naming the
+      // flag), and --compact, which selects a PRESENTATION of the same
+      // envelope and so has nothing to take a value about.
+      if (CEREMONY_ASSERTIONS.some((assertion) => assertion.flag === name) || PRESENCE_FLAGS.has(name)) {
         const asserted = flags.get(name) ?? [];
         asserted.push("asserted");
         flags.set(name, asserted);
@@ -943,6 +953,7 @@ export function burn(args: Args2): void {
     );
   }
   const plaintext = readInputBytes(args, 2);
+  const compact = args.flags.has("compact");
   withPair(dir, (pair) => {
     // S0 — checks, all free.
     requireNotFrozen(pair);
@@ -1055,7 +1066,10 @@ export function burn(args: Args2): void {
     });
 
     // S3 — only now does the envelope exist outside this process.
-    out(encodeEnvelope2(envelope));
+    // JSON stays the DEFAULT: scripts and the test suite depend on it, and
+    // backward compatibility is not something a presentation flag gets to
+    // spend. --compact opts into the TP2 spelling of the very same envelope.
+    out(compact ? encodeCompactEnvelope2(envelope) : encodeEnvelope2(envelope));
     plaintext.fill(0); // in-memory hygiene only; no erasure claim
     payload.fill(0); // the frame, when fixed (else the same buffer as plaintext)
     pad.fill(0);
@@ -1077,7 +1091,10 @@ export function open(args: Args2): void {
     const halfDir = join(dir, SUBDIR2[direction]);
 
     // O0 — structural, free, before any secret is touched.
-    const decoded = decodeEnvelope2(input);
+    // Accepts canonical §6.2 JSON or the TP2 compact transport, with no flag:
+    // both spell the same EnvelopeV2, and a malformed TP2 is refused as
+    // compact rather than re-parsed as JSON.
+    const decoded = decodeEnvelopeTransport2(input);
     if (!decoded.ok) {
       throw new Refused2(decoded.reason, decoded.message);
     }
@@ -1948,7 +1965,7 @@ const GEN_FLAGS = [
 // Every flag each verb consumes; anything else is refused in main().
 const ALLOWED_FLAGS: Record<string, readonly string[]> = {
   gen: GEN_FLAGS,
-  burn: ["as", "in"],
+  burn: ["as", "in", "compact"],
   open: ["as", "in"],
   status: [],
   "clear-freeze": [],

@@ -11,6 +11,8 @@
  * ========================================================================= */
 
 import { h, icon, mount } from "./dom.ts";
+import { decodeEnvelope2 } from "../../core/envelope2.ts";
+import { encodeCompactEnvelope2 } from "../../core/compact-envelope2.ts";
 import { backLink, callout, copyButton, filePicker, payloadBlock, saveBytesButton, screenHead } from "./components.ts";
 import { fmtBytes, fmtInt } from "./format.ts";
 import { readRole, sendDirection } from "./role.ts";
@@ -93,10 +95,26 @@ export async function renderSend(ctx: Ctx, root: HTMLElement, pairId: string, mo
 }
 
 function renderReady(ctx: Ctx, root: HTMLElement, pairId: string, envelope: string, usedBytes: number): void {
+  // The worker's result stays canonical §6.2 JSON — the engine protocol is not
+  // reshaped to make a screen shorter. What changes is only what a person is
+  // handed: the same envelope, spelled TP2. If the compact spelling cannot be
+  // produced for any reason, the JSON is shown rather than nothing; both are
+  // the same message and either can be opened.
+  const decoded = decodeEnvelope2(envelope);
+  let compact: string | null = null;
+  if (decoded.ok) {
+    try {
+      compact = encodeCompactEnvelope2(decoded.envelope);
+    } catch {
+      compact = null;
+    }
+  }
+  const shown = compact ?? envelope;
+
   const shareBtn = "share" in navigator
     ? h(
         "button",
-        { class: "btn", type: "button", on: { click: () => void navigator.share({ text: envelope }).catch(() => {}) } },
+        { class: "btn", type: "button", on: { click: () => void navigator.share({ text: shown }).catch(() => {}) } },
         icon("share"),
         h("span", { text: "Share" })
       )
@@ -110,12 +128,12 @@ function renderReady(ctx: Ctx, root: HTMLElement, pairId: string, envelope: stri
       backLink(() => ctx.navigate({ name: "pair", pairId }), "Pad"),
       h("div", { class: "ok-head" }, icon("check"), h("h1", { text: "Encrypted message ready" })),
       h("p", { class: "muted", text: "Send this to the other person over any channel. Only they can open it." }),
-      payloadBlock({ label: "Encrypted message", text: envelope, meta: fmtBytes(envelope.length) }),
+      payloadBlock({ label: "Encrypted message", text: shown, meta: fmtBytes(shown.length) }),
       h(
         "div",
         { class: "btn-row" },
-        copyButton(ctx, () => envelope, "Copy"),
-        saveBytesButton(() => new TextEncoder().encode(envelope), `message-${pairId.slice(0, 8)}.txt`, "Save"),
+        copyButton(ctx, () => shown, "Copy"),
+        saveBytesButton(() => new TextEncoder().encode(shown), `message-${pairId.slice(0, 8)}.txt`, "Save"),
         shareBtn
       ),
       h(
@@ -125,7 +143,25 @@ function renderReady(ctx: Ctx, root: HTMLElement, pairId: string, envelope: stri
         h(
           "div",
           { class: "qd-body" },
-          h("p", { text: `This used ${fmtInt(usedBytes)} byte${usedBytes === 1 ? "" : "s"} of your pad and one message slot. It cannot be undone.` })
+          h("p", { text: `This used ${fmtInt(usedBytes)} byte${usedBytes === 1 ? "" : "s"} of your pad and one message slot. It cannot be undone.` }),
+          // Level 3. The same message in TruePad's technical form, for
+          // interoperability and debugging. Deliberately not framed as the
+          // stronger or more real one: the two are the same envelope, and the
+          // authentication tag is computed over neither spelling.
+          compact === null
+            ? null
+            : h(
+                "details",
+                { class: "quiet-details" },
+                h("summary", { text: "Canonical JSON" }),
+                h(
+                  "div",
+                  { class: "qd-body" },
+                  h("p", { text: "This is the same encrypted message in TruePad's technical JSON form. Either one opens." }),
+                  payloadBlock({ label: "Canonical JSON", text: envelope, meta: fmtBytes(envelope.length) }),
+                  h("div", { class: "btn-row" }, copyButton(ctx, () => envelope, "Copy JSON"))
+                )
+              )
         )
       ),
       h("hr", { class: "divider" }),

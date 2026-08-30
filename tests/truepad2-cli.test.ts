@@ -4,6 +4,8 @@ import { cpSync, existsSync, linkSync, readFileSync, rmSync, symlinkSync, writeF
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { decodeEnvelope2 } from "../src/core/envelope2";
+import { decodeCompactEnvelope2, encodeCompactEnvelope2 } from "../src/core/compact-envelope2";
 import { LOCK_FILE } from "../src/cli/lock";
 
 /* ============================================================================
@@ -414,5 +416,107 @@ describe("one file is one source — identity refused, content never judged", ()
       expect(secret.length).toBe(e + 32 * n);
       expect(secret.every((byte) => byte === 0)).toBe(true);
     }
+  });
+});
+
+/* ============================================================================
+ * TP2 compact transport at the CLI boundary (docs/COMPACT-TRANSPORT.md)
+ * ----------------------------------------------------------------------------
+ * JSON stays the DEFAULT stdout: scripts and this suite depend on it, and
+ * backward compatibility is not something a presentation flag gets to spend.
+ * --compact opts into the shorter spelling of the very same envelope, and open
+ * accepts either with no flag at all.
+ * ========================================================================= */
+
+describe("compact transport: --compact out, both spellings in", () => {
+  function pairWithCopy(name: string): { a: string; b: string } {
+    const a = join(dir, `${name}-a`);
+    expect(genPair(a, 512, 8).code).toBe(0);
+    const b = join(dir, `${name}-b`);
+    cpSync(a, b, { recursive: true });
+    return { a, b };
+  }
+
+  it("burn defaults to canonical JSON — unchanged, byte for byte", () => {
+    const { a } = pairWithCopy("default");
+    const out = run("burn", a, "--as", "A", "hello").stdout.trim();
+    expect(out.startsWith("{")).toBe(true);
+    const parsed = JSON.parse(out);
+    expect(parsed.formatVersion).toBe(2);
+    // Exactly the canonical field order and spelling encodeEnvelope2 emits.
+    expect(out).toBe(JSON.stringify(parsed));
+    expect(out).not.toMatch(/^TP2:/);
+  });
+
+  it("--compact emits one TP2 line, and it is much shorter", () => {
+    const { a } = pairWithCopy("compact");
+    const json = run("burn", a, "--as", "A", "first").stdout.trim();
+    const compact = run("burn", a, "--as", "A", "second", "--compact").stdout.trim();
+    expect(compact.startsWith("TP2:")).toBe(true);
+    expect(compact.split("\n")).toHaveLength(1);
+    expect(compact).toMatch(/^TP2:[A-Za-z0-9_-]+$/);
+    expect(compact.length).toBeLessThan(json.length);
+  });
+
+  it("CLI --compact -> CLI open, with no input flag", () => {
+    const { a, b } = pairWithCopy("roundtrip");
+    const compact = run("burn", a, "--as", "A", "compact round trip", "--compact").stdout.trim();
+    const opened = run("open", b, "--as", "B", compact);
+    expect(opened.code).toBe(0);
+    expect(opened.stdout.trim()).toBe("compact round trip");
+  });
+
+  it("CLI JSON -> CLI open still works exactly as before", () => {
+    const { a, b } = pairWithCopy("json");
+    const json = run("burn", a, "--as", "A", "json round trip").stdout.trim();
+    const opened = run("open", b, "--as", "B", json);
+    expect(opened.code).toBe(0);
+    expect(opened.stdout.trim()).toBe("json round trip");
+  });
+
+  it("both spellings of ONE burn open identically — same envelope, same plaintext", () => {
+    const { a, b } = pairWithCopy("both");
+    const json = run("burn", a, "--as", "A", "one message").stdout.trim();
+    // The same envelope, re-spelled compact by the codec rather than re-burned.
+    const decoded = decodeEnvelope2(json);
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    const compact = encodeCompactEnvelope2(decoded.envelope);
+
+    const b2 = join(dir, "both-b2");
+    cpSync(b, b2, { recursive: true });
+    expect(run("open", b, "--as", "B", json).stdout.trim()).toBe("one message");
+    expect(run("open", b2, "--as", "B", compact).stdout.trim()).toBe("one message");
+  });
+
+  it("a malformed TP2 input is refused as compact, and consumes nothing", () => {
+    const { a, b } = pairWithCopy("malformed");
+    run("burn", a, "--as", "A", "x");
+    const headBefore = readFileSync(join(b, "b-to-a", "head.json"), "utf8");
+    const journalBefore = readFileSync(join(b, "a-to-b", "journal.log"), "utf8");
+
+    const refused = run("open", b, "--as", "B", "TP2:!!!not-base64!!!");
+    expect(refused.code).toBe(2);
+    expect(refused.stderr).toContain("malformed-envelope");
+    // It never re-parses as JSON, and nothing was touched.
+    expect(readFileSync(join(b, "b-to-a", "head.json"), "utf8")).toBe(headBefore);
+    expect(readFileSync(join(b, "a-to-b", "journal.log"), "utf8")).toBe(journalBefore);
+  });
+
+  it("a tampered compact message is refused by the EXISTING authenticated path", () => {
+    const { a, b } = pairWithCopy("tamper");
+    const compact = run("burn", a, "--as", "A", "authentic", "--compact").stdout.trim();
+    const decoded = decodeCompactEnvelope2(compact);
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    // Flip a ciphertext byte and re-spell it: the tag no longer covers it.
+    const ciphertext = Uint8Array.from(decoded.envelope.ciphertext);
+    ciphertext[0] ^= 0xff;
+    const forged = encodeCompactEnvelope2({ ...decoded.envelope, ciphertext });
+
+    const opened = run("open", b, "--as", "B", forged);
+    expect(opened.code).toBe(2);
+    expect(opened.stderr).toContain("auth-failed");
+    expect(opened.stdout.trim()).toBe(""); // no plaintext, ever
   });
 });

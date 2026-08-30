@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { decodeEnvelope2, encodeEnvelope2 } from "../src/core/envelope2";
+import { decodeCompactEnvelope2, encodeCompactEnvelope2 } from "../src/core/compact-envelope2";
 import { bytesToHex, hexToBytes } from "../src/core/hex";
 import { canonicalBytes, wcTag, type CanonicalFields } from "../src/core/wc-one-time";
 import { MemoryVfs, type Vfs } from "../src/browser/engine/vfs";
@@ -318,5 +320,83 @@ describe("browser engine: retirement is logical — secret.bin never changes", (
 
     expect(bytesEqual(await a.readFile(senderSecretPath), senderBefore)).toBe(true);
     expect(bytesEqual(await b.readFile(receiverSecretPath), receiverBefore)).toBe(true);
+  });
+});
+
+/* ============================================================================
+ * TP2 compact transport across the browser/CLI boundary
+ * ----------------------------------------------------------------------------
+ * Both editions reuse src/core byte-for-byte, so the compact spelling of an
+ * envelope produced by one is by construction the spelling the other reads.
+ * These pin it anyway, because "by construction" is the kind of claim that
+ * quietly stops being true.
+ * ========================================================================= */
+
+describe("interop: compact transport is the same envelope on both editions", () => {
+  it("a browser burn's envelope survives JSON -> compact -> JSON unchanged", async () => {
+    const vfs = new MemoryVfs();
+    const pairId = await gen(vfs, "compact", { encryptionBytes: 512, authRecords: 8 });
+    const burn = asOk(
+      await send(vfs, { op: "burn", pairId, as: "A", plaintext: new TextEncoder().encode("across editions") }),
+      "burn"
+    );
+    // The worker result is, and stays, canonical JSON.
+    expect(burn.envelope.startsWith("{")).toBe(true);
+    const decoded = decodeEnvelope2(burn.envelope);
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+
+    const compact = encodeCompactEnvelope2(decoded.envelope);
+    expect(compact.startsWith("TP2:")).toBe(true);
+    expect(compact.length).toBeLessThan(burn.envelope.length);
+
+    const back = decodeCompactEnvelope2(compact);
+    expect(back.ok).toBe(true);
+    if (!back.ok) return;
+    expect(encodeEnvelope2(back.envelope)).toBe(burn.envelope);
+  });
+
+  it("the browser engine OPENS a compact message, and its plaintext is byte-exact", async () => {
+    const alice = new MemoryVfs();
+    const bob = new MemoryVfs();
+    const pairId = await gen(alice, "compact-open", { encryptionBytes: 512, authRecords: 8 });
+    const exported = asOk(await send(alice, { op: "export-pair", pairId }), "export-pair");
+    asOk(await send(bob, { op: "import-pair", label: "peer", container: exported.container }), "import-pair");
+
+    // Arbitrary bytes, not text: a file payload travels exactly like a message.
+    // Keep the expectation BEFORE burning — burn zeroes the caller's buffer as
+    // in-memory hygiene, which is working as intended.
+    const expected = [0, 1, 2, 250, 251, 255];
+    const plaintext = new Uint8Array(expected);
+    const burn = asOk(await send(alice, { op: "burn", pairId, as: "A", plaintext }), "burn");
+    const decoded = decodeEnvelope2(burn.envelope);
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    const compact = encodeCompactEnvelope2(decoded.envelope);
+
+    // Handed to the engine as TP2, with no flag and no mode selector.
+    const opened = asOk(await send(bob, { op: "open", pairId, as: "B", envelope: compact }), "open");
+    expect([...opened.plaintext]).toEqual(expected);
+  });
+
+  it("the browser engine still opens canonical JSON, and refuses malformed TP2 as compact", async () => {
+    const alice = new MemoryVfs();
+    const bob = new MemoryVfs();
+    const pairId = await gen(alice, "compact-json", { encryptionBytes: 512, authRecords: 8 });
+    const exported = asOk(await send(alice, { op: "export-pair", pairId }), "export-pair");
+    asOk(await send(bob, { op: "import-pair", label: "peer", container: exported.container }), "import-pair");
+
+    const burn = asOk(await send(alice, { op: "burn", pairId, as: "A", plaintext: new TextEncoder().encode("json still works") }), "burn");
+    const opened = asOk(await send(bob, { op: "open", pairId, as: "B", envelope: burn.envelope }), "open");
+    expect(new TextDecoder().decode(opened.plaintext)).toBe("json still works");
+
+    // A malformed TP2 fails AS COMPACT — never retried as JSON — and consumes
+    // nothing, because O0 is structural and free.
+    const refused = await send(bob, { op: "open", pairId, as: "B", envelope: "TP2:$$$$" });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok && refused.kind === "refused") {
+      expect(refused.reason).toBe("malformed-envelope");
+      expect(refused.message).not.toMatch(/JSON/);
+    }
   });
 });
