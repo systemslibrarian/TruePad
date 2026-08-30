@@ -79,6 +79,13 @@ class FakeTpm implements TpmProvider {
   available(): TpmResult<null> {
     return this.toolsAvailable ? { ok: true, value: null } : { ok: false, message: "tpm2-tools not installed" };
   }
+  // The TPM Name is computed over the PUBLIC AREA, which includes the
+  // attributes — so it CHANGES when the first increment sets WRITTEN. Real
+  // swtpm does this; the original fake did not, and binding to the pre-write
+  // Name broke every operation after initialization.
+  nameFor(written: boolean): string {
+    return written ? this.name : this.name.replace(/^000b../, "000baa");
+  }
   readPublic(): TpmResult<NvPublic> {
     if (!this.present) return { ok: false, message: "no NV index" };
     const flags = [
@@ -91,7 +98,7 @@ class FakeTpm implements TpmProvider {
     return {
       ok: true,
       value: {
-        name: this.name,
+        name: this.nameFor(this.written),
         isCounter: this.isCounter,
         isOrderly: this.isOrderly,
         isWritten: this.written,
@@ -240,6 +247,25 @@ describe("TPM NV index requirements", () => {
     // at zero, and the anchor simply records whatever it actually reads.
     expect(result.value.anchor).toBe("42");
     expect(BigInt(readState().anchor)).toBe(tpm.counter);
+  });
+
+  it("binds to the SETTLED Name — the Name changes when the first write sets WRITTEN", () => {
+    // Only a real TPM revealed this: the Name covers the public area, and the
+    // public area includes TPMA_NV_WRITTEN, so a fresh counter's Name before
+    // its first increment is NOT the Name it keeps afterwards. Binding to the
+    // pre-write Name made every subsequent operation fail its identity check.
+    const tpm = new FakeTpm({ written: false });
+    const preWriteName = tpm.readPublic();
+    expect(preWriteName.ok && preWriteName.value.name).not.toBe(NAME);
+
+    const result = initPlatformWitness(statePath, NV, tpm);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Bound to the settled (written) Name...
+    expect(result.value.config.nvName).toBe(NAME);
+    expect(readState().nvName).toBe(NAME);
+    // ...so ordinary operation works, which is the whole point.
+    expect(platformPreflight(result.value.config, PAIR_A, "A->B", tpm).ok).toBe(true);
   });
 
   it("an ALREADY-WRITTEN counter costs one value, and never has to start at zero", () => {

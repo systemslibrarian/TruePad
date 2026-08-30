@@ -719,13 +719,33 @@ function initLocked(statePath: string, nvIndex: string, tpm: TpmProvider): Platf
 
   // Public, random, not pad-derived. Binds a state file to a pair header so a
   // substituted file of the same shape is detected.
+  // Bind to the SETTLED Name, re-read after the increments — not the one read
+  // at the top of this function.
+  //
+  // The TPM Name of an NV index is computed over its PUBLIC AREA, and the
+  // public area includes the attributes — TPMA_NV_WRITTEN among them. So the
+  // Name CHANGES the moment a fresh counter's first increment sets WRITTEN.
+  // Binding to the pre-write Name made every later operation fail its own
+  // identity check; it is a real TPM behaviour that no fake predicted, and the
+  // emulator interoperability job is what surfaced it. Once written, an index
+  // stays written, so the settled Name is stable for the authority's life.
+  const settled = tpm.readPublic(nvIndex);
+  if (!settled.ok) {
+    return { ok: false, message: `${nvIndex} could not be re-read after initialization (${settled.message})` };
+  }
+  if (!settled.value.isWritten) {
+    return {
+      ok: false,
+      message: `${nvIndex} still reports TPMA_NV_WRITTEN clear after an increment; this is not behaving as a TPM NV counter`
+    };
+  }
   const authorityId = randomBytes(16).toString("hex");
   writeState(statePath, {
     formatVersion: PLATFORM_STATE_VERSION,
     provider: PROVIDER_ID,
     authorityId,
     nvIndex,
-    nvName: pub.value.name,
+    nvName: settled.value.name,
     anchor: after.value.toString(),
     witness: {}
   });
@@ -733,7 +753,7 @@ function initLocked(statePath: string, nvIndex: string, tpm: TpmProvider): Platf
     ok: true,
     value: {
       created: true,
-      config: { provider: PROVIDER_ID, statePath, nvIndex, nvName: pub.value.name, authorityId },
+      config: { provider: PROVIDER_ID, statePath, nvIndex, nvName: settled.value.name, authorityId },
       anchor: after.value.toString()
     }
   };

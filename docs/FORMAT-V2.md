@@ -1663,6 +1663,13 @@ stated tradeoff, not a hidden one.
   Name**, proves increment access with one increment, and writes the state
   file durably at 0600.
 
+  The Name is captured **after** initialisation, not before it. A TPM Name is
+  computed over the index's PUBLIC AREA, and the public area includes the
+  attributes — `TPMA_NV_WRITTEN` among them — so a fresh counter's Name
+  *changes* the moment its first increment writes it. Binding to the pre-write
+  Name makes every later operation fail its own identity check. Once written an
+  index stays written, so the settled Name is stable for the authority's life.
+
   **Two separate protections against delete-and-recreate, and neither alone is
   the whole story.** The **Name** is the index's cryptographic identity, so an
   index re-created with a DIFFERENT public area or policy has a different Name

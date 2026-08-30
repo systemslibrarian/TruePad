@@ -76,6 +76,8 @@ else
   fi
 fi
 
+NAME_UNWRITTEN="$(tpm2_nvreadpublic "$NV_COUNTER" | sed -n 's/^[[:space:]]*name:[[:space:]]*//p' | head -1)"
+
 # --- 4. platform init SUCCEEDS anyway ---------------------------------------
 STATE="$WORK/platform-witness.json"
 INIT_JSON="$(truepad2 witness platform init "$STATE" --nv-index "$NV_COUNTER" 2>/dev/null)"
@@ -83,6 +85,17 @@ if [[ -n "$INIT_JSON" ]]; then ok "truepad2 witness platform init succeeded on a
 
 # --- 5. the state anchor equals the actual TPM counter ----------------------
 tpm_counter() { tpm2_nvread "$1" -s 8 2>/dev/null | xxd -p | tr -d '\n' | python3 -c "import sys;print(int(sys.stdin.read().strip() or '0',16))"; }
+# The Name is computed over the PUBLIC AREA, which includes TPMA_NV_WRITTEN, so
+# it CHANGES when the first increment writes the counter. TruePad must bind to
+# the SETTLED name; binding to the pre-write one broke every later operation.
+NAME_WRITTEN="$(tpm2_nvreadpublic "$NV_COUNTER" | sed -n 's/^[[:space:]]*name:[[:space:]]*//p' | head -1)"
+if [[ "$NAME_UNWRITTEN" != "$NAME_WRITTEN" ]]; then
+  ok "the TPM Name CHANGES when the first increment sets WRITTEN"
+else
+  ok "the TPM Name is unchanged across the first write on this TPM"
+fi
+BOUND_NAME="$(python3 -c "import json;print(json.load(open('$STATE'))['nvName'])")"
+check "TruePad bound to the SETTLED (written) Name" "$BOUND_NAME" "$NAME_WRITTEN"
 ANCHOR="$(python3 -c "import json;print(json.load(open('$STATE'))['anchor'])")"
 T="$(tpm_counter "$NV_COUNTER")"
 check "state anchor equals the real TPM counter" "$ANCHOR" "$T"
