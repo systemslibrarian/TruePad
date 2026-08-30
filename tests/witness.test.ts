@@ -9,6 +9,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -273,25 +274,77 @@ describe("rollback witness end to end", { timeout: 120_000 }, () => {
     expect(run("burn", a, "--as", "A", "three").code).toBe(0);
   });
 
-  it("a present-but-empty witness file is the fresh-witness bootstrap, not inconsistent", () => {
-    // The ceremony tells the operator to provision an EMPTY witness file; a
-    // literal `touch` (0 bytes) — and a whitespace-only file — must accept a
-    // fresh pair and record the first commit, not fail witness-inconsistent.
+  it("a zero-byte or whitespace-only witness fails closed — empty is an accident, not a bootstrap", () => {
+    // This inverts the old ceremony. `touch` used to be the way to provision a
+    // fresh witness, which made three different situations byte-identical: a
+    // file the operator created, one truncated by a failed write or a full
+    // disk, and a restored zero-length placeholder. Adopting an empty file as
+    // fresh let a truncation be durably rewritten with a single key, DELETING
+    // every other pair's recorded high-water while the burn reported success.
+    // Emptiness is not evidence of intent, so it fails closed.
     const a = join(dir, "a");
     const wa = join(dir, "wa.json");
     expect(genWitnessed(a, 64, 8, wa).code).toBe(0);
+
     writeFileSync(wa, ""); // 0-byte, as `touch` leaves it
-    const first = run("burn", a, "--as", "A", "hello");
-    expect(first.code).toBe(0);
-    // The witness now carries this pair's first entry.
+    const zero = run("burn", a, "--as", "A", "hello");
+    expect(zero.code).toBe(2);
+    expect(zero.stderr).toContain("witness-inconsistent");
+    expect(zero.stderr).toMatch(/witness init/);
+
+    writeFileSync(wa, "  \n"); // whitespace-only, the same
+    const blank = run("burn", a, "--as", "A", "hello");
+    expect(blank.code).toBe(2);
+    expect(blank.stderr).toContain("witness-inconsistent");
+
+    // Nothing was consumed by either refusal.
+    const head = JSON.parse(readFileSync(join(a, "a-to-b", "head.json"), "utf8"));
+    expect(head.encryption.nextOffset).toBe(0);
+    expect(head.authentication.nextSequence).toBe(0);
+  });
+
+  it("witness init creates the canonical fresh witness, and it accepts a fresh pair", () => {
+    const a = join(dir, "a");
+    const wa = join(dir, "wa.json");
+    expect(genWitnessed(a, 64, 8, wa).code).toBe(0);
+    rmSync(wa, { force: true });
+
+    const init = run("witness", "init", wa);
+    expect(init.code).toBe(0);
+    // Exactly the canonical empty witness, byte for byte.
+    expect(readFileSync(wa, "utf8")).toBe('{"formatVersion":2,"witness":{}}');
+    if (!asRoot && process.platform !== "win32") {
+      expect(statSync(wa).mode & 0o777).toBe(0o600);
+    }
+
+    // ...and a fresh pair commits against it.
+    expect(run("burn", a, "--as", "A", "hello").code).toBe(0);
+    expect(Object.keys(readWitness(wa).witness)).toHaveLength(1);
+  });
+
+  it("witness init refuses to overwrite a witness that holds state", () => {
+    const a = join(dir, "a");
+    const wa = join(dir, "wa.json");
+    expect(genWitnessed(a, 64, 8, wa).code).toBe(0);
+    emptyWitness(wa);
+    expect(run("burn", a, "--as", "A", "hello").code).toBe(0);
+    const recorded = readFileSync(wa, "utf8");
     expect(Object.keys(readWitness(wa).witness)).toHaveLength(1);
 
-    // Whitespace-only is treated the same way.
-    const a2 = join(dir, "a2");
-    const wa2 = join(dir, "wa2.json");
-    expect(genWitnessed(a2, 64, 8, wa2).code).toBe(0);
-    writeFileSync(wa2, "  \n");
-    expect(run("burn", a2, "--as", "A", "hello").code).toBe(0);
+    const second = run("witness", "init", wa);
+    expect(second.code).toBe(1);
+    expect(second.stderr).toMatch(/already a witness recording/);
+    // Untouched, byte for byte: init never discards a recorded high-water.
+    expect(readFileSync(wa, "utf8")).toBe(recorded);
+
+    // It also refuses to clobber a file it cannot parse, and an empty one.
+    writeFileSync(wa, "{ not json");
+    expect(run("witness", "init", wa).code).toBe(1);
+    expect(readFileSync(wa, "utf8")).toBe("{ not json");
+    writeFileSync(wa, "");
+    const overEmpty = run("witness", "init", wa);
+    expect(overEmpty.code).toBe(1);
+    expect(overEmpty.stderr).toMatch(/exists but is empty/);
   });
 
   it("the witness entry shape is FROZEN as exactly three counters, all required (§15.2)", () => {

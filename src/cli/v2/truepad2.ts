@@ -77,11 +77,14 @@ import {
 import {
   advanceWitness,
   readWitnessCounters,
+  initWitness,
+  readWitnessSnapshot,
   witnessLockProbe,
   witnessPathSafe,
   witnessWritable,
   WitnessLockError,
-  type WitnessCounters
+  type WitnessCounters,
+  type WitnessSnapshot
 } from "./witness.ts";
 import { CEREMONY_ASSERTIONS, ceremonyCreate, ceremonyVerify } from "./ceremony.ts";
 
@@ -101,6 +104,7 @@ export const USAGE2 = `usage:
   truepad2 clear-freeze <dir>
   truepad2 retire       <dir> --direction a-to-b|b-to-a --through-sequence S [--through-offset O] [--reason TEXT]
   truepad2 destroy      <dir> --confirm PAIRID|destroy-unreadable-pair [--reason TEXT]
+  truepad2 witness init <ABSOLUTE-PATH>
   truepad2 ceremony create <workspace> --medium-a DIR --medium-b DIR --source F --source F [--origin TEXT ...]
                         --encryption-bytes E --auth-records N [gen knobs] --assert-offline --assert-distinct-physics
                         --assert-tmpfs-workspace --assert-no-persistent-copy
@@ -389,10 +393,10 @@ function requireNotFrozen(pair: LoadedPair): void {
 // the witness and refuses a store that sits strictly below it
 // (witness-regressed — the restored-store signature of §9.4). All refusals
 // are free: no byte of secret.bin is touched and no journal line is appended.
-function witnessPreflight(store: LoadedStore2): void {
+function witnessPreflight(store: LoadedStore2): WitnessSnapshot | null {
   const rollback = store.head.rollback;
   if (rollback.witnessClass === "none") {
-    return;
+    return null;
   }
   if (rollback.witnessClass !== "separate-state-file") {
     // platform-monotonic / remote-monotonic: specified, unimplemented.
@@ -458,6 +462,16 @@ function witnessPreflight(store: LoadedStore2): void {
   }
   // A null entry is a fresh witness: protection begins at the first witnessed
   // commit (§15.2), so this passes and the advance below writes the entry.
+
+  // Capture the WHOLE validated file, not just this pair's entry. The advance
+  // rechecks it under the lock, so a witness replaced beneath this operation by
+  // an older valid copy cannot be durably republished (§15.3). Non-secret
+  // counters only — the snapshot IS the state, no digest of anything (N17).
+  const snapshot = readWitnessSnapshot(path);
+  if (!snapshot.ok) {
+    throw new Refused2(snapshot.reason, snapshot.message);
+  }
+  return snapshot.snapshot;
 }
 
 // §15.3 ADVANCE. Runs after the durable commit and before the emit. On any
@@ -465,7 +479,10 @@ function witnessPreflight(store: LoadedStore2): void {
 // output MUST be withheld: this rethrows as a plain Error (exit 1), stating
 // the §15.3 loss row so the operator knows the record is lost and that every
 // later operation will refuse free at preflight until the witness returns.
-function witnessAdvance(store: LoadedStore2, counters: WitnessCounters): void {
+// The snapshot is the SECOND parameter on purpose: it belongs to the operation,
+// not to the counters, and every call site must pass the one its own preflight
+// captured — never a second, later read (§15.3).
+function witnessAdvance(store: LoadedStore2, snapshot: WitnessSnapshot | null, counters: WitnessCounters): void {
   const rollback = store.head.rollback;
   if (rollback.witnessClass !== "separate-state-file") {
     // none: no witness to advance. platform/remote never reach here — their
@@ -473,7 +490,7 @@ function witnessAdvance(store: LoadedStore2, counters: WitnessCounters): void {
     return;
   }
   try {
-    advanceWitness(rollback.config.path, store.head.pairId, store.head.direction, counters);
+    advanceWitness(rollback.config.path, store.head.pairId, store.head.direction, counters, snapshot);
   } catch (error) {
     if (error instanceof WitnessLockError && error.reason === "witness-locked") {
       throw new Error(
@@ -817,7 +834,7 @@ export function burn(args: Args2): void {
     const halfDir = join(dir, SUBDIR2[direction]);
     // §15.3 preflight, free and for this direction's store only: a store below
     // its rollback witness refuses before anything is consumed.
-    witnessPreflight(store);
+    const witnessSnapshot = witnessPreflight(store);
     // §16.2: on a fixed store the plaintext is framed to exactly F bytes
     // (length prefix hides the message length on the wire), and C = F flows
     // through the unchanged §12.2 path. A plaintext past F − 4 is refused
@@ -913,7 +930,7 @@ export function burn(args: Args2): void {
     // §15.3 advance — after the durable commit, before the emit. A witness
     // write failure withholds the envelope (the material is already retired).
     // burn reserves no verification attempt, so attemptsReserved is unchanged.
-    witnessAdvance(store, {
+    witnessAdvance(store, witnessSnapshot, {
       encryptionNextOffset: startOffset + c,
       authenticationNextSequence: sequence + 1,
       attemptsReserved: store.effective.attemptsReserved
@@ -1019,7 +1036,7 @@ export function open(args: Args2): void {
     requireNotFrozen(pair);
     // §15.3 preflight, before any verification: a store below its rollback
     // witness refuses here, so no attempt reservation is ever written.
-    witnessPreflight(store);
+    const witnessSnapshot = witnessPreflight(store);
     const attempts = effective.attempts.get(sequence) ?? 0;
     if (attempts >= head.authentication.verifyAttemptLimit) {
       throw new Refused2(
@@ -1042,7 +1059,7 @@ export function open(args: Args2): void {
     // learn about the attacker's guesses. A write failure here is the §15.3
     // loss row: the attempt is durable (consumed, the safe direction), the
     // output is not yet reachable, and the next op refuses free.
-    witnessAdvance(store, {
+    witnessAdvance(store, witnessSnapshot, {
       encryptionNextOffset: effective.nextOffset,
       authenticationNextSequence: effective.nextSequence,
       attemptsReserved: effective.attemptsReserved + 1
@@ -1131,7 +1148,7 @@ export function open(args: Args2): void {
     // §15.3 advance — after the durable commit (O5), before the release (O6).
     // A witness write failure withholds the plaintext (material already
     // retired). attemptsReserved already advanced at O3; carry it forward.
-    witnessAdvance(store, {
+    witnessAdvance(store, witnessSnapshot, {
       encryptionNextOffset: startOffset + c,
       authenticationNextSequence: sequence + 1,
       attemptsReserved: effective.attemptsReserved + 1
@@ -1322,7 +1339,7 @@ export function retire(args: Args2): void {
     const halfDir = join(dir, SUBDIR2[direction]);
     // §15.3 preflight, free and before anything is consumed: retire advances
     // high-waters, so a store below its witness refuses here too.
-    witnessPreflight(store);
+    const witnessSnapshot = witnessPreflight(store);
     if (throughSequence >= head.authentication.capacityRecords) {
       throw new Refused2(
         "sequence-malformed",
@@ -1371,7 +1388,7 @@ export function retire(args: Args2): void {
     // §15.3 advance — after the durable commit. A witness write failure exits
     // 1 with the loss row; the retire is durable regardless. retire reserves
     // no verification attempt, so attemptsReserved is unchanged.
-    witnessAdvance(store, {
+    witnessAdvance(store, witnessSnapshot, {
       encryptionNextOffset: newNextOffset,
       authenticationNextSequence: newNextSequence,
       attemptsReserved: effective.attemptsReserved
@@ -1692,6 +1709,44 @@ export function destroy(args: Args2): void {
   }
 }
 
+/* ---- witness init (§15.2 explicit provisioning) ---------------------------- */
+
+// Creating a witness is now a DELIBERATE act, and this is the only thing that
+// performs it. The ceremony used to say `touch` — but a zero-byte file is
+// indistinguishable from one truncated by a failed write, a full disk, or a
+// restored placeholder, so "empty means fresh" let an accident be adopted as an
+// authority and then durably rewritten with a single key, deleting every other
+// pair's high-water while reporting success. An empty file now fails closed
+// everywhere; a fresh witness is the canonical {"formatVersion":2,"witness":{}}
+// this writes, with the §10 durable discipline and 0600.
+//
+// It never overwrites a witness holding state, and never overwrites one it
+// cannot parse. This does NOT make the class rollback-proof: restoring an older
+// VALID witness remains outside separate-state-file's guarantee (§15.2).
+function witness(args: Args2): void {
+  const sub = args.positional[1];
+  if (sub !== "init") {
+    throw new Error("witness needs a subcommand: init");
+  }
+  const path = args.positional[2];
+  if (path === undefined) {
+    throw new Error("witness init needs the witness path: truepad2 witness init <absolute-path>");
+  }
+  const result = initWitness(path);
+  if (!result.ok) {
+    throw new Error(result.message);
+  }
+  err(
+    result.created
+      ? `initialised a fresh rollback witness at ${result.path} (formatVersion 2, no entries, mode 0600).`
+      : `${result.path} is already a fresh rollback witness with no entries; nothing was changed.`
+  );
+  err(
+    "This is the ONLY way to create one: an empty or truncated file is refused everywhere else. It does not make " +
+      "the witness rollback-proof — restoring an older VALID witness is outside this class's guarantee (§15.2)."
+  );
+}
+
 /* ---- ceremony (Phase 3; the verbs live in ceremony.ts) ---------------------- */
 
 function ceremony(args: Args2): void {
@@ -1731,6 +1786,7 @@ const ALLOWED_FLAGS: Record<string, readonly string[]> = {
   "clear-freeze": [],
   retire: ["direction", "through-sequence", "through-offset", "reason"],
   destroy: ["confirm", "reason"],
+  witness: [],
   ceremony: [...GEN_FLAGS, "medium-a", "medium-b", ...CEREMONY_ASSERTIONS.map((assertion) => assertion.flag)]
 };
 
@@ -1780,6 +1836,7 @@ export function main(argv: string[]): number {
     "clear-freeze": clearFreeze,
     retire,
     destroy,
+    witness,
     ceremony
   };
   if (command === undefined || !Object.hasOwn(commands, command)) {

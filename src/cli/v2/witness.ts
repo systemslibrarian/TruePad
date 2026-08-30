@@ -68,7 +68,7 @@ import {
   writeSync
 } from "node:fs";
 import { hostname } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import type { PadDirection } from "../../core/pad.ts";
 
 // The three monotone quantities a witness records. The two high-waters catch
@@ -488,10 +488,29 @@ export function readWitnessCounters(path: string, pairId: string, direction: Pad
         "Nothing was burned."
     };
   }
-  // A present-but-empty (or whitespace-only) file is the fresh-witness
-  // bootstrap, not malformed JSON.
+  // A zero-byte or whitespace-only file is NOT a fresh witness. It used to be
+  // — the ceremony asked the operator to `touch` one — but that made three
+  // different situations indistinguishable: a file the operator provisioned, a
+  // file truncated by `> witness`, an ENOSPC, a card pulled mid-write, or a
+  // restore of a zero-length placeholder. Emptiness is not evidence of intent,
+  // and treating it as intent let a truncated witness be adopted as fresh and
+  // then durably rewritten with a single key — silently deleting every other
+  // pair's recorded high-water while the operation reported success.
+  //
+  // Fresh provisioning is now EXPLICIT: `truepad2 witness init` writes the
+  // canonical {"formatVersion":2,"witness":{}}, which is a statement the
+  // operator made. An empty file is an accident, and accidents fail closed.
   if (text.trim() === "") {
-    return { ok: true, counters: null };
+    return {
+      ok: false,
+      reason: "witness-inconsistent",
+      message:
+        `the rollback witness at ${path} is empty (zero bytes or whitespace only). An empty file is NOT a fresh ` +
+        "witness: it is indistinguishable from one truncated by a failed write, a full disk, or a restored " +
+        "placeholder, and adopting it as fresh would let this operation durably erase every other pair's recorded " +
+        "high-water. A fresh witness is created explicitly with `truepad2 witness init <path>`, which writes " +
+        '{"formatVersion":2,"witness":{}}. If this witness held state, restore its medium instead. Nothing was burned.'
+    };
   }
   let parsed: unknown;
   try {
@@ -539,6 +558,166 @@ export function witnessPathSafe(path: string): { ok: true } | { ok: false; reaso
     }
     throw error;
   }
+}
+
+// The PREFLIGHT SNAPSHOT (§15.3). The counters-only read above answers "is my
+// own store behind the witness?"; it says nothing about the REST of the file,
+// which is why a witness replaced between preflight and advance by a valid but
+// OLDER copy could be adopted wholesale — our key advanced correctly while
+// every other pair's entry was durably republished at the older, lower values
+// the replacement carried, and the operation reported success.
+//
+// So preflight also captures the whole validated file. These are non-secret
+// monotone counters (N17), so the snapshot IS the state — no hash, no digest,
+// nothing derived from pad material, and nothing that would need one.
+export type WitnessSnapshot = { entries: Record<string, WitnessCounters> };
+
+export type WitnessSnapshotResult =
+  | { ok: true; snapshot: WitnessSnapshot }
+  | { ok: false; reason: "witness-unreachable" | "witness-inconsistent"; message: string };
+
+export function readWitnessSnapshot(path: string): WitnessSnapshotResult {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "witness-unreachable",
+      message:
+        `the configured rollback witness at ${path} cannot be read (${(error as Error).message}). A witness that ` +
+        "cannot be reached fails closed (§15.3). Nothing was burned."
+    };
+  }
+  if (text.trim() === "") {
+    return {
+      ok: false,
+      reason: "witness-inconsistent",
+      message:
+        `the rollback witness at ${path} is empty (zero bytes or whitespace only), which is an accident rather ` +
+        "than a fresh witness. Create one explicitly with `truepad2 witness init <path>`. Nothing was burned."
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "witness-inconsistent",
+      message: `the rollback witness at ${path} does not parse as JSON (${(error as Error).message}). Nothing was burned.`
+    };
+  }
+  const validated = validateWitnessFile(parsed);
+  if ("why" in validated) {
+    return {
+      ok: false,
+      reason: "witness-inconsistent",
+      message: `the rollback witness at ${path} violates its own shape — ${validated.why} (§15.2). Nothing was burned.`
+    };
+  }
+  return { ok: true, snapshot: { entries: validated.file.witness } };
+}
+
+// The componentwise regression rule. For EVERY key the snapshot held, the
+// current file must still hold that key and all three of its counters must be
+// >= the snapshot's. Deliberately NOT byte equality: another pair advancing
+// concurrently moves its own key FORWARD, which is legitimate progress and must
+// pass. What fails is a key that vanished or a counter that went backwards —
+// the signature of the whole authority being replaced by an older copy.
+function regressionAgainst(snapshot: WitnessSnapshot, current: Record<string, WitnessCounters>): string | null {
+  for (const [key, was] of Object.entries(snapshot.entries)) {
+    const now = current[key];
+    if (now === undefined) {
+      return `the entry for ${key} has disappeared (it recorded encryptionNextOffset ${was.encryptionNextOffset}, authenticationNextSequence ${was.authenticationNextSequence}, attemptsReserved ${was.attemptsReserved})`;
+    }
+    if (now.encryptionNextOffset < was.encryptionNextOffset) {
+      return `${key} encryptionNextOffset fell from ${was.encryptionNextOffset} to ${now.encryptionNextOffset}`;
+    }
+    if (now.authenticationNextSequence < was.authenticationNextSequence) {
+      return `${key} authenticationNextSequence fell from ${was.authenticationNextSequence} to ${now.authenticationNextSequence}`;
+    }
+    if (now.attemptsReserved < was.attemptsReserved) {
+      return `${key} attemptsReserved fell from ${was.attemptsReserved} to ${now.attemptsReserved}`;
+    }
+  }
+  return null;
+}
+
+/* ---- explicit provisioning (§15.2) ---------------------------------------- */
+
+export type WitnessInitResult =
+  | { ok: true; created: boolean; path: string }
+  | { ok: false; message: string };
+
+// The canonical fresh witness, and the ONLY thing that creates one. Written
+// with the §10 discipline the advance uses — full write, fsync, atomic rename,
+// directory fsync, 0600 — so a fresh witness is as durable as an advanced one.
+//
+// It refuses to overwrite a witness that holds state, and refuses to overwrite
+// one it cannot parse: a file the operator should inspect is never clobbered by
+// a provisioning command. Re-running it against an already-canonical empty
+// witness is a no-op success, so the ceremony step is safe to repeat.
+export function initWitness(path: string): WitnessInitResult {
+  if (!isAbsolute(path)) {
+    return { ok: false, message: `the witness path must be absolute (§15.2); found ${JSON.stringify(path)}` };
+  }
+  try {
+    witnessLockPath(path); // symlink / reserved-name / unresolvable-parent safety
+  } catch (error) {
+    return { ok: false, message: (error as Error).message };
+  }
+  let existing: string | null;
+  try {
+    existing = readFileSync(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      return { ok: false, message: `${path} cannot be read (${(error as Error).message})` };
+    }
+    existing = null;
+  }
+  if (existing !== null) {
+    if (existing.trim() === "") {
+      return {
+        ok: false,
+        message:
+          `${path} exists but is empty (zero bytes or whitespace only). That is the accident this command exists ` +
+          "to make impossible, so it is not silently converted: an empty file where a witness was expected may be " +
+          "a truncated one. Confirm the medium, remove the file deliberately, then run init again."
+      };
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(existing);
+    } catch (error) {
+      return {
+        ok: false,
+        message:
+          `${path} exists and does not parse as JSON (${(error as Error).message}). It is NOT overwritten — a ` +
+          "witness that fails its shape may still be the only record of a pair's high-water. Inspect it by hand."
+      };
+    }
+    const validated = validateWitnessFile(parsed);
+    if ("why" in validated) {
+      return {
+        ok: false,
+        message: `${path} exists and violates the §15.2 witness shape — ${validated.why}. It is NOT overwritten; inspect it by hand.`
+      };
+    }
+    const count = Object.keys(validated.file.witness).length;
+    if (count > 0) {
+      return {
+        ok: false,
+        message:
+          `${path} is already a witness recording ${count} entr${count === 1 ? "y" : "ies"}. It is NOT overwritten: ` +
+          "that would discard the high-water this authority exists to remember and re-open every pair it witnesses " +
+          "to a rollback. Point --witness-path elsewhere, or retire this witness deliberately."
+      };
+    }
+    return { ok: true, created: false, path }; // already canonical and empty
+  }
+  writeWitnessDurably(path, JSON.stringify({ formatVersion: 2, witness: {} } satisfies WitnessFile));
+  return { ok: true, created: true, path };
 }
 
 // Preflight LOCK probe (§15.3). The advance's read-modify-write is serialised
@@ -611,6 +790,7 @@ export function advanceWitness(
   pairId: string,
   direction: PadDirection,
   counters: WitnessCounters,
+  snapshot: WitnessSnapshot | null = null,
   waitMs: number = LOCK_WAIT_MS
 ): void {
   // SERIALISE FIRST. The read below and the replace at the end are one
@@ -619,13 +799,19 @@ export function advanceWitness(
   // the directory fsync runs under the witness authority's own lock.
   const release = acquireWitnessLock(path, { pairId, direction }, waitMs);
   try {
-    advanceLocked(path, pairId, direction, counters);
+    advanceLocked(path, pairId, direction, counters, snapshot);
   } finally {
     release();
   }
 }
 
-function advanceLocked(path: string, pairId: string, direction: PadDirection, counters: WitnessCounters): void {
+function advanceLocked(
+  path: string,
+  pairId: string,
+  direction: PadDirection,
+  counters: WitnessCounters,
+  snapshot: WitnessSnapshot | null
+): void {
   let file: WitnessFile;
   let existing: string;
   try {
@@ -647,17 +833,57 @@ function advanceLocked(path: string, pairId: string, direction: PadDirection, co
     throw error;
   }
   if (existing.trim() === "") {
-    // The present-but-empty bootstrap file the operator provisions (see
-    // readWitnessCounters). A fresh witness to build on — this is the ONLY
-    // path that starts one, and it is not broadened.
-    file = { formatVersion: 2, witness: {} };
-  } else {
-    const validated = validateWitnessFile(JSON.parse(existing));
-    if ("why" in validated) {
-      throw new Error(`the rollback witness at ${path} is inconsistent (${validated.why}); refusing to advance over it`);
-    }
-    file = validated.file;
+    // Empty is an accident, never a bootstrap (see readWitnessCounters). There
+    // is no longer ANY path by which an advance starts a fresh witness: the
+    // only thing that creates one is `truepad2 witness init`.
+    throw new Error(
+      `the rollback witness at ${path} is empty (zero bytes or whitespace only). It was readable at preflight and ` +
+        "is empty now, which means it was truncated under this operation — by a failed write, a full disk, or a " +
+        "replacement. It is NOT adopted as a fresh witness: doing so would durably erase every other pair's " +
+        "recorded high-water. Restore the witness medium before using this pair again."
+    );
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(existing);
+  } catch (error) {
+    throw new Error(
+      `the rollback witness at ${path} does not parse as JSON (${(error as Error).message}); refusing to advance ` +
+        "over it. Nothing about the witness was changed."
+    );
+  }
+  const validated = validateWitnessFile(parsed);
+  if ("why" in validated) {
+    throw new Error(`the rollback witness at ${path} is inconsistent (${validated.why}); refusing to advance over it`);
+  }
+  file = validated.file;
+
+  // THE SNAPSHOT CHECK. Under the lock, with the current file in hand: nothing
+  // this operation already saw may have gone backwards or vanished. A
+  // concurrent advance by another pair moves ITS key forward and passes; a
+  // witness replaced by an older valid copy does not, and is caught BEFORE
+  // anything is written — so this operation never durably republishes a state
+  // below its own knowledge, for its own pair or anyone else's.
+  //
+  // Deliberately not byte equality: equality would reject the legitimate
+  // concurrent forward progress this whole lock exists to make safe.
+  //
+  // The store has already committed by now, so this is the §15.3 LOSS row, not
+  // a refusal: the record's material is retired and the output is withheld.
+  // Loss is acceptable; endorsing a rollback is not.
+  if (snapshot !== null) {
+    const regression = regressionAgainst(snapshot, file.witness);
+    if (regression !== null) {
+      throw new Error(
+        `the rollback witness at ${path} regressed between this operation's preflight and its advance — ` +
+          `${regression}. The witness authority was replaced or rolled back underneath a committed operation, so ` +
+          "it is NOT written: advancing would durably endorse a state below what this operation already read, and " +
+          "re-open every pair it witnesses to reuse. The witness file is left exactly as found. Restore the " +
+          "correct witness medium, then inspect every pair it records before using them again."
+      );
+    }
+  }
+
   // TEST-ONLY: hold here with the snapshot in hand, so the suite can guarantee
   // two read-modify-writes overlap. Never set by the CLI.
   const hold = testHoldMs();

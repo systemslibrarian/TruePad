@@ -1600,14 +1600,34 @@ stated tradeoff, not a hidden one.
   three counters, all required, all non-negative safe integers, no other
   keys: there is no legacy two-counter form, and an entry missing
   `attemptsReserved` (or any counter) is `witness-inconsistent` — never a
-  silent 0, which would reopen the attempt-budget rollback of §15.1. An
-  empty witness FILE, or a valid witness object with no entry yet for this
-  (pair, direction), remains the documented fresh bootstrap. One file may
-  witness several pairs. Its strength caveat, verbatim from
+  silent 0, which would reopen the attempt-budget rollback of §15.1.
+  **Provisioning is EXPLICIT.** A fresh witness is the canonical
+  `{"formatVersion":2,"witness":{}}`, created by `truepad2 witness init
+  <absolute-path>` with the §10 durable discipline at mode 0600; a valid
+  witness object with no entry yet for this (pair, direction) is then the
+  fresh bootstrap and accepts a fresh pair. A **zero-byte or whitespace-only**
+  file is NOT a fresh witness — it is `witness-inconsistent` at both
+  touchpoints. It used to be the documented bootstrap (`touch`), which made
+  three situations byte-identical: a file the operator provisioned, one
+  truncated by a failed write or a full medium, and a restored zero-length
+  placeholder. Adopting an empty file as fresh let an accident be durably
+  rewritten with a single key, DELETING every other pair's recorded
+  high-water while the operation reported success. Emptiness is not evidence
+  of intent. `witness init` refuses to overwrite a witness holding entries and
+  refuses to overwrite one it cannot parse. This makes accidental empty state
+  distinguishable from an operator-created authority; it does **not** make the
+  class rollback-proof — restoring an older VALID witness remains outside this
+  class's guarantee, below. One file may witness several pairs. Its strength caveat, verbatim from
   the architecture: an independent backup/failure domain, **NOT
   intrinsically monotonic (a second device can be restored too)** — a
-  witness file restored from ITS backup regresses the witness, and an
-  emptied witness file knows nothing. The operator assumption is that the
+  witness file restored from ITS backup regresses the witness. The
+  preflight-snapshot check above closes a replacement that becomes visible
+  BETWEEN an operation's preflight and its advance; it does **not** make a
+  plain file intrinsically monotonic. A whole authority restored or replaced
+  with an older VALID copy outside that window has no external truth against
+  which a separate state file could detect the fact — which is precisely why
+  `platform-monotonic` and `remote-monotonic` exist, and neither is
+  implemented here. The operator assumption is that the
   path lives in a different failure domain (another medium, not covered
   by the same backup) and is never restored. Protection begins at the
   first witnessed commit; an entry-less witness accepts a fresh pair.
@@ -1637,10 +1657,15 @@ but refuses nothing (it is read-only). Two touchpoints:
   consume nothing — witness
   outage is an availability failure, never a silent downgrade. The store
   being AHEAD of the witness is the benign crash signature (§15.3's
-  advance ordering below) and passes. A present-but-empty (or
-  whitespace-only) witness file is the fresh bootstrap — no entry yet,
-  passes — distinct from a non-empty shape-violating file, which is
-  `witness-inconsistent`.
+  advance ordering below) and passes. A **zero-byte or whitespace-only**
+  witness file is `witness-inconsistent`, not a bootstrap (§15.2); a valid
+  witness with no entry for this (pair, direction) passes as fresh.
+  Preflight additionally **captures a snapshot** of the whole validated
+  witness — its entries and their three counters, which are non-secret
+  monotone integers, so the snapshot IS the state and no digest of anything
+  is taken (N17). That snapshot belongs to the operation and is the one its
+  own advance checks; an operation never takes a second, later reading after
+  its store has committed.
 - **ADVANCE**, at two points, each writing the witness durably (monotone,
   elementwise maximum on all three counters). The monotone property is over
   the WHOLE file, not merely the key being advanced: no successful advance may
@@ -1648,6 +1673,18 @@ but refuses nothing (it is read-only). Two touchpoints:
   several pairs, whose pair locks do not exclude one another, that read-modify-
   write is serialised under the witness's own exclusive lock — **§10.3**, which
   also fixes the PAIR-then-WITNESS lock order and the stale-lock stance.
+  Under that lock, before anything is modified, the advance rechecks the
+  current file against its operation's preflight snapshot: **for every key the
+  snapshot held, that key must still exist and all three of its counters must
+  be >= the snapshot's.** Componentwise `>=`, never byte equality — equality
+  would reject the legitimate concurrent forward progress the lock exists to
+  make safe, while `>=` accepts another pair advancing its own key and rejects
+  a key that vanished or a counter that went backwards. That is the signature
+  of the witness authority itself being replaced or rolled back beneath a
+  committed operation, and it is refused: the witness is left exactly as
+  found and the output is withheld. Since the store has already committed,
+  this is the LOSS row below, not a free refusal — loss is acceptable,
+  durably endorsing a state below what this operation already read is not.
   (1) **At the reservation**
   (O3), before verification: record the incremented `attemptsReserved`.
   This is what makes a rolled-back attempt budget detectable — the

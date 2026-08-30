@@ -119,9 +119,21 @@ into both headers and travels with them; on each peer's host it names that
 peer's own witness file, on an **independent medium or failure domain** the
 pair's backup does not cover — the whole point is an authority outside the
 pair directory. Choose that path deliberately (a different device, a
-different backup regime), provision an empty witness file there (an empty
-witness accepts a fresh pair, and protection begins at the first witnessed
-commit), and record the class and path in the pad book. The witness holds
+different backup regime), provision the witness there **explicitly**:
+
+   ```sh
+   truepad2 witness init /absolute/path/to/witness.json
+   ```
+
+   That writes the canonical `{"formatVersion":2,"witness":{}}` at mode 0600
+   with the same durable discipline as an advance, and refuses to overwrite a
+   witness that already holds entries or one it cannot parse. Protection
+   begins at the first witnessed commit. **Do not `touch` the file** — a
+   zero-byte or whitespace-only witness is now refused
+   `witness-inconsistent` at every touchpoint, because an empty file is
+   indistinguishable from one truncated by a failed write or a full medium,
+   and adopting it as fresh would durably erase every other pair the witness
+   records. Record the class and path in the pad book. The witness holds
 only counters — never a pad byte — so it is non-secret, but it is also
 *only as monotonic as the mechanism enforcing its non-regression*: a
 separate state file that is itself restored or emptied knows nothing.
@@ -411,6 +423,17 @@ Stated here rather than distributed as caveats:
   directory) and no more: a **hard link**, or two bind mounts or network paths
   onto one file, are indistinguishable, and two stores reaching one witness that
   way would not exclude each other. Keep one witness file, at one real path.
+- **A replaced witness is caught only inside one operation's window.** From an
+  operation's preflight to its advance, the whole witness is snapshotted and
+  rechecked: a key that vanished, or any of the three counters going
+  backwards, refuses rather than durably republishing a state below what the
+  operation already read. That closes a replacement landing *during* an
+  operation. It does **not** make a plain file monotonic: an authority
+  restored wholesale to an older VALID copy between operations leaves a
+  separate state file with no external truth to detect it. That is exactly
+  what `platform-monotonic` and `remote-monotonic` are for, and neither is
+  implemented — so the operator assumption stands unchanged: keep the witness
+  in a failure domain the pair's backup does not reach, and never restore it.
   A basename ending in `.lock` is refused as reserved, because it is the name
   given to a neighbouring witness's lock file.
 - **A shared witness must be on local storage, on one host.** The serialisation

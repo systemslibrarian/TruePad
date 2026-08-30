@@ -7,6 +7,8 @@ import {
   acquireWitnessLock,
   advanceWitness,
   witnessLockPath,
+  initWitness,
+  readWitnessSnapshot,
   witnessLockProbe,
   WitnessLockError
 } from "../src/cli/v2/witness";
@@ -267,7 +269,7 @@ describe("witness lock and fail-closed discipline", () => {
 
     let thrown: unknown;
     try {
-      advanceWitness(path, PAIR_B, "A->B", counters, 200);
+      advanceWitness(path, PAIR_B, "A->B", counters, null, 200);
     } catch (error) {
       thrown = error;
     }
@@ -286,7 +288,7 @@ describe("witness lock and fail-closed discipline", () => {
     writeWitness(path, { [`${PAIR_A}/A->B`]: flat(1) });
     const lock = witnessLockPath(path);
     writeFileSync(lock, "pid 999999 since 2020-01-01T00:00:00.000Z");
-    expect(() => advanceWitness(path, PAIR_B, "A->B", counters, 200)).toThrow();
+    expect(() => advanceWitness(path, PAIR_B, "A->B", counters, null, 200)).toThrow();
 
     // The operator confirms nothing holds the witness and removes the file.
     rmSync(lock);
@@ -328,12 +330,187 @@ describe("witness lock and fail-closed discipline", () => {
     expect(existsSync(path)).toBe(false);
   });
 
-  it("the present-but-empty bootstrap witness still works, and is not broadened", () => {
-    // The one path that may start a fresh witness: a file the operator made.
+  it("an EMPTY witness is no longer a bootstrap — empty is an accident, and init is the only way in", () => {
+    // Previously a zero-byte file was adopted as a fresh witness and durably
+    // rewritten with one key, deleting every other pair's high-water. Now the
+    // only thing that creates a witness is `witness init`, and an empty file
+    // fails closed at both touchpoints.
     const path = join(dir, "empty.json");
     writeFileSync(path, "");
-    advanceWitness(path, PAIR_A, "A->B", flat(3));
-    expect(readWitness(path).witness).toEqual({ [`${PAIR_A}/A->B`]: flat(3) });
+    expect(() => advanceWitness(path, PAIR_A, "A->B", flat(3), null, 200)).toThrow(/empty/);
+    expect(readFileSync(path, "utf8")).toBe(""); // not adopted, not rewritten
+
+    writeFileSync(path, "   \n\t ");
+    expect(() => advanceWitness(path, PAIR_A, "A->B", flat(3), null, 200)).toThrow(/empty/);
+
+    // The canonical witness an explicit init writes DOES accept a fresh pair.
+    const initialised = join(dir, "init.json");
+    const result = initWitness(initialised);
+    expect(result.ok).toBe(true);
+    expect(readFileSync(initialised, "utf8")).toBe('{"formatVersion":2,"witness":{}}');
+    advanceWitness(initialised, PAIR_A, "A->B", flat(3), null, 200);
+    expect(readWitness(initialised).witness).toEqual({ [`${PAIR_A}/A->B`]: flat(3) });
+  });
+
+  it("init never discards recorded state, and never clobbers a file it cannot parse", () => {
+    const path = join(dir, "w.json");
+    writeWitness(path, { [`${PAIR_A}/A->B`]: flat(7) });
+    const before = readFileSync(path, "utf8");
+    const live = initWitness(path);
+    expect(live.ok).toBe(false);
+    if (!live.ok) expect(live.message).toMatch(/already a witness recording 1 entry/);
+    expect(readFileSync(path, "utf8")).toBe(before);
+
+    writeFileSync(path, "{ not json");
+    expect(initWitness(path).ok).toBe(false);
+    expect(readFileSync(path, "utf8")).toBe("{ not json");
+
+    // An already-canonical empty witness is a no-op success, so the ceremony
+    // step is safe to repeat.
+    const fresh = join(dir, "fresh.json");
+    expect(initWitness(fresh)).toEqual({ ok: true, created: true, path: fresh });
+    expect(initWitness(fresh)).toEqual({ ok: true, created: false, path: fresh });
+  });
+});
+
+/* ==========================================================================
+ * The preflight snapshot: a witness replaced between preflight and advance.
+ * ======================================================================== */
+
+describe("preflight snapshot vs. a replaced witness authority", () => {
+  const snapshotOf = (path: string) => {
+    const r = readWitnessSnapshot(path);
+    if (!r.ok) throw new Error(`snapshot failed: ${r.message}`);
+    return r.snapshot;
+  };
+
+  it("a VALID but OLDER replacement is caught, and the witness is left exactly as found", () => {
+    // 1. preflight sees {A:10, B:20} and captures the WHOLE file.
+    const path = join(dir, "witness.json");
+    writeWitness(path, { [`${PAIR_A}/A->B`]: flat(10), [`${PAIR_B}/A->B`]: flat(20) });
+    const S = snapshotOf(path);
+
+    // 2. pair A's store commits durably here — its record is retired.
+    // 3. the witness is replaced by a valid older copy: B regressed 20 -> 5.
+    writeWitness(path, { [`${PAIR_A}/A->B`]: flat(10), [`${PAIR_B}/A->B`]: flat(5) });
+    const asReplaced = readFileSync(path, "utf8");
+
+    // 4. the advance refuses rather than republishing B at 5.
+    expect(() => advanceWitness(path, PAIR_A, "A->B", flat(11), S, 200)).toThrow(/regressed between this operation/);
+
+    // The file is byte-identical to what the advance found: not rewritten, and
+    // pair B's stale high-water was never endorsed by this operation.
+    expect(readFileSync(path, "utf8")).toBe(asReplaced);
+    // ...and pair A was NOT advanced either — no partial write.
+    expect(readWitness(path).witness[`${PAIR_A}/A->B`]).toEqual(flat(5 * 2));
+  });
+
+  it("a DELETED unrelated entry is caught", () => {
+    const path = join(dir, "witness.json");
+    writeWitness(path, { [`${PAIR_A}/A->B`]: flat(10), [`${PAIR_B}/A->B`]: flat(20) });
+    const S = snapshotOf(path);
+    writeWitness(path, { [`${PAIR_A}/A->B`]: flat(10) }); // B vanished
+    expect(() => advanceWitness(path, PAIR_A, "A->B", flat(11), S, 200)).toThrow(/has disappeared/);
+  });
+
+  it("ONE counter lowered is caught — including attemptsReserved alone", () => {
+    const path = join(dir, "witness.json");
+    const full = { encryptionNextOffset: 20, authenticationNextSequence: 20, attemptsReserved: 20 };
+    for (const field of ["encryptionNextOffset", "authenticationNextSequence", "attemptsReserved"] as const) {
+      writeWitness(path, { [`${PAIR_A}/A->B`]: flat(10), [`${PAIR_B}/A->B`]: { ...full } });
+      const S = snapshotOf(path);
+      // Exactly one counter of an UNRELATED pair goes backwards by one.
+      writeWitness(path, { [`${PAIR_A}/A->B`]: flat(10), [`${PAIR_B}/A->B`]: { ...full, [field]: 19 } });
+      expect(
+        () => advanceWitness(path, PAIR_A, "A->B", flat(11), S, 200),
+        `${field} lowered must be caught`
+      ).toThrow(new RegExp(`${field} fell from 20 to 19`));
+    }
+  });
+
+  it("legitimate concurrent FORWARD progress is accepted, not rejected", () => {
+    // The rule is componentwise >=, never byte equality: equality would reject
+    // exactly the concurrency the witness lock exists to make safe.
+    const path = join(dir, "witness.json");
+    writeWitness(path, { [`${PAIR_A}/A->B`]: flat(10), [`${PAIR_B}/A->B`]: flat(20) });
+    const S = snapshotOf(path);
+
+    // Another pair advanced while this operation was committing.
+    writeWitness(path, { [`${PAIR_A}/A->B`]: flat(10), [`${PAIR_B}/A->B`]: flat(25) });
+    advanceWitness(path, PAIR_A, "A->B", flat(11), S, 200);
+
+    // Both survive: ours advanced, theirs kept its newer value.
+    expect(readWitness(path).witness).toEqual({
+      [`${PAIR_A}/A->B`]: flat(11),
+      [`${PAIR_B}/A->B`]: flat(25)
+    });
+  });
+
+  it("a key that appeared since the snapshot is fine — only keys IN the snapshot are constrained", () => {
+    const path = join(dir, "witness.json");
+    writeWitness(path, { [`${PAIR_A}/A->B`]: flat(10) });
+    const S = snapshotOf(path);
+    writeWitness(path, { [`${PAIR_A}/A->B`]: flat(10), [`${PAIR_B}/B->A`]: flat(1) });
+    advanceWitness(path, PAIR_A, "A->B", flat(11), S, 200);
+    expect(readWitness(path).witness).toEqual({
+      [`${PAIR_A}/A->B`]: flat(11),
+      [`${PAIR_B}/B->A`]: flat(1)
+    });
+  });
+
+  it("the cross-pair property: every key in S stays >= S, and the requested advance is represented", () => {
+    // Over both directions of both pairs, several interleavings, all three
+    // counters pinned.
+    const keys = [`${PAIR_A}/A->B`, `${PAIR_A}/B->A`, `${PAIR_B}/A->B`, `${PAIR_B}/B->A`];
+    for (const [i, mover] of keys.entries()) {
+      const path = join(dir, `w${i}.json`);
+      const base: Record<string, Entry> = {
+        [keys[0]]: { encryptionNextOffset: 4, authenticationNextSequence: 2, attemptsReserved: 7 },
+        [keys[1]]: { encryptionNextOffset: 9, authenticationNextSequence: 5, attemptsReserved: 1 },
+        [keys[2]]: { encryptionNextOffset: 2, authenticationNextSequence: 8, attemptsReserved: 3 },
+        [keys[3]]: { encryptionNextOffset: 6, authenticationNextSequence: 1, attemptsReserved: 9 }
+      };
+      writeWitness(path, base);
+      const S = snapshotOf(path);
+
+      // Someone else moved a DIFFERENT key forward, on one counter only.
+      const other = keys[(i + 1) % keys.length];
+      const concurrent = { ...base, [other]: { ...base[other], attemptsReserved: base[other].attemptsReserved + 3 } };
+      writeWitness(path, concurrent);
+
+      const target = { encryptionNextOffset: 50, authenticationNextSequence: 51, attemptsReserved: 52 };
+      const [pairId, direction] = mover.split("/");
+      advanceWitness(path, pairId, direction as "A->B" | "B->A", target, S, 200);
+
+      const after = readWitness(path).witness;
+      for (const k of keys) {
+        // every key in S survives, at or above S
+        expect(after[k].encryptionNextOffset).toBeGreaterThanOrEqual(S.entries[k].encryptionNextOffset);
+        expect(after[k].authenticationNextSequence).toBeGreaterThanOrEqual(S.entries[k].authenticationNextSequence);
+        expect(after[k].attemptsReserved).toBeGreaterThanOrEqual(S.entries[k].attemptsReserved);
+      }
+      // the requested advance is represented
+      expect(after[mover]).toEqual(target);
+      // the concurrent forward move was not lost
+      expect(after[other].attemptsReserved).toBe(concurrent[other].attemptsReserved);
+    }
+  });
+
+  it("a witness truncated or corrupted between preflight and advance is refused, not adopted", () => {
+    const path = join(dir, "witness.json");
+    writeWitness(path, { [`${PAIR_A}/A->B`]: flat(10), [`${PAIR_B}/A->B`]: flat(20) });
+    const S = snapshotOf(path);
+
+    writeFileSync(path, "");
+    expect(() => advanceWitness(path, PAIR_A, "A->B", flat(11), S, 200)).toThrow(/empty/);
+    expect(readFileSync(path, "utf8")).toBe("");
+
+    writeFileSync(path, "{ not json");
+    expect(() => advanceWitness(path, PAIR_A, "A->B", flat(11), S, 200)).toThrow(/does not parse as JSON/);
+    expect(readFileSync(path, "utf8")).toBe("{ not json");
+
+    writeFileSync(path, JSON.stringify({ formatVersion: 2, witness: { bad: { encryptionNextOffset: 1 } } }));
+    expect(() => advanceWitness(path, PAIR_A, "A->B", flat(11), S, 200)).toThrow(/inconsistent/);
   });
 });
 
@@ -365,7 +542,7 @@ describe("witness path identity", () => {
 
     let thrown: unknown;
     try {
-      advanceWitness(link, PAIR_B, "A->B", flat(1), 200);
+      advanceWitness(link, PAIR_B, "A->B", flat(1), null, 200);
     } catch (error) {
       thrown = error;
     }
@@ -415,7 +592,7 @@ describe("witness path identity", () => {
     writeWitness(path, {});
     let thrown: unknown;
     try {
-      advanceWitness(path, PAIR_A, "A->B", flat(1), 200);
+      advanceWitness(path, PAIR_A, "A->B", flat(1), null, 200);
     } catch (error) {
       thrown = error;
     }
