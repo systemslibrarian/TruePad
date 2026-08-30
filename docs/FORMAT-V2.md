@@ -1661,9 +1661,28 @@ stated tradeoff, not a hidden one.
   orderly index may defer NV persistence and lose increments across power
   loss, which is the very rollback this class prevents), captures its **TPM
   Name**, proves increment access with one increment, and writes the state
-  file durably at 0600. The Name is the index's cryptographic identity: a
-  handle deleted and re-created is the same number but a different authority,
-  and TruePad fails closed rather than auto-rebinding.
+  file durably at 0600.
+
+  **Two separate protections against delete-and-recreate, and neither alone is
+  the whole story.** The **Name** is the index's cryptographic identity, so an
+  index re-created with a DIFFERENT public area or policy has a different Name
+  and fails the binding: TruePad refuses rather than auto-rebinding. But the
+  Name does not detect every redefinition — re-create an index with the SAME
+  public area and the Name is the same. What covers that case is the TPM's own
+  **monotonic-counter semantics**: a newly defined counter has
+  `TPMA_NV_WRITTEN` CLEAR and no value, and its FIRST `TPM2_NV_Increment`
+  initialises it to **the largest value any NV counter on that TPM has ever
+  had** — so a re-created counter cannot resume below its predecessor. The two
+  together are the claim; neither is stated as doing the other's work.
+
+  That same rule is why initialisation must **not** read before the first
+  increment (a fresh counter has nothing to read: `TPM2_NV_Read` returns
+  `TPM_RC_NV_UNINITIALIZED`), and why **no counter is required to start at
+  zero** — the TPM makes no such promise and this build asks for none. A
+  first-time init of an unwritten counter therefore spends two counter values,
+  one to initialise and one to confirm the increment and the byte order; an
+  already-written index spends one. Re-running init against a settled
+  authority spends **zero** and rewrites nothing.
 
   Cost, stated rather than hidden: **every witness advance is one TPM NV
   increment**. A successful `open` therefore costs two — the attempt
@@ -1683,6 +1702,16 @@ stated tradeoff, not a hidden one.
   interoperability testing, but its backing state can itself be snapshotted
   and restored, so it earns **no part** of this claim and is never called a
   monotonic authority.
+
+  **Validation status.** Implementation complete, and **tpm2-tools / swtpm
+  interoperability validated** in CI: a real emulator and real tools exercise
+  the command syntax, the `tpm2_nvreadpublic` YAML shape, NV attribute
+  rendering, raw 8-octet counter parsing, unwritten-counter behaviour, the
+  authorization model, increment semantics, Name retrieval, and the restore
+  refusal end to end. **PHYSICAL TPM HARDWARE VALIDATION HAS NOT BEEN
+  PERFORMED.** An emulator run cannot upgrade that statement, because the
+  property under test — that the counter cannot be rolled back — is exactly
+  the property an emulator does not have.
 - `"remote-monotonic"` — a service enforcing forward-only state. Same
   semantics, assumption stated (the service is honest and available),
   same `witness-unsupported` refusal in this build, plus the metadata

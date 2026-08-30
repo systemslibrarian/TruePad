@@ -534,92 +534,184 @@ export function initPlatformWitness(
   const ready = tpm.available();
   if (!ready.ok) return ready;
 
-  const pub = tpm.readPublic(index.index);
+  // ONE authority path, ONE initialization transaction. The lock is taken
+  // BEFORE the state file is even looked at, so two concurrent inits cannot
+  // both decide the authority is absent, mint two authorityIds, consume two
+  // counter values, and overwrite one another. Same fail-closed discipline as
+  // everywhere else: no pid-liveness guessing, a stale lock refuses.
+  const release = acquireWitnessLock(statePath);
+  try {
+    return initLocked(statePath, index.index, tpm);
+  } finally {
+    release();
+  }
+}
+
+function initLocked(statePath: string, nvIndex: string, tpm: TpmProvider): PlatformResult<PlatformInitResult> {
+  const pub = tpm.readPublic(nvIndex);
   if (!pub.ok) return { ok: false, message: pub.message };
   if (!pub.value.isCounter) {
     return {
       ok: false,
       message:
-        `${index.index} is not a TPM NV COUNTER (attributes: ${pub.value.attributesFriendly}). Provision a ` +
+        `${nvIndex} is not a TPM NV COUNTER (attributes: ${pub.value.attributesFriendly}). Provision a ` +
         "dedicated counter index — TruePad never defines one for you."
     };
   }
   if (pub.value.isOrderly) {
     return {
       ok: false,
-      message: `${index.index} has TPMA_NV_ORDERLY set, which defers NV persistence and can lose increments across power loss. Refused.`
+      message: `${nvIndex} has TPMA_NV_ORDERLY set, which defers NV persistence and can lose increments across power loss. Refused.`
     };
   }
   if (pub.value.sizeBytes !== 8) {
-    return { ok: false, message: `${index.index} is ${pub.value.sizeBytes} octets; a TPM NV counter must be exactly 8` };
+    return { ok: false, message: `${nvIndex} is ${pub.value.sizeBytes} octets; a TPM NV counter must be exactly 8` };
   }
 
-  const before = tpm.readCounter(index.index);
-  if (!before.ok) return { ok: false, message: before.message };
-  if (before.value >= UINT64_MAX) {
-    return { ok: false, message: `${index.index} is already at the uint64 maximum and cannot be incremented` };
-  }
-
-  const config: PlatformConfig = {
-    provider: PROVIDER_ID,
-    statePath,
-    nvIndex: index.index,
-    nvName: pub.value.name,
-    authorityId: ""
-  };
-
-  // Never overwrite a live authority. Re-running against an equivalent one is
-  // idempotent so the ceremony step is safe to repeat.
-  let existingAuthorityId: string | null = null;
+  // ---- an existing authority: adopt it, and touch NOTHING ------------------
+  let existing: PlatformWitnessState | null = null;
   try {
     statSync(statePath);
-    const existing = readState(statePath);
-    if (!existing.ok) {
+    const loaded = readState(statePath);
+    if (!loaded.ok) {
       return {
         ok: false,
-        message: `${statePath} exists and is not a valid platform witness state (${existing.message}). It is NOT overwritten; inspect it by hand.`
+        message: `${statePath} exists and is not a valid platform witness state (${loaded.message}). It is NOT overwritten; inspect it by hand.`
       };
     }
-    if (existing.value.nvIndex !== index.index || existing.value.nvName !== pub.value.name) {
-      return {
-        ok: false,
-        message:
-          `${statePath} is already bound to NV index ${existing.value.nvIndex} (Name ${existing.value.nvName}), not ` +
-          `to ${index.index} (Name ${pub.value.name}). It is NOT re-bound.`
-      };
-    }
-    if (Object.keys(existing.value.witness).length > 0) {
-      return {
-        ok: false,
-        message:
-          `${statePath} is a live platform witness recording ${Object.keys(existing.value.witness).length} entr` +
-          `${Object.keys(existing.value.witness).length === 1 ? "y" : "ies"}. It is NOT overwritten: that would ` +
-          "discard the high-water this authority exists to remember."
-      };
-    }
-    existingAuthorityId = existing.value.authorityId;
+    existing = loaded.value;
   } catch {
     /* absent: a fresh authority */
   }
 
-  // Prove increment access, and confirm the counter reads as it is documented
-  // to: exactly one more than before.
-  const bumped = tpm.increment(index.index);
+  if (existing !== null) {
+    if (existing.nvIndex !== nvIndex || existing.nvName !== pub.value.name) {
+      return {
+        ok: false,
+        message:
+          `${statePath} is already bound to NV index ${existing.nvIndex} (Name ${existing.nvName}), not to ` +
+          `${nvIndex} (Name ${pub.value.name}). It is NOT re-bound.`
+      };
+    }
+    if (Object.keys(existing.witness).length > 0) {
+      const n = Object.keys(existing.witness).length;
+      return {
+        ok: false,
+        message:
+          `${statePath} is a live platform witness recording ${n} entr${n === 1 ? "y" : "ies"}. It is NOT ` +
+          "overwritten: that would discard the high-water this authority exists to remember."
+      };
+    }
+    // TRUE idempotence. Re-running init against an authority that is already
+    // settled must consume NOTHING: no increment, no rewrite, no new
+    // authorityId. Calling something idempotent while quietly spending a
+    // hardware counter value would be a lie, and TPM counters are finite.
+    const counter = tpm.readCounter(nvIndex);
+    if (!counter.ok) {
+      return { ok: false, message: `${nvIndex} could not be read (${counter.message})` };
+    }
+    const fileAnchor = parseAnchor(existing.anchor);
+    if (fileAnchor === null) {
+      return { ok: false, message: `${statePath} has a malformed anchor` };
+    }
+    const classified = classifyAnchor(fileAnchor, counter.value);
+    if (!classified.ok) {
+      return {
+        ok: false,
+        message:
+          `${statePath} exists but its anchor and the TPM counter are not in a valid relation. ` +
+          `${classified.message} Initialization does not repair this: use the normal operational path, which ` +
+          "completes an interrupted commit, or restore the correct authority."
+      };
+    }
+    if (classified.value.kind === "prepared") {
+      return {
+        ok: false,
+        message:
+          `${statePath} holds a PREPARED commit (anchor ${fileAnchor}, TPM ${counter.value}): a previous operation ` +
+          "was interrupted between its durable state write and the TPM increment. Initialization does not complete " +
+          "it — the next ordinary operation does, under the operational protocol. Nothing was changed."
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        created: false,
+        config: {
+          provider: PROVIDER_ID,
+          statePath,
+          nvIndex,
+          nvName: pub.value.name,
+          authorityId: existing.authorityId
+        },
+        anchor: existing.anchor
+      }
+    };
+  }
+
+  // ---- a fresh authority ---------------------------------------------------
+  //
+  // TPMA_NV_WRITTEN decides how this begins, and getting it wrong made the
+  // previous build unusable on every real first use. A freshly DEFINED counter
+  // has WRITTEN CLEAR: it has NO value, and TPM2_NV_Read returns
+  // TPM_RC_NV_UNINITIALIZED. Reading first — as the previous build did — fails
+  // before the counter can ever be used. Its FIRST TPM2_NV_Increment is what
+  // initializes it, to the TPM's largest-ever NV counter value (NOT to zero:
+  // the TPM makes no such promise, and this build requires none).
+  let firstRead: bigint;
+  let increments: number;
+  if (!pub.value.isWritten) {
+    // Initialize it. No read first — there is nothing to read.
+    const init = tpm.increment(nvIndex);
+    if (!init.ok) {
+      return {
+        ok: false,
+        message:
+          `${nvIndex} is an unwritten counter and its initializing increment failed (${init.message}). ` +
+          "Initialization proves increment access before any pad depends on this authority, so this fails closed."
+      };
+    }
+    const t1 = tpm.readCounter(nvIndex);
+    if (!t1.ok) {
+      return { ok: false, message: `${nvIndex} could not be read after its initializing increment (${t1.message})` };
+    }
+    firstRead = t1.value;
+    increments = 1;
+  } else {
+    const t0 = tpm.readCounter(nvIndex);
+    if (!t0.ok) return { ok: false, message: t0.message };
+    firstRead = t0.value;
+    increments = 0;
+  }
+
+  if (firstRead >= UINT64_MAX) {
+    return { ok: false, message: `${nvIndex} is at the uint64 maximum and cannot be incremented` };
+  }
+
+  // One further CONTROLLED increment, on both branches, so the runtime
+  // confirmation survives: the value must move by exactly one. That proves
+  // increment access under this runtime AND checks the big-endian reading of
+  // the raw 8 octets against the real device, rather than trusting a documented
+  // byte order. A first-time init of an unwritten counter therefore spends TWO
+  // counter values (one to initialize, one to confirm) and a written one spends
+  // ONE. Both are acceptable: no pad material exists yet.
+  const bumped = tpm.increment(nvIndex);
   if (!bumped.ok) {
     return {
       ok: false,
       message:
-        `${index.index} could not be incremented (${bumped.message}). Initialization proves increment access before ` +
+        `${nvIndex} could not be incremented (${bumped.message}). Initialization proves increment access before ` +
         "any pad depends on this authority, so this fails closed. Check the index's authorization model."
     };
   }
-  const after = tpm.readCounter(index.index);
+  increments += 1;
+  const after = tpm.readCounter(nvIndex);
   if (!after.ok) return { ok: false, message: after.message };
-  if (after.value !== before.value + 1n) {
+  if (after.value !== firstRead + 1n) {
     return {
       ok: false,
       message:
-        `${index.index} read ${before.value} then ${after.value} across one increment, which is not a difference of ` +
+        `${nvIndex} read ${firstRead} then ${after.value} across one increment, which is not a difference of ` +
         "one. Either this is not behaving as a TPM NV counter, or the 8-octet value is not the big-endian uint64 " +
         "this build reads it as. Refused rather than anchoring a pad to a value TruePad cannot interpret."
     };
@@ -627,16 +719,22 @@ export function initPlatformWitness(
 
   // Public, random, not pad-derived. Binds a state file to a pair header so a
   // substituted file of the same shape is detected.
-  config.authorityId = existingAuthorityId ?? randomBytes(16).toString("hex");
-
+  const authorityId = randomBytes(16).toString("hex");
   writeState(statePath, {
     formatVersion: PLATFORM_STATE_VERSION,
     provider: PROVIDER_ID,
-    authorityId: config.authorityId,
-    nvIndex: config.nvIndex,
-    nvName: config.nvName,
+    authorityId,
+    nvIndex,
+    nvName: pub.value.name,
     anchor: after.value.toString(),
     witness: {}
   });
-  return { ok: true, value: { created: existingAuthorityId === null, config, anchor: after.value.toString() } };
+  return {
+    ok: true,
+    value: {
+      created: true,
+      config: { provider: PROVIDER_ID, statePath, nvIndex, nvName: pub.value.name, authorityId },
+      anchor: after.value.toString()
+    }
+  };
 }

@@ -47,50 +47,79 @@ const flat = (n: number): Entry => ({ encryptionNextOffset: n, authenticationNex
 // so no test depends on timing or on a device.
 class FakeTpm implements TpmProvider {
   readonly id = PROVIDER_ID;
+  // TCG state machine, modelled rather than approximated. A freshly DEFINED
+  // counter has TPMA_NV_WRITTEN CLEAR: it has NO value, and a read returns
+  // TPM_RC_NV_UNINITIALIZED. Its FIRST increment initializes it — to the TPM's
+  // largest-ever NV counter value, NOT to zero — and sets WRITTEN.
+  //
+  // The previous fake let an unwritten counter be read as 0, which made a real
+  // defect invisible: initialization read before its first increment and
+  // therefore failed against every freshly provisioned counter. The fake now
+  // pins the TPM's behaviour, not the behaviour that was convenient.
+  written: boolean;
   counter: bigint;
+  largestEver: bigint;
   name: string;
   isCounter = true;
   isOrderly = false;
   sizeBytes = 8;
   present = true;
   toolsAvailable = true;
-  // Crash injection: throw AFTER the hardware has actually moved, modelling a
-  // command that reports failure although the TPM incremented.
   incrementThenFail = false;
   incrementFails = false;
   readFails = false;
   increments = 0;
 
-  constructor(counter = 0n, name = NAME) {
-    this.counter = counter;
-    this.name = name;
+  constructor(opts: { written?: boolean; counter?: bigint; largestEver?: bigint; name?: string } = {}) {
+    this.written = opts.written ?? true;
+    this.counter = opts.counter ?? 0n;
+    this.largestEver = opts.largestEver ?? 40n;
+    this.name = opts.name ?? NAME;
   }
   available(): TpmResult<null> {
     return this.toolsAvailable ? { ok: true, value: null } : { ok: false, message: "tpm2-tools not installed" };
   }
   readPublic(): TpmResult<NvPublic> {
     if (!this.present) return { ok: false, message: "no NV index" };
+    const flags = [
+      "authread",
+      "authwrite",
+      this.isCounter ? "nt=0x1" : "nt=0x0",
+      ...(this.isOrderly ? ["orderly"] : []),
+      ...(this.written ? ["written"] : [])
+    ].join("|");
     return {
       ok: true,
       value: {
         name: this.name,
         isCounter: this.isCounter,
         isOrderly: this.isOrderly,
+        isWritten: this.written,
         sizeBytes: this.sizeBytes,
-        attributesFriendly: this.isCounter ? "authread|authwrite|written|nt=0x1" : "ownerread|ownerwrite|nt=0x0"
+        attributesFriendly: flags
       }
     };
   }
   readCounter(): TpmResult<bigint> {
     if (!this.present) return { ok: false, message: "no NV index" };
     if (this.readFails) return { ok: false, message: "TPM unreachable" };
+    if (!this.written) {
+      return { ok: false, message: "tpm:error(2.0): TPM_RC_NV_UNINITIALIZED" };
+    }
     return { ok: true, value: this.counter };
   }
   increment(): TpmResult<null> {
     if (!this.present) return { ok: false, message: "no NV index" };
     if (this.incrementFails) return { ok: false, message: "TPM unreachable" };
-    this.counter += 1n;
     this.increments += 1;
+    if (!this.written) {
+      // First increment initializes to the largest value any counter on this
+      // TPM has ever had, which is why a fresh counter need not start at zero.
+      this.written = true;
+      this.counter = this.largestEver + 1n;
+    } else {
+      this.counter += 1n;
+    }
     if (this.incrementThenFail) return { ok: false, message: "command reported failure after the TPM moved" };
     return { ok: true, value: null };
   }
@@ -120,7 +149,7 @@ function initialised(tpm: FakeTpm): PlatformConfig {
 
 describe("TPM NV index requirements", () => {
   it("adopts a valid non-orderly 8-octet COUNTER, proving increment access", () => {
-    const tpm = new FakeTpm(41n);
+    const tpm = new FakeTpm({ counter: 41n });
     const result = initPlatformWitness(statePath, NV, tpm);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -143,7 +172,7 @@ describe("TPM NV index requirements", () => {
   });
 
   it("refuses an ORDERLY counter — deferred NV persistence can lose increments", () => {
-    const tpm = new FakeTpm(1n);
+    const tpm = new FakeTpm({ counter: 1n });
     tpm.isOrderly = true;
     const result = initPlatformWitness(statePath, NV, tpm);
     expect(result.ok).toBe(false);
@@ -152,7 +181,7 @@ describe("TPM NV index requirements", () => {
   });
 
   it("refuses an ordinary (non-counter) index — holding an integer is not being monotonic", () => {
-    const tpm = new FakeTpm(1n);
+    const tpm = new FakeTpm({ counter: 1n });
     tpm.isCounter = false;
     const result = initPlatformWitness(statePath, NV, tpm);
     expect(result.ok).toBe(false);
@@ -160,7 +189,7 @@ describe("TPM NV index requirements", () => {
   });
 
   it("refuses a wrong-size index", () => {
-    const tpm = new FakeTpm(1n);
+    const tpm = new FakeTpm({ counter: 1n });
     tpm.sizeBytes = 32;
     const result = initPlatformWitness(statePath, NV, tpm);
     expect(result.ok).toBe(false);
@@ -168,10 +197,10 @@ describe("TPM NV index requirements", () => {
   });
 
   it("refuses when the tools or the index are absent", () => {
-    const noTools = new FakeTpm(1n);
+    const noTools = new FakeTpm({ counter: 1n });
     noTools.toolsAvailable = false;
     expect(initPlatformWitness(statePath, NV, noTools).ok).toBe(false);
-    const noIndex = new FakeTpm(1n);
+    const noIndex = new FakeTpm({ counter: 1n });
     noIndex.present = false;
     expect(initPlatformWitness(statePath, NV, noIndex).ok).toBe(false);
   });
@@ -180,7 +209,7 @@ describe("TPM NV index requirements", () => {
     // Init reads, increments, reads. If the 8 octets are not the big-endian
     // uint64 this build parses, the difference will not be one, and the
     // authority is refused rather than anchored to a value it cannot interpret.
-    const tpm = new FakeTpm(10n);
+    const tpm = new FakeTpm({ counter: 10n });
     const realIncrement = tpm.increment.bind(tpm);
     tpm.increment = () => {
       const r = realIncrement();
@@ -192,8 +221,78 @@ describe("TPM NV index requirements", () => {
     if (!result.ok) expect(result.message).toMatch(/not a difference of one|big-endian/);
   });
 
+  it("a FRESHLY DEFINED (unwritten) counter initializes — the read-first bug", () => {
+    // A newly defined TPM_NT_COUNTER has TPMA_NV_WRITTEN CLEAR, no value, and
+    // TPM2_NV_Read returns TPM_RC_NV_UNINITIALIZED. Reading before the first
+    // increment therefore failed against EVERY freshly provisioned counter —
+    // the feature was unusable on first real use. Init must initialize it.
+    const tpm = new FakeTpm({ written: false, largestEver: 40n });
+    expect(tpm.readCounter().ok).toBe(false); // nothing to read yet
+
+    const result = initPlatformWitness(statePath, NV, tpm);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Two values: one to initialize the counter, one to confirm the increment
+    // and the byte order. No pad material exists yet.
+    expect(tpm.increments).toBe(2);
+    expect(tpm.written).toBe(true);
+    // A fresh counter starts at the TPM's largest-ever NV counter value, NOT
+    // at zero, and the anchor simply records whatever it actually reads.
+    expect(result.value.anchor).toBe("42");
+    expect(BigInt(readState().anchor)).toBe(tpm.counter);
+  });
+
+  it("an ALREADY-WRITTEN counter costs one value, and never has to start at zero", () => {
+    const tpm = new FakeTpm({ written: true, counter: 9_000_000_000_000n });
+    const result = initPlatformWitness(statePath, NV, tpm);
+    expect(result.ok).toBe(true);
+    expect(tpm.increments).toBe(1);
+    if (result.ok) expect(result.value.anchor).toBe("9000000000001");
+  });
+
+  it("repeat init consumes ZERO counter values and rewrites nothing", () => {
+    // "Idempotent" must be true, not decorative: TPM counter values are finite,
+    // and spending one silently on a no-op is a lie about the cost.
+    const tpm = new FakeTpm({ written: false });
+    const first = initPlatformWitness(statePath, NV, tpm);
+    expect(first.ok).toBe(true);
+    const bytesBefore = readFileSync(statePath, "utf8");
+    const counterBefore = tpm.counter;
+    const incrementsBefore = tpm.increments;
+
+    const again = initPlatformWitness(statePath, NV, tpm);
+    expect(again.ok).toBe(true);
+    if (again.ok && first.ok) {
+      expect(again.value.created).toBe(false);
+      expect(again.value.config.authorityId).toBe(first.value.config.authorityId);
+      expect(again.value.anchor).toBe(first.value.anchor);
+    }
+    expect(tpm.increments).toBe(incrementsBefore); // ZERO consumed
+    expect(tpm.counter).toBe(counterBefore);
+    expect(readFileSync(statePath, "utf8")).toBe(bytesBefore); // byte-identical
+  });
+
+  it("re-init refuses when the anchor and the TPM are not in a valid relation", () => {
+    const tpm = new FakeTpm({ written: true, counter: 500n });
+    initialised(tpm);
+    const state = readState();
+    // Behind: a restored state file. Init does not repair it.
+    writeFileSync(statePath, JSON.stringify({ ...state, anchor: "3" }));
+    const behind = initPlatformWitness(statePath, NV, tpm);
+    expect(behind.ok).toBe(false);
+    if (!behind.ok) expect(behind.message).toMatch(/not in a valid relation|BEHIND/);
+
+    // Prepared: init does NOT complete an interrupted commit; the operational
+    // path does, under the protocol that knows the output was withheld.
+    writeFileSync(statePath, JSON.stringify({ ...state, anchor: (tpm.counter + 1n).toString() }));
+    const prepared = initPlatformWitness(statePath, NV, tpm);
+    expect(prepared.ok).toBe(false);
+    if (!prepared.ok) expect(prepared.message).toMatch(/PREPARED commit/);
+    expect(tpm.increments).toBe(1); // still only the original init's
+  });
+
   it("never overwrites a live authority, and is idempotent on an equivalent one", () => {
-    const tpm = new FakeTpm(0n);
+    const tpm = new FakeTpm({ counter: 0n });
     const config = initialised(tpm);
     // A second init against the same authority is a no-op success.
     const again = initPlatformWitness(statePath, NV, tpm);
@@ -215,7 +314,7 @@ describe("TPM NV index requirements", () => {
 
 describe("NV Name binding", () => {
   it("same handle, same Name is accepted; a DIFFERENT Name fails closed and is never auto-rebound", () => {
-    const tpm = new FakeTpm(5n);
+    const tpm = new FakeTpm({ counter: 5n });
     const config = initialised(tpm);
     expect(platformPreflight(config, PAIR_A, "A->B", tpm).ok).toBe(true);
 
@@ -230,14 +329,14 @@ describe("NV Name binding", () => {
   });
 
   it("a deleted index fails closed", () => {
-    const tpm = new FakeTpm(5n);
+    const tpm = new FakeTpm({ counter: 5n });
     const config = initialised(tpm);
     tpm.present = false;
     expect(platformPreflight(config, PAIR_A, "A->B", tpm).ok).toBe(false);
   });
 
   it("ORDERLY appearing later fails closed", () => {
-    const tpm = new FakeTpm(5n);
+    const tpm = new FakeTpm({ counter: 5n });
     const config = initialised(tpm);
     tpm.isOrderly = true;
     const result = platformPreflight(config, PAIR_A, "A->B", tpm);
@@ -278,7 +377,7 @@ describe("anchor relation", () => {
 
 describe("the restore attack separate-state-file cannot close", () => {
   it("old pair + old state file restored together is REFUSED before anything is consumed", () => {
-    const tpm = new FakeTpm(100n);
+    const tpm = new FakeTpm({ counter: 100n });
     const config = initialised(tpm);
 
     // 1-2. advance the pair and the witness a few times.
@@ -319,7 +418,7 @@ describe("the restore attack separate-state-file cannot close", () => {
   });
 
   it("a substituted state file of the right shape but another authority is refused", () => {
-    const tpm = new FakeTpm(50n);
+    const tpm = new FakeTpm({ counter: 50n });
     const config = initialised(tpm);
     const state = readState();
     // Same counter value, same NV index, different authorityId.
@@ -336,7 +435,7 @@ describe("the restore attack separate-state-file cannot close", () => {
 
 describe("crash matrix", () => {
   it("(C) state prepared at T+1, crash before the TPM increment → next preflight completes exactly one", () => {
-    const tpm = new FakeTpm(10n);
+    const tpm = new FakeTpm({ counter: 10n });
     const config = initialised(tpm); // T = 11
     const settled = tpm.counter;
     // Simulate the crash: the state file is durable at T+1, hardware untouched.
@@ -357,7 +456,7 @@ describe("crash matrix", () => {
   });
 
   it("(D/F) the increment lands but the command reports failure → next preflight sees F == T and proceeds", () => {
-    const tpm = new FakeTpm(20n);
+    const tpm = new FakeTpm({ counter: 20n });
     const config = initialised(tpm);
     const pre = platformPreflight(config, PAIR_A, "A->B", tpm);
     expect(pre.ok).toBe(true);
@@ -377,7 +476,7 @@ describe("crash matrix", () => {
   });
 
   it("(G) TPM unavailable after a prepared state → fail closed until it returns, then complete", () => {
-    const tpm = new FakeTpm(30n);
+    const tpm = new FakeTpm({ counter: 30n });
     const config = initialised(tpm);
     const pre = platformPreflight(config, PAIR_A, "A->B", tpm);
     expect(pre.ok).toBe(true);
@@ -400,7 +499,7 @@ describe("crash matrix", () => {
   });
 
   it("(B) a corrupt state file is refused and never repaired by guesswork", () => {
-    const tpm = new FakeTpm(40n);
+    const tpm = new FakeTpm({ counter: 40n });
     const config = initialised(tpm);
     for (const corrupt of ["", "{ not json", JSON.stringify({ formatVersion: 1 })]) {
       writeFileSync(statePath, corrupt);
@@ -411,7 +510,7 @@ describe("crash matrix", () => {
   });
 
   it("(H/I) an anchor behind by one, and ahead by two, both fail closed", () => {
-    const tpm = new FakeTpm(60n);
+    const tpm = new FakeTpm({ counter: 60n });
     const config = initialised(tpm);
     const base = readState();
 
@@ -431,7 +530,7 @@ describe("crash matrix", () => {
 
 describe("multi-pair over one TPM authority", () => {
   it("two pairs and both directions stay monotone; the anchor moves once per advance", () => {
-    const tpm = new FakeTpm(0n);
+    const tpm = new FakeTpm({ counter: 0n });
     const config = initialised(tpm);
     const keys: [string, "A->B" | "B->A"][] = [
       [PAIR_A, "A->B"],
@@ -460,7 +559,7 @@ describe("multi-pair over one TPM authority", () => {
   });
 
   it("a stale snapshot from before another pair's advance still passes; a regression does not", () => {
-    const tpm = new FakeTpm(0n);
+    const tpm = new FakeTpm({ counter: 0n });
     const config = initialised(tpm);
     const pre = platformPreflight(config, PAIR_A, "A->B", tpm);
     expect(pre.ok).toBe(true);
@@ -491,7 +590,7 @@ describe("multi-pair over one TPM authority", () => {
   });
 
   it("attemptsReserved alone can never regress", () => {
-    const tpm = new FakeTpm(0n);
+    const tpm = new FakeTpm({ counter: 0n });
     const config = initialised(tpm);
     const pre = platformPreflight(config, PAIR_A, "A->B", tpm);
     if (!pre.ok) return;
@@ -533,7 +632,7 @@ describe("counter parsing and overflow", () => {
   });
 
   it("refuses to advance past the uint64 maximum BEFORE attempting the increment", () => {
-    const tpm = new FakeTpm(UINT64_MAX - 1n);
+    const tpm = new FakeTpm({ counter: UINT64_MAX - 1n });
     const config = initialised(tpm); // consumes one: now at UINT64_MAX
     expect(tpm.counter).toBe(UINT64_MAX);
     const pre = platformPreflight(config, PAIR_A, "A->B", tpm);
@@ -613,9 +712,19 @@ describe("provider safety", () => {
       expect(parsed.value.sizeBytes).toBe(8);
       expect(parsed.value.name).toBe("000bcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd");
     }
+    expect(parsed.ok && parsed.value.isWritten).toBe(true);
     // An orderly counter, and an ordinary index, are both recognised.
     expect(parseNvPublic(yaml.replace("nt=0x1", "orderly|nt=0x1"), "0x01500016")).toMatchObject({ ok: true, value: { isOrderly: true } });
     expect(parseNvPublic(yaml.replace("nt=0x1", "nt=0x0"), "0x01500016")).toMatchObject({ ok: true, value: { isCounter: false } });
+    // tpm2-tools documents BOTH renderings of the index type: numeric `nt=0x1`
+    // and the friendly word `counter`. Both must parse, and neither may be
+    // guessed at from anything else.
+    expect(parseNvPublic(yaml.replace("nt=0x1", "counter"), "0x01500016")).toMatchObject({ ok: true, value: { isCounter: true } });
+    expect(parseNvPublic(yaml.replace("nt=0x1", "nt=1"), "0x01500016")).toMatchObject({ ok: true, value: { isCounter: true } });
+    expect(parseNvPublic(yaml.replace("nt=0x1", "ordinary"), "0x01500016")).toMatchObject({ ok: true, value: { isCounter: false } });
+    expect(parseNvPublic(yaml.replace("nt=0x1", "bits"), "0x01500016")).toMatchObject({ ok: true, value: { isCounter: false } });
+    // WRITTEN is read from the public area, never inferred from a read working.
+    expect(parseNvPublic(yaml.replace("|written", ""), "0x01500016")).toMatchObject({ ok: true, value: { isWritten: false } });
     // No name → refused rather than bound to an index with no identity.
     expect(parseNvPublic(yaml.replace(/^  name:.*$/m, ""), "0x01500016").ok).toBe(false);
     // A different index entirely → not found.
@@ -666,7 +775,7 @@ describe("open: the attempt budget reaches the authority before verification", (
 
 describe("advance failure after a durable store commit", () => {
   it("never fabricates an anchor and never falls back to a weaker class", () => {
-    const tpm = new FakeTpm(70n);
+    const tpm = new FakeTpm({ counter: 70n });
     const config = initialised(tpm);
     const pre = platformPreflight(config, PAIR_A, "A->B", tpm);
     expect(pre.ok).toBe(true);

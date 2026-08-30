@@ -451,6 +451,17 @@ Stated here rather than distributed as caveats:
   the attempt reservation and the high-water are separate security boundaries
   that are never batched. It resists RESTORE; it is **not** a claim against a
   compromised host, malicious firmware, or a subverted TPM.
+
+  Two details worth knowing before you provision. A freshly defined counter has
+  **no value**: `TPMA_NV_WRITTEN` is clear and reading it fails
+  `TPM_RC_NV_UNINITIALIZED` until its first increment, which initialises it to
+  the largest value any counter on that TPM has ever had — so **it will not
+  start at zero**, and that is correct. And re-running `init` against an
+  authority that is already settled is a true no-op: it spends no counter value
+  and rewrites nothing. If you delete and re-create the index, a *different*
+  public area gives a different Name and TruePad refuses; the *same* public
+  area gives the same Name, and what prevents a rollback there is the TPM's own
+  counter semantics, not the Name.
 - **A replaced witness is caught only inside one operation's window.** From an
   operation's preflight to its advance, the whole witness is snapshotted and
   rechecked: a key that vanished, or any of the three counters going

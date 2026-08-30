@@ -1,0 +1,49 @@
+# TPM SOFTWARE-EMULATOR INTEROPERABILITY — explicitly NOT hardware validation.
+#
+# Runs a real swtpm and real tpm2-tools against the real truepad2 CLI, because
+# the unit suite can only prove the software state machine. This job exists to
+# catch the class of defect the unit suite structurally cannot: a fake that
+# models convenient behaviour instead of the TPM's. The freshly-defined counter
+# is the example — TPMA_NV_WRITTEN is CLEAR, reads fail NV_UNINITIALIZED, and a
+# fake that returned 0 hid an initialization path that could never have worked.
+#
+# What a green run means: command syntax, TCTI setup, nvreadpublic YAML shape,
+# NV attribute rendering, raw 8-octet counter parsing, unwritten-counter
+# behaviour, authorization model, increment semantics, and Name retrieval all
+# match what this build assumes.
+#
+# What it does NOT mean: hardware rollback resistance. swtpm's backing state is
+# a directory that can be snapshotted and restored, so it earns no part of the
+# monotonicity claim. PHYSICAL TPM HARDWARE VALIDATION REMAINS PENDING.
+name: TPM emulator interoperability
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  swtpm-interop:
+    name: swtpm + tpm2-tools interoperability (NOT hardware validation)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install swtpm and tpm2-tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y swtpm swtpm-tools tpm2-tools xxd
+          echo "--- versions ---"
+          swtpm --version
+          tpm2_nvreadpublic --version
+
+      - name: Run the TPM interoperability suite
+        run: bash scripts/tpm-interop.sh

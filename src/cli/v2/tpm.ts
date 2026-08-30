@@ -97,6 +97,13 @@ export type NvPublic = {
   name: string; // the TPM Name, lowercase hex — the index's cryptographic identity
   isCounter: boolean;
   isOrderly: boolean;
+  // TPMA_NV_WRITTEN. A freshly DEFINED counter has this CLEAR: it has no value
+  // yet, and TPM2_NV_Read returns TPM_RC_NV_UNINITIALIZED. Its FIRST
+  // TPM2_NV_Increment initializes it — to the TPM's largest-ever NV counter
+  // value, not to zero — and sets WRITTEN. Read from the PUBLIC AREA, never
+  // inferred from whether a read happened to succeed: inferring it would
+  // conflate "new counter" with "TPM unreachable".
+  isWritten: boolean;
   sizeBytes: number;
   attributesFriendly: string;
 };
@@ -221,17 +228,22 @@ export function parseNvPublic(yaml: string, nvIndex: string): TpmResult<NvPublic
     return { ok: false, message: `tpm2_nvreadpublic gave no attributes for ${nvIndex} — refusing to adopt an index whose attributes cannot be read` };
   }
   const flags = friendly.split("|").map((f) => f.trim().toLowerCase());
-  // TPM_NT_COUNTER is nt=0x1. Anything else — ordinary (nt=0x0), bits, extend,
-  // pin pass/fail — is NOT a counter and must never be treated as one just
-  // because it happens to hold an integer.
+  // The index TYPE. tpm2-tools renders it EITHER numerically (`nt=0x1`) or as
+  // a friendly word (`counter`), and both are documented valid forms, so both
+  // are accepted — but nothing else is. Ordinary (nt=0x0), bits, extend, and
+  // pinfail/pinpass are NOT counters and are never treated as one just because
+  // they happen to hold an integer.
   const nt = flags.find((f) => f.startsWith("nt="));
-  const isCounter = nt !== undefined && /^nt=(0x)?0*1$/.test(nt);
+  const isCounter = nt !== undefined ? /^nt=(0x)?0*1$/.test(nt) : flags.includes("counter");
   return {
     ok: true,
     value: {
       name: name.toLowerCase(),
       isCounter,
       isOrderly: flags.includes("orderly"),
+      // Friendly names are the TPMA_NV_ prefix stripped and lowercased, so
+      // TPMA_NV_WRITTEN is exactly `written`.
+      isWritten: flags.includes("written"),
       sizeBytes: Number.parseInt(sizeRaw, 10),
       attributesFriendly: friendly
     }
