@@ -210,6 +210,28 @@ cloud storage and encrypted messengers **do not preserve that claim**; they may
 be computationally secure ways to move a file, which is a *different*
 guarantee, not a weaker form of the same one.
 
+#### Sealed Pad Transfer — SPECIFIED, NOT IMPLEMENTED
+
+`docs/SEALED-PAD-TRANSFER.md` specifies a future **Sealed Pad Transfer v1**:
+online pad delivery under a hybrid post-quantum/traditional KEM, with two human
+verification ceremonies. **No code implements it, and no product screen offers
+it.** It is recorded here only to reserve the distinction before it can be
+blurred:
+
+| | Physical exchange | Sealed Pad Transfer |
+| --- | --- | --- |
+| Delivery claim | can support the conditional **information-theoretic** path | **computational** — X25519 + ML-KEM-768, HKDF-SHA-256, AES-256-GCM |
+| Harvest-now-decrypt-later | no exposure from delivery | an archived package is attackable later; breaking it yields the pad, and the pad yields every archived message it protected |
+| Status | **shipped** | **specified, not implemented** |
+
+The point of the row is the middle one. Sealing an information-theoretic cipher's
+key material inside a computational envelope produces a **computational**
+deployment: the OTP theorem and the Wegman–Carter bound are unchanged, but the
+end-to-end claim is only ever as strong as how the pad travelled. That is why
+physical handoff stays first-class rather than becoming the inconvenient option,
+and why the sentence *"the messages use OTP"* will never be allowed to stand in
+for *"the pad was delivered safely"*.
+
 ### The source claim and the platform claim are independent
 
 Choosing the external ceremony does **not** give the Browser Edition any of the
