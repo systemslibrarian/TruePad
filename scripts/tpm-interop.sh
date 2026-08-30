@@ -90,7 +90,16 @@ echo "  (anchor=$ANCHOR — note a fresh counter need NOT start at zero)"
 
 # --- 6. repeat init is a TRUE no-op -----------------------------------------
 BYTES_BEFORE="$(cat "$STATE")"; T_BEFORE="$T"
-truepad2 witness platform init "$STATE" --nv-index "$NV_COUNTER" >/dev/null 2>&1
+set +e
+REINIT_OUT="$(truepad2 witness platform init "$STATE" --nv-index "$NV_COUNTER" 2>&1)"
+REINIT_CODE=$?
+set -e
+if [[ $REINIT_CODE -ne 0 ]]; then
+  bad "repeat init exited $REINIT_CODE"
+  echo "--- repeat init output ---"; echo "$REINIT_OUT"; echo "-------------------------"
+else
+  ok "repeat init succeeded"
+fi
 T_AFTER="$(tpm_counter "$NV_COUNTER")"
 check "repeat init consumes ZERO counter values" "$T_AFTER" "$T_BEFORE"
 if [[ "$(cat "$STATE")" == "$BYTES_BEFORE" ]]; then ok "repeat init leaves the state byte-identical"; else bad "repeat init rewrote the state"; fi
@@ -98,11 +107,15 @@ if [[ "$(cat "$STATE")" == "$BYTES_BEFORE" ]]; then ok "repeat init leaves the s
 # --- 7-9. a real platform-monotonic pair, and a burn ------------------------
 PAIR="$WORK/pair"; SRC="$WORK/src.bin"
 head -c 200000 /dev/urandom > "$SRC"
-truepad2 gen "$PAIR" --source "$SRC" --encryption-bytes 512 --auth-records 8 \
-  --witness-class platform-monotonic --witness-path "$STATE" >/dev/null
-ok "gen created a platform-monotonic pair bound to the TPM authority"
+set +e
+GEN_OUT="$(truepad2 gen "$PAIR" --source "$SRC" --encryption-bytes 512 --auth-records 8 \
+  --witness-class platform-monotonic --witness-path "$STATE" 2>&1)"
+GEN_CODE=$?
+set -e
+if [[ $GEN_CODE -eq 0 ]]; then ok "gen created a platform-monotonic pair bound to the TPM authority"; else bad "gen exited $GEN_CODE"; echo "$GEN_OUT" | tail -3; fi
 T_PRE="$(tpm_counter "$NV_COUNTER")"
-ENV_LINE="$(truepad2 burn "$PAIR" --as A "interop" 2>/dev/null)"
+set +e; ENV_LINE="$(truepad2 burn "$PAIR" --as A "interop" 2>"$WORK/burn.err")"; BURN_CODE=$?; set -e
+if [[ $BURN_CODE -ne 0 ]]; then bad "burn exited $BURN_CODE"; tail -3 "$WORK/burn.err"; fi
 T_POST="$(tpm_counter "$NV_COUNTER")"
 if [[ -n "$ENV_LINE" ]]; then ok "burn emitted an envelope"; else bad "burn emitted nothing"; fi
 check "burn advanced the TPM anchor by exactly one" "$T_POST" "$((T_PRE+1))"
