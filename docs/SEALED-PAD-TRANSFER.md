@@ -746,7 +746,7 @@ Now the adversarial cases §4 requires:
 | Mallory sends **many** candidate packages | Each is one online trial at 2⁻⁸⁸. Bob opens one at a time, reads its words, and they mismatch. Nothing accumulates: distinct packages give independent `ss`, so this is sampling, not grinding |
 | Mallory **hears Bob read first** | Bob's words are for the package Bob opened. If that is Mallory's, Mallory already knows them; if it is Alice's, Mallory cannot have produced them. Hearing them yields no search target |
 | **Alice does not reveal on mismatch** | Normative: on mismatch Alice's words stay masked and the transfer is abandoned. Mallory learns one bit ("wrong"), not 88 |
-| **Retries / abandoned attempts** | Alice's target is **fixed for the life of the request** — §10.5 stores one package and never re-encapsulates. The argument therefore does **not** rest on a moving target; it rests on the target never being spoken into a round that survives. That is what makes rejection **terminal** (§10.1): once Alice's words are said aloud, the round ends one way or the other |
+| **Retries / abandoned attempts** | Alice's target is **fixed for the life of the request**, and two records make that true: §10.5.1 binds the request to one pad, so Alice cannot reach for a fresh pad and open a second round, and §10.9 stores one package for that pad and never re-encapsulates. The argument therefore does **not** rest on a moving target; it rests on the target never being spoken into a round that survives. That is what makes rejection **terminal** (§10.1): once Alice's words are said aloud, the round ends one way or the other. **The per-pad record alone would not carry this** — a fresh pad has no handoff of its own, and Bob's rejection is invisible to Alice |
 | **Observable but authenticated side channel** | Covered by receiver-first: an eavesdropper hears committed values, never a target to grind |
 | **Malicious package ordering** | Mallory racing his package in first only means Bob opens Mallory's and reads *its* words; Alice's then mismatch and the transfer is **abandoned terminally**. Ordering buys no advantage, and the rejected session cannot be committed afterwards |
 
@@ -1111,9 +1111,13 @@ attempt. **It is not the durable handoff authority.** A crash here, before
 `handoff.json` exists, means no package escaped; the pre-commit staging may be
 cleaned and the attempt retried (§10.9.1).
 
-**C. Durable handoff state — the presence or absence of `handoff.json`.** This,
-and nothing else, is what says whether the pad's one handoff is spent. For a
-sealed handoff the durable data is three files (§10.9):
+**C. Durable REQUEST state — the presence or absence of a claim.** A receive
+request is bound to one pair, permanently, by a record outside every pair
+directory (§10.5.1). This is what stops one request acquiring two packages.
+
+**D. Durable PAD state — the presence or absence of `handoff.json`.** This is
+what says whether the pad's one handoff is spent. For a sealed handoff the
+durable data is three files (§10.9):
 
 ```
 <pairId>/handoff.json          permanent commit marker — hashes and metadata
@@ -1130,16 +1134,103 @@ The marker holds **hashes**, not the package and not the confirmation value.
 Ordering, under the pad lock (§10.10.1) and the request-scoped sender lock:
 
 1. **acquire the locks**;
-2. **read the durable handoff state** inside them;
+2. **read the durable PAD state** inside them;
 3. if a **valid sealed marker** exists → this request may only be **re-shared**:
    if `marker.requestHash` matches, return the **exact committed package and
    confirmation**; if it differs, refuse. **Never encapsulate again.**
 4. if a **physical marker** or an **unreadable marker** exists → refuse;
-5. if **absent** and the request is `CONFIRMED` → encapsulate **once**, build the
-   package, and commit it by the marker-last transaction of §10.9.1;
-6. **only after that commit succeeds** may any package byte be released to the
+5. if **absent** and the request is `CONFIRMED` → **claim the request for this
+   pair** (§10.5.1). This is refused if the request is already bound to another
+   pair, or if its binding cannot be read;
+6. only then encapsulate **once**, build the package, and commit it by the
+   marker-last transaction of §10.9.1;
+7. **only after that commit succeeds** may any package byte be released to the
    UI;
-7. a concurrent caller waits on the lock and receives the **same stored package**.
+8. a concurrent caller waits on the lock and receives the **same stored package**.
+
+### 10.5.1 One request → one package, across pads
+
+Step 5 exists because steps 2–4 cannot see the failure they most need to.
+
+> Bob creates receive request `R`. Alice confirms `R`. Alice seals pad **P** to
+> `R`, and `P/handoff.json` commits. Later Alice selects a **fresh** pad **Q**,
+> still holding her confirmation of `R`. `Q/handoff.json` is **absent** — the
+> pad gate has nothing to say about `R` — and the `"spt-send:" ‖ requestHash`
+> lock was released when the first seal returned. **A second independent X-Wing
+> package for `R`.**
+
+The pad gate is keyed by `pairId` and protects the pad; the pad is the thing
+being varied here, so it is structurally blind to this. Locks cannot help
+either: **mutual exclusion is not one-shot-ness**, and a lock released at the
+end of the first seal is available for the second.
+
+This is **not** a two-time pad — `R` holds one `dk` and one compare-and-set, so
+only one package can ever be committed. It costs three other things: pad **P**
+is permanently handed off and reached nobody; Bob holds two valid packages with
+two different confirmation codes and no basis to choose; and §8.2.1's premise
+that "Alice's target is fixed for the life of the request" becomes false, since
+Alice can open a second round that Bob's terminal rejection cannot prevent —
+she cannot see it.
+
+So there are **two durable gates, protecting two different things, and neither
+implies the other**:
+
+| Record | Keyed by | Protects |
+| --- | --- | --- |
+| `<pairId>/handoff.json` | `pairId` | one pad, one handoff |
+| `spt/claims/<requestHash>.json` | `requestHash` | one request, one package |
+
+The claim deliberately lives **outside every pair directory**, because a per-pad
+location could not observe a collision between pads.
+
+**Frozen record**, same discipline as §10.9's marker — canonical JSON, frozen
+property order, and a strict reader that refuses a non-object, a wrong version,
+a missing or extra field, a bad `pairId`, a non-canonical timestamp, malformed
+or non-canonically spelled base64url, a wrong decoded size, and a record naming
+a request other than the one whose path it was read from:
+
+```
+{ "version":1, "requestHash", "pairId", "at" }
+```
+
+**CLAIMED IS NOT CONSUMED.** Between the claim landing and that pad's handoff
+committing, the request is **PERMANENTLY CLAIMED / BOUND TO THAT PAIR**. It is
+not "consumed" and not "spent" — those words belong to the handoff, and using
+them here would describe the wrong thing:
+
+| State | Retry `R → P` | Retry `R → Q` |
+| --- | --- | --- |
+| claim exists, `P/handoff.json` **absent**, nothing released | **ALLOWED** — the resumption of that same attempt, and the only circumstance in which a new encapsulation for `R` may occur at all | **REFUSED**, permanently |
+| `P/handoff.json` **committed** | **exact re-share only** — no new encapsulation by any route | **REFUSED** |
+
+Re-claiming `R → P` returns the existing binding untouched, so the recorded time
+stays that of the **first** binding.
+
+**Frozen write order**, and it is not free to choose:
+
+```
+1. durable request claim  R → P
+2. X-Wing encapsulation and package construction
+3. durable P/handoff.json  (marker-last, §10.9.1)
+4. only then may a package or confirmation be released
+```
+
+A crash after (1) and before (3) strands `R` on `P` and **does not burn P**: the
+pad's handoff is still absent, so the same `P`/`R` attempt resumes. The reverse
+order would spend a pad and leave the request open — which is the defect above
+arriving by a different door. The cheapest failure is the one that loses a
+request round rather than a pad.
+
+**A torn claim fails closed FOR THE REQUEST.** A claim file that exists and
+cannot be validated means `R` is bound to something unreadable: no pad may be
+sealed to it, by anyone. It is never deleted and never repaired, and it does
+**not** burn the pad — that pad remains usable for a different request.
+
+**The storage layer enforces the order rather than trusting it.**
+`commitSealedHandoff` refuses unless the request is already bound to *this*
+pair, so a later mistake in the product layer cannot produce a second package.
+The pad's own gate is still checked **first**, so that an unreadable
+`handoff.json` can never be masked by another condition.
 
 **If persistence fails before release, no package leaves the worker.** The
 alternative — releasing bytes that were never recorded — is how Alice ends up
@@ -1910,6 +2001,10 @@ TruePad** and is not addressed by this protocol.
 | 51 | Crash between the sealed package and the handoff marker | **Safe** — the marker is written LAST and is the commit point; staging without a marker was never released, so it is discarded and retried | §10.9.1 | The Phase-0.6 "one atomic replace" model was withdrawn: `OpfsVfs.writeFileAtomic()` is atomic only where `move()` works |
 | 53 | Crash DURING the marker's own non-atomic write | **Refused thereafter** — a marker that exists and cannot be read is `HANDOFF-SPENT / UNREADABLE`, never absence | §10.9.2 | A torn marker may cost the handoff. It never reopens the pad |
 | 54 | **Imported pad re-exported physically** to a third party | **Refused** — `imported` may not export onward, not only may not seal | §10.7.1 | The walking-pace twin of #41. Gating sealing alone left it open |
+| 56 | **Alice seals a FRESH pad Q to a request R already sealed with pad P** | **Refused** — `R` is permanently bound to `P`; `Q`'s own handoff being absent is irrelevant | §10.5.1 request claim | The pad gate is keyed by `pairId` and is structurally blind to this; the `spt-send:R` lock is released after the first seal, and mutual exclusion is not one-shot-ness. **Not** a two-time pad — `R` has one `dk` and one CAS — but it burns `P` for nothing and gives Bob two confirmation codes |
+| 57 | Alice retries the SAME pad for a request whose seal was interrupted before the handoff committed | **Allowed** — the binding is idempotent for that pair, and no package was released | §10.5.1 | CLAIMED is not consumed. This is the only circumstance in which a new encapsulation for `R` may occur |
+| 58 | Torn request claim | **Refused for that request** — `R` is bound to something unreadable and no pad may be sealed to it | §10.5.1 | Fails closed on the request without burning the pad, which stays usable for a different request |
+| 59 | Product layer forgets to claim before committing | **Refused** — `commitSealedHandoff` requires the binding | §10.5.1 | The write order is structural, not a convention |
 | 55 | Corrupt marker deleted to "unstick" the pad | **Never automatic** — no code path deletes `handoff.json`, and the refusal does not suggest it | §10.9.2, §10.9.4 | Deleting it is exactly what turns a lost handoff into a reused pad |
 | 52 | Stale tab commits after the operator rejected in another tab | **Refused** — `CANCELLED` is written durably before any acknowledgement, and `commitReceive` re-checks | §10.10.3 | Correctness rests on durable state, never on a `BroadcastChannel` notice |
 
@@ -2206,6 +2301,14 @@ seal(body, pairId):                                 # WORKER
         require sender state for requestHash == CONFIRMED
         mark SEALING                                # transient; not the authority
 
+        # STEP 1 OF THE FROZEN WRITE ORDER (§10.5.1). Bind the REQUEST to this
+        # pair BEFORE anything is encapsulated. Refuses if R is already bound to
+        # another pad — which is the only gate that can see Alice reaching for a
+        # fresh pad Q for a request P already answered — or if its binding
+        # cannot be read. Re-claiming R -> P is idempotent, so an interrupted
+        # pre-handoff attempt resumes here.
+        claimRequestForPair(vfs, requestHash, pairId, at)
+
         padFileBytes ← packContainer(pairId, the six BUNDLE_FILES read here)
         require |padFileBytes| ≤ 16 777 216
     (ct_kem, ss) ← XWing.Encaps(ek from body)       # ct_kem 1120 B, ss 32 B
@@ -2223,6 +2326,9 @@ seal(body, pairId):                                 # WORKER
         # confirmation, read it back, and write handoff.json LAST. The marker
         # carries HASHES; the bytes live in their own files. Nothing is
         # released before this returns.
+        # STEP 3. commitSealedHandoff re-checks the binding itself, so the
+        # order above is structural rather than a convention this pseudocode
+        # merely describes.
         commitSealedHandoff(vfs, pairId,
             { packageBytes    = header ‖ ct ‖ tag,
               requestHash     = requestHash,

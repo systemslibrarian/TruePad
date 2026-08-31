@@ -48,10 +48,21 @@
  * All of it runs under the store's OWN pad lock, `vfs.withLock(pairId)` — never
  * a second `"spt-pad:"`-style namespace. Two lock namespaces over one pair
  * exclude nothing, which is the Phase-0.6 lesson.
+ *
+ * THE OTHER GATE
+ * --------------
+ * This module is only half the rule. It is keyed by `pairId` and protects the
+ * PAD; `request-claim.ts` is keyed by `requestHash` and protects the REQUEST.
+ * Neither implies the other, and a sender that satisfied only this one could
+ * seal a fresh pad to a request that already has a package. `commitSealedHandoff`
+ * therefore refuses unless the request is already bound to THIS pair — which
+ * also makes the frozen write order structural rather than a convention a later
+ * caller could forget.
  * ========================================================================= */
 
 import { packageIdentity } from "../../spt/sealed-package.ts";
 import { equalBytes, fromBase64Url, toBase64Url } from "../../spt/bytes.ts";
+import { requireClaimedByPair } from "./request-claim.ts";
 import { EngineRefused } from "./store.ts";
 import type { Vfs } from "./vfs.ts";
 
@@ -393,10 +404,19 @@ export async function commitSealedHandoff(
     throw new EngineRefused("bad-request", `requestHash and packageIdentity must be ${HASH_BYTES} bytes`);
   }
 
-  // 1 — a handoff must not already exist, in any state.
+  // 1a — the PAD's handoff must not already exist, in any state. This is
+  // checked FIRST so that "a marker exists and cannot be read" can never be
+  // masked by another condition: existence is load-bearing, and nothing may
+  // answer ahead of it.
   const before = await readHandoffState(vfs, pairId);
   const refusal = refusalForNewHandoff(before);
   if (refusal !== null) throw refusal;
+
+  // 1b — and the REQUEST must already be bound to THIS pair (request-claim.ts).
+  // Step (1) of the frozen write order runs before any encapsulation, so by the
+  // time bytes arrive here the binding exists. If it does not, the caller
+  // skipped it, and committing would be how one request acquires two packages.
+  await requireClaimedByPair(vfs, input.requestHash, pairId);
 
   // 2 — only NOW, with no marker present, are staged files provably pre-commit.
   await vfs.remove(handoffPackagePath(pairId));

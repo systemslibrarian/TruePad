@@ -1050,3 +1050,114 @@ describe("the marker readback failure is typed, and only when a record exists", 
     expect(fn).toMatch(/if \(!landed\) throw error/);
   });
 });
+
+/* ---------------------------------------------------------------------------
+ * Phase 1B.2 — one request, one package, ACROSS pads
+ * ------------------------------------------------------------------------ */
+
+describe("the request gate exists and is distinct from the pad gate", () => {
+  it("the cross-pad defect is described, not just fixed", () => {
+    expect(FLAT).toMatch(/One request → one package, across pads/);
+    expect(FLAT).toMatch(/Later Alice selects a \*\*fresh\*\* pad|Later Alice selects a fresh pad/);
+    expect(FLAT).toMatch(/the pad gate has nothing to say about `R`/);
+    // Why neither existing mechanism could catch it.
+    expect(FLAT).toMatch(/structurally blind to this/);
+    expect(FLAT).toMatch(/mutual exclusion is not one-shot-ness/);
+  });
+
+  it("names two gates, and says neither implies the other", () => {
+    expect(FLAT).toMatch(/two durable gates, protecting two different things, and neither\s*implies the other/);
+    expect(SPEC).toContain("spt/claims/<requestHash>.json");
+    expect(FLAT).toMatch(/outside every pair directory/);
+    expect(FLAT).toMatch(/a per-pad\s*location could not observe a collision between pads/);
+  });
+
+  it("does not overstate the harm", () => {
+    // It is a burned pad and a confused ceremony, NOT a two-time pad.
+    expect(FLAT).toMatch(/This is \*\*not\*\* a two-time pad|This is not a two-time pad/);
+    expect(FLAT).toMatch(/one `dk` and one compare-and-set/);
+    expect(FLAT).toMatch(/reached nobody/);
+    expect(FLAT).toMatch(/two different confirmation codes and no basis to choose/);
+  });
+
+  it("CLAIMED is not consumed and not spent", () => {
+    expect(FLAT).toMatch(/CLAIMED IS NOT CONSUMED/);
+    expect(FLAT).toMatch(/PERMANENTLY CLAIMED \/ BOUND TO THAT PAIR/);
+    expect(FLAT).toMatch(/those words belong to the handoff/);
+    // The retry semantics, both directions.
+    expect(FLAT).toMatch(/the resumption of that same attempt, and the only circumstance in which a new encapsulation for `R` may occur at all/);
+    expect(FLAT).toMatch(/exact re-share only/);
+  });
+
+  it("freezes the write order, and says why the reverse is wrong", () => {
+    expect(FLAT).toMatch(/durable request claim R → P/);
+    expect(FLAT).toMatch(/does \*\*not\*\* burn P|does not burn P/);
+    expect(FLAT).toMatch(/The reverse\s*order would spend a pad and leave the request open/);
+    expect(FLAT).toMatch(/loses a\s*request round rather than a pad/);
+  });
+
+  it("a torn claim fails closed for the REQUEST, not the pad", () => {
+    expect(FLAT).toMatch(/A torn claim fails closed FOR THE REQUEST/);
+    expect(FLAT).toMatch(/does \*\*not\*\* burn the pad|does not burn the pad/);
+    expect(FLAT).toMatch(/remains usable for a different request/);
+    expect(FLAT).toMatch(/never deleted and never repaired/);
+  });
+
+  it("§8.2.1's premise is restored, and attributed to BOTH records", () => {
+    expect(FLAT).toMatch(/two records make that true/);
+    expect(FLAT).toMatch(/The per-pad record alone would not carry this/);
+    expect(FLAT).toMatch(/Bob's rejection is invisible to Alice/);
+  });
+
+  it("§20's seal pseudocode claims BEFORE it encapsulates", () => {
+    const seal = SPEC.slice(SPEC.indexOf("seal(body, pairId):"), SPEC.indexOf("exportPad(pairId):"));
+    expect(seal).toContain("claimRequestForPair(vfs, requestHash, pairId, at)");
+    expect(seal.indexOf("claimRequestForPair(")).toBeLessThan(seal.indexOf("XWing.Encaps"));
+    expect(seal.indexOf("XWing.Encaps")).toBeLessThan(seal.indexOf("commitSealedHandoff("));
+  });
+});
+
+describe("the request claim is enforced in storage, not merely documented", () => {
+  const codeOf = (rel: string) =>
+    readFileSync(join(ROOT, rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const handoff = codeOf("src/browser/engine/handoff.ts");
+  const claim = codeOf("src/browser/engine/request-claim.ts");
+
+  it("commitSealedHandoff requires the binding, after checking the pad gate", () => {
+    const fn = handoff.slice(handoff.indexOf("export async function commitSealedHandoff"));
+    expect(fn).toMatch(/requireClaimedByPair\(vfs, input\.requestHash, pairId\)/);
+    // Pad gate first, so an unreadable marker is never masked.
+    expect(fn.indexOf("refusalForNewHandoff")).toBeLessThan(fn.indexOf("requireClaimedByPair"));
+    // ...and both precede any staging write.
+    expect(fn.indexOf("requireClaimedByPair")).toBeLessThan(fn.indexOf("writeFileAtomic"));
+  });
+
+  it("the claim never collapses unreadable into absent, and never deletes itself", () => {
+    expect(claim).not.toMatch(/catch\s*\{[^}]*absent/);
+    expect(claim).toMatch(/kind: "unreadable"/);
+    expect(claim).not.toMatch(/vfs\.remove/);
+  });
+
+  it("the claim lives outside every pair directory", () => {
+    expect(claim).toMatch(/CLAIMS_DIR = "spt\/claims"/);
+    // Nothing in it builds a path from a pairId.
+    expect(claim).not.toMatch(/\$\{pairId\}\//);
+  });
+
+  it("which case a write failure was is decided by looking, not by the throw", () => {
+    const fn = claim.slice(claim.indexOf("export async function claimRequestForPair"));
+    expect(fn).toMatch(/catch[\s\S]{0,240}readFile\(path\)/);
+    expect(fn).toMatch(/if \(!landed\) throw error/);
+  });
+
+  it("no product surface reaches the claim yet", () => {
+    const protocol = readFileSync(join(ROOT, "src/browser/engine/protocol.ts"), "utf8");
+    for (const name of ["claimRequestForPair", "readRequestClaim", "requireClaimedByPair"]) {
+      expect(protocol, `${name} must not be an engine op`).not.toContain(name);
+    }
+    for (const file of readdirSync(join(ROOT, "src/browser/ui"))) {
+      if (!file.endsWith(".ts")) continue;
+      expect(codeOf(join("src/browser/ui", file))).not.toMatch(/request-claim|claimRequestForPair/);
+    }
+  });
+});

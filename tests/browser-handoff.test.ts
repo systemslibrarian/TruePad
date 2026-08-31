@@ -14,6 +14,7 @@ import {
   parseMarker,
   readHandoffState
 } from "../src/browser/engine/handoff";
+import { claimRequestForPair } from "../src/browser/engine/request-claim";
 import { packageIdentity } from "../src/spt/sealed-package";
 import { toBase64Url } from "../src/spt/bytes";
 import { bytesToHex } from "../src/core/hex";
@@ -50,6 +51,15 @@ async function sealedInput() {
     confirmValue: confirmValue(),
     packageIdentity: await packageIdentity(bytes)
   };
+}
+
+/** The frozen write order puts the request claim FIRST, before anything is
+ *  encapsulated. `commitSealedHandoff` enforces that, so a test that wants to
+ *  reach the handoff transaction has to bind the request the same way the
+ *  product will. */
+async function claimed(vfs: Vfs, pairId = PAIR) {
+  await claimRequestForPair(vfs, requestHash(), pairId, AT);
+  return vfs;
 }
 
 async function refusalOf(fn: () => Promise<unknown>): Promise<EngineRefused> {
@@ -124,7 +134,7 @@ describe("the marker parser refuses everything it should", () => {
 
   it("writes its fields in the frozen order", async () => {
     const vfs = new MemoryVfs();
-    await commitSealedHandoff(vfs, PAIR, await sealedInput(), AT);
+    await commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT);
     const raw = new TextDecoder().decode((await vfs.readFile(markerPath(PAIR)))!);
     expect(raw.indexOf('"version"')).toBeLessThan(raw.indexOf('"pairId"'));
     expect(raw.indexOf('"pairId"')).toBeLessThan(raw.indexOf('"mode"'));
@@ -158,7 +168,7 @@ describe("a present marker is NEVER absence", () => {
     it(`${name} refuses a new sealed handoff`, async () => {
       const vfs = new MemoryVfs();
       await vfs.writeFileAtomic(markerPath(PAIR), bytes);
-      const refusal = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+      const refusal = await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT));
       expect(refusal.reason).toBe("handoff-state-unreadable");
     });
 
@@ -166,7 +176,7 @@ describe("a present marker is NEVER absence", () => {
       const vfs = new MemoryVfs();
       await vfs.writeFileAtomic(markerPath(PAIR), bytes);
       await readHandoffState(vfs, PAIR);
-      await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+      await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT));
       await refusalOf(async () => cleanPreCommitStaging(vfs, PAIR));
       const after = await vfs.readFile(markerPath(PAIR));
       expect(after).not.toBeNull();
@@ -199,7 +209,7 @@ describe("the sealed handoff is marker-last", () => {
   it("commits, and the marker describes the staged bytes", async () => {
     const vfs = new MemoryVfs();
     const input = await sealedInput();
-    const marker = await commitSealedHandoff(vfs, PAIR, input, AT);
+    const marker = await commitSealedHandoff(await claimed(vfs), PAIR, input, AT);
     expect(marker.mode).toBe("sealed");
     expect(marker.packageIdentity).toBe(toBase64Url(input.packageIdentity));
     const state = await readHandoffState(vfs, PAIR);
@@ -211,7 +221,7 @@ describe("the sealed handoff is marker-last", () => {
 
   it("writes the marker AFTER both payload files", async () => {
     const vfs = new FaultVfs(new MemoryVfs());
-    await commitSealedHandoff(vfs, PAIR, await sealedInput(), AT);
+    await commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT);
     const order = vfs.writes;
     expect(order.indexOf(handoffPackagePath(PAIR))).toBeLessThan(order.indexOf(markerPath(PAIR)));
     expect(order.indexOf(handoffConfirmPath(PAIR))).toBeLessThan(order.indexOf(markerPath(PAIR)));
@@ -222,12 +232,12 @@ describe("the sealed handoff is marker-last", () => {
   it("returns the EXACT bytes on a later load, never a new package", async () => {
     const vfs = new MemoryVfs();
     const input = await sealedInput();
-    await commitSealedHandoff(vfs, PAIR, input, AT);
+    await commitSealedHandoff(await claimed(vfs), PAIR, input, AT);
     const loaded = await loadCommittedSealedHandoff(vfs, PAIR);
     expect(bytesToHex(loaded.packageBytes)).toBe(bytesToHex(input.packageBytes));
     expect(bytesToHex(loaded.confirmValue)).toBe(bytesToHex(input.confirmValue));
     // ...and a second handoff is refused outright.
-    const refusal = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+    const refusal = await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT));
     expect(refusal.reason).toBe("pad-already-sealed");
   });
 
@@ -235,7 +245,7 @@ describe("the sealed handoff is marker-last", () => {
     const vfs = new MemoryVfs();
     const input = await sealedInput();
     input.packageIdentity = new Uint8Array(32).fill(0xee);
-    const refusal = await refusalOf(() => commitSealedHandoff(vfs, PAIR, input, AT));
+    const refusal = await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, input, AT));
     expect(refusal.reason).toBe("storage-failed");
     // Nothing committed: the pad is still free.
     expect((await readHandoffState(vfs, PAIR)).kind).toBe("absent");
@@ -246,7 +256,7 @@ describe("the sealed handoff is marker-last", () => {
     for (const length of [10, 12, 0]) {
       const input = await sealedInput();
       input.confirmValue = new Uint8Array(length);
-      await refusalOf(() => commitSealedHandoff(vfs, PAIR, input, AT));
+      await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, input, AT));
     }
     expect((await readHandoffState(vfs, PAIR)).kind).toBe("absent");
   });
@@ -254,7 +264,7 @@ describe("the sealed handoff is marker-last", () => {
   it("stores the package verbatim and the confirmation as 11 raw bytes", async () => {
     const vfs = new MemoryVfs();
     const input = await sealedInput();
-    await commitSealedHandoff(vfs, PAIR, input, AT);
+    await commitSealedHandoff(await claimed(vfs), PAIR, input, AT);
     const stored = await vfs.readFile(handoffPackagePath(PAIR));
     expect(bytesToHex(stored!)).toBe(bytesToHex(input.packageBytes));
     const confirm = await vfs.readFile(handoffConfirmPath(PAIR));
@@ -279,32 +289,32 @@ for (const nonAtomic of [false, true]) {
     it("C — the package tears before the marker: no marker, no output, retry allowed", async () => {
       const vfs = make();
       vfs.failWrite({ path: handoffPackagePath(PAIR), mode: nonAtomic ? "partial-then-throw" : "throw-before" });
-      await expect(commitSealedHandoff(vfs, PAIR, await sealedInput(), AT)).rejects.toThrow();
+      await expect(commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT)).rejects.toThrow();
       expect((await readHandoffState(vfs, PAIR)).kind).toBe("absent");
       // Pre-commit staging may be discarded, and a retry succeeds.
       await cleanPreCommitStaging(vfs, PAIR);
-      const marker = await commitSealedHandoff(vfs, PAIR, await sealedInput(), AT);
+      const marker = await commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT);
       expect(marker.mode).toBe("sealed");
     });
 
     it("crash after the package, before the confirmation: still no marker, still retryable", async () => {
       const vfs = make();
       vfs.failWrite({ path: handoffConfirmPath(PAIR), mode: nonAtomic ? "truncate-then-throw" : "throw-before" });
-      await expect(commitSealedHandoff(vfs, PAIR, await sealedInput(), AT)).rejects.toThrow();
+      await expect(commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT)).rejects.toThrow();
       expect((await readHandoffState(vfs, PAIR)).kind).toBe("absent");
-      const marker = await commitSealedHandoff(vfs, PAIR, await sealedInput(), AT);
+      const marker = await commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT);
       expect(marker.mode).toBe("sealed");
     });
 
     it("D — the marker tears: handoff spent and unreadable, never a second package", async () => {
       const vfs = make();
       vfs.failWrite({ path: markerPath(PAIR), mode: nonAtomic ? "partial-then-throw" : "throw-before", bytes: 20 });
-      await expect(commitSealedHandoff(vfs, PAIR, await sealedInput(), AT)).rejects.toThrow();
+      await expect(commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT)).rejects.toThrow();
       const state = await readHandoffState(vfs, PAIR);
       if (nonAtomic) {
         // The target exists and is wrong: SPENT.
         expect(state.kind).toBe("unreadable-spent");
-        const refusal = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+        const refusal = await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT));
         expect(refusal.reason).toBe("handoff-state-unreadable");
       } else {
         // move() backing: the target was never touched, so this is retryable.
@@ -322,13 +332,13 @@ for (const nonAtomic of [false, true]) {
       const vfs = make();
       vfs.failWrite({ path: markerPath(PAIR), mode: "complete-then-throw" });
       if (!nonAtomic) return; // the atomic model never leaves the target written
-      await expect(commitSealedHandoff(vfs, PAIR, await sealedInput(), AT)).rejects.toThrow();
+      await expect(commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT)).rejects.toThrow();
       const state = await readHandoffState(vfs, PAIR);
       expect(state.kind).toBe("sealed");
       // And the retry returns the EXACT committed package, never a new one.
       const loaded = await loadCommittedSealedHandoff(vfs, PAIR);
       expect(bytesToHex(loaded.packageBytes)).toBe(bytesToHex(packageBytes()));
-      const refusal = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+      const refusal = await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT));
       expect(refusal.reason).toBe("pad-already-sealed");
     });
 
@@ -336,7 +346,7 @@ for (const nonAtomic of [false, true]) {
       const vfs = make();
       await vfs.leaveTempFile(markerPath(PAIR), enc.encode('{"version":1}'));
       expect((await readHandoffState(vfs, PAIR)).kind).toBe("absent");
-      const marker = await commitSealedHandoff(vfs, PAIR, await sealedInput(), AT);
+      const marker = await commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT);
       expect(marker.mode).toBe("sealed");
     });
   });
@@ -348,33 +358,33 @@ describe("a valid marker with an unusable payload is SPENT and unrecoverable", (
   it("F — the package byte changed", async () => {
     const vfs = new MemoryVfs();
     const input = await sealedInput();
-    await commitSealedHandoff(vfs, PAIR, input, AT);
+    await commitSealedHandoff(await claimed(vfs), PAIR, input, AT);
     const tampered = Uint8Array.from(input.packageBytes);
     tampered[0] ^= 0x01;
     await vfs.writeFileAtomic(handoffPackagePath(PAIR), tampered);
     const refusal = await refusalOf(() => loadCommittedSealedHandoff(vfs, PAIR));
     expect(refusal.reason).toBe("handoff-unrecoverable");
     // Still refuses a reseal.
-    const again = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+    const again = await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT));
     expect(again.reason).toBe("pad-already-sealed");
   });
 
   it("G — the confirmation value changed", async () => {
     const vfs = new MemoryVfs();
-    await commitSealedHandoff(vfs, PAIR, await sealedInput(), AT);
+    await commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT);
     const tampered = confirmValue();
     tampered[10] ^= 0x01;
     await vfs.writeFileAtomic(handoffConfirmPath(PAIR), tampered);
     const refusal = await refusalOf(() => loadCommittedSealedHandoff(vfs, PAIR));
     expect(refusal.reason).toBe("handoff-unrecoverable");
-    expect((await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT))).reason).toBe(
+    expect((await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT))).reason).toBe(
       "pad-already-sealed"
     );
   });
 
   it("the payload files are simply missing", async () => {
     const vfs = new MemoryVfs();
-    await commitSealedHandoff(vfs, PAIR, await sealedInput(), AT);
+    await commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT);
     await vfs.remove(handoffPackagePath(PAIR));
     expect((await refusalOf(() => loadCommittedSealedHandoff(vfs, PAIR))).reason).toBe("handoff-unrecoverable");
   });
@@ -385,7 +395,7 @@ describe("a valid marker with an unusable payload is SPENT and unrecoverable", (
 describe("the commit marker is permanent", () => {
   it("dismissal drops the payload and KEEPS the marker", async () => {
     const vfs = new MemoryVfs();
-    await commitSealedHandoff(vfs, PAIR, await sealedInput(), AT);
+    await commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT);
     await dismissSealedPayload(vfs, PAIR);
     expect(await vfs.exists(handoffPackagePath(PAIR))).toBe(false);
     expect(await vfs.exists(handoffConfirmPath(PAIR))).toBe(false);
@@ -399,9 +409,9 @@ describe("the commit marker is permanent", () => {
 
   it("after dismissal the pad stays handed off and no new package may be created", async () => {
     const vfs = new MemoryVfs();
-    await commitSealedHandoff(vfs, PAIR, await sealedInput(), AT);
+    await commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT);
     await dismissSealedPayload(vfs, PAIR);
-    expect((await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT))).reason).toBe(
+    expect((await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT))).reason).toBe(
       "pad-already-sealed"
     );
     // A same-request re-share is correctly unavailable, not regenerated.
@@ -410,7 +420,7 @@ describe("the commit marker is permanent", () => {
 
   it("no exported function ever removes the marker", async () => {
     const vfs = new MemoryVfs();
-    await commitSealedHandoff(vfs, PAIR, await sealedInput(), AT);
+    await commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT);
     const before = await vfs.readFile(markerPath(PAIR));
     await dismissSealedPayload(vfs, PAIR);
     await refusalOf(() => cleanPreCommitStaging(vfs, PAIR));
@@ -425,7 +435,7 @@ describe("cross-mode refusals (H, I)", () => {
   it("H — a physical marker refuses a sealed commit", async () => {
     const vfs = new MemoryVfs();
     await commitPhysicalHandoff(vfs, PAIR, AT);
-    const refusal = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+    const refusal = await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT));
     expect(refusal.reason).toBe("pad-already-handed-off");
   });
 
@@ -447,7 +457,7 @@ describe("cross-mode refusals (H, I)", () => {
       enc.encode(JSON.stringify({ pairId: PAIR, label: "x", createdAt: AT, witness: "browser-none", origin: "imported" }))
     );
     // It commits, because storage is not the authorization layer.
-    const marker = await commitSealedHandoff(vfs, PAIR, await sealedInput(), AT);
+    const marker = await commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT);
     expect(marker.mode).toBe("sealed");
     expect(commitSealedHandoff.length).toBe(4); // vfs, pairId, input, at — no origin
   });
@@ -489,7 +499,7 @@ describe("a marker that exists but cannot be validated is typed, immediately", (
   it("the fallback tears the marker: the commit itself refuses handoff-state-unreadable", async () => {
     const vfs = new FaultVfs(new MemoryVfs(), { nonAtomic: true });
     vfs.failWrite({ path: markerPath(PAIR), mode: "partial-then-throw", bytes: 12 });
-    const refusal = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+    const refusal = await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT));
     // Not a bare Error, and not "storage-failed" — which would read as retryable.
     expect(refusal.reason).toBe("handoff-state-unreadable");
     expect(refusal.message).toMatch(/refuses to create another copy/);
@@ -497,7 +507,7 @@ describe("a marker that exists but cannot be validated is typed, immediately", (
     // The later read agrees with the immediate one.
     expect((await readHandoffState(vfs, PAIR)).kind).toBe("unreadable-spent");
     // A second attempt refuses the same way, and no second handoff is possible.
-    const again = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+    const again = await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT));
     expect(again.reason).toBe("handoff-state-unreadable");
     // The marker was never removed.
     expect(await vfs.exists(markerPath(PAIR))).toBe(true);
@@ -523,14 +533,14 @@ describe("a marker that exists but cannot be validated is typed, immediately", (
     // The record exists and is bad: SPENT, and never removed.
     expect(await vfs.exists(markerPath(PAIR))).toBe(true);
     expect((await readHandoffState(vfs, PAIR)).kind).toBe("unreadable-spent");
-    const again = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+    const again = await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT));
     expect(again.reason).toBe("handoff-state-unreadable");
   });
 
   it("the same silent truncation on the SEALED path is typed and spent", async () => {
     const vfs = new FaultVfs(new MemoryVfs(), { nonAtomic: true });
     vfs.failWrite({ path: markerPath(PAIR), mode: "silently-truncate", bytes: 20 });
-    const refusal = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+    const refusal = await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT));
     expect(refusal.reason).toBe("handoff-state-unreadable");
     expect((await readHandoffState(vfs, PAIR)).kind).toBe("unreadable-spent");
     // ...and no package was released: loading refuses too.
@@ -553,7 +563,7 @@ describe("a marker that exists but cannot be validated is typed, immediately", (
   it("a complete-but-unacknowledged marker write is a commit, not a failure to retry", async () => {
     const vfs = new FaultVfs(new MemoryVfs(), { nonAtomic: true });
     vfs.failWrite({ path: markerPath(PAIR), mode: "complete-then-throw" });
-    const refusal = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+    const refusal = await refusalOf(async () => commitSealedHandoff(await claimed(vfs), PAIR, await sealedInput(), AT));
     expect(refusal.reason).toBe("handoff-state-unreadable");
     // The record landed and is VALID, so the later read sees a real handoff and
     // the exact package is still recoverable — the caller was simply told the

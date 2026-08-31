@@ -246,18 +246,24 @@ describe("the imported → physical export forwarding hole", () => {
     const vfs = new MemoryVfs();
     const pairId = await makePair(vfs);
     const { commitSealedHandoff } = await import("../src/browser/engine/handoff");
+    const { claimRequestForPair } = await import("../src/browser/engine/request-claim");
     const { packageIdentity } = await import("../src/spt/sealed-package");
     const bytes = new Uint8Array(1258).fill(0x11);
+    const requestHash = new Uint8Array(32).fill(2);
+    const at = "2026-08-30T12:00:00.000Z";
+    // The frozen write order binds the request to the pair BEFORE anything is
+    // encapsulated, and commitSealedHandoff enforces it (§10.5.1).
+    await claimRequestForPair(vfs, requestHash, pairId, at);
     await commitSealedHandoff(
       vfs,
       pairId,
       {
         packageBytes: bytes,
-        requestHash: new Uint8Array(32).fill(2),
+        requestHash,
         confirmValue: new Uint8Array(11).fill(3),
         packageIdentity: await packageIdentity(bytes)
       },
-      "2026-08-30T12:00:00.000Z"
+      at
     );
     expect(refusal(await send(vfs, { op: "export-pair", pairId })).reason).toBe("pad-already-sealed");
   });
