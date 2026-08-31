@@ -63,6 +63,12 @@ import {
 } from "./store.ts";
 import { witnessFor, type BrowserWitness, type BrowserWitnessKind } from "./witness.ts";
 import { packContainer, unpackContainer, type CourierFile } from "./courier-format.ts";
+import {
+  commitPhysicalHandoff,
+  readHandoffState,
+  REFUSE_ALREADY_SEALED,
+  REFUSE_UNREADABLE
+} from "./handoff.ts";
 import type { Vfs } from "./vfs.ts";
 
 const enc = new TextEncoder();
@@ -258,10 +264,46 @@ async function witnessPreflight(vfs: Vfs, store: LoadedStore, kind: BrowserWitne
   return witness;
 }
 
-type PairMeta = { pairId: string; label: string; createdAt: string; witness: BrowserWitnessKind };
+/* ---- pair provenance -----------------------------------------------------
+ * WHERE A PAD CAME FROM, recorded by the installation about ITSELF.
+ *
+ * `pair.json` is browser-local and is NOT one of the six courier files, so a
+ * sender cannot put a chosen origin into a bundle and have the importer believe
+ * it. The value is written by whichever installation created or imported the
+ * pad, about its own act.
+ *
+ * Two values are ever serialized. The third, `unknown`, is an in-memory state
+ * only — it is what an absent `pair.json`, or a legacy one written before this
+ * field existed, means. It is NEVER written to disk, never backfilled, and
+ * never inferred from createdAt, from counters, or from whether the pad happens
+ * to sit at genesis. The absence of the field is information: it means nobody
+ * recorded this, and guessing in the direction that permits forwarding is
+ * exactly how a pad ends up in two hands.
+ *
+ * A field that is PRESENT but not one of the two values is corruption and fails
+ * closed, the same way an unrecognised `witness` does. A MISSING field is
+ * legacy, not corruption.
+ */
+type SerializedOrigin = "generated-here" | "imported";
+export type PairOrigin = SerializedOrigin | "unknown";
+
+type PairMeta = {
+  pairId: string;
+  label: string;
+  createdAt: string;
+  witness: BrowserWitnessKind;
+  origin: PairOrigin;
+};
+
+/** What is written to disk: `origin` is always one of the two real values. */
+type WritablePairMeta = Omit<PairMeta, "origin"> & { origin: SerializedOrigin };
 
 function isWitnessKind(value: unknown): value is BrowserWitnessKind {
   return value === "browser-none" || value === "browser-local-witness";
+}
+
+function isSerializedOrigin(value: unknown): value is SerializedOrigin {
+  return value === "generated-here" || value === "imported";
 }
 
 // Read the browser-only pair.json. Its `witness` field is LOAD-BEARING: it says
@@ -270,10 +312,19 @@ function isWitnessKind(value: unknown): value is BrowserWitnessKind {
 // provisioned witness). A pair with NO pair.json is a bare FORMAT-V2 store the
 // browser never provisioned (e.g. a CLI store placed directly) — browser-none,
 // with defaulted display fields.
+/** A pad's provenance, for callers that must authorize a handoff. Exported for
+ *  the engine and its tests only: it is NOT a worker op and no UI reaches it.
+ *  Until sealing exists, `unknown` and `generated-here` behave alike in the
+ *  product, so this is the only way to observe that a legacy pad was not
+ *  quietly upgraded. */
+export async function readPairOrigin(vfs: Vfs, pairId: string): Promise<PairOrigin> {
+  return (await readPairMeta(vfs, pairId)).origin;
+}
+
 async function readPairMeta(vfs: Vfs, pairId: string): Promise<PairMeta> {
   const bytes = await vfs.readFile(pairMetaPath(pairId));
   if (bytes === null) {
-    return { pairId, label: pairId, createdAt: "", witness: "browser-none" };
+    return { pairId, label: pairId, createdAt: "", witness: "browser-none", origin: "unknown" };
   }
   let parsed: unknown;
   try {
@@ -292,12 +343,25 @@ async function readPairMeta(vfs: Vfs, pairId: string): Promise<PairMeta> {
         `It fails closed rather than guess whether a rollback witness applies. Nothing was touched.`
     );
   }
+  // Provenance is load-bearing in the same way `witness` is: a value we do not
+  // recognise means we cannot tell where this pad came from, and the safe
+  // reading of "cannot tell" is not "it was made here".
+  if ("origin" in parsed && !isSerializedOrigin(parsed.origin)) {
+    throw new EngineRefused(
+      "corrupt-pair-meta",
+      `${PAIR_META_FILE} for ${pairId} has an unrecognised origin (found ${JSON.stringify(parsed.origin)}). ` +
+        `It fails closed rather than guess whether this pad was generated here or arrived from elsewhere. Nothing was touched.`
+    );
+  }
+  // A MISSING field is legacy, not corruption: pads written before provenance
+  // existed keep working, and are simply never eligible to be forwarded.
+  const origin: PairOrigin = isSerializedOrigin(parsed.origin) ? parsed.origin : "unknown";
   const label = typeof parsed.label === "string" ? parsed.label : pairId;
   const createdAt = typeof parsed.createdAt === "string" ? parsed.createdAt : "";
-  return { pairId, label, createdAt, witness: parsed.witness };
+  return { pairId, label, createdAt, witness: parsed.witness, origin };
 }
 
-async function writePairMeta(vfs: Vfs, meta: PairMeta): Promise<void> {
+async function writePairMeta(vfs: Vfs, meta: WritablePairMeta): Promise<void> {
   await vfs.writeFileAtomic(pairMetaPath(meta.pairId), enc.encode(JSON.stringify(meta)));
 }
 
@@ -483,7 +547,11 @@ async function genImpl(vfs: Vfs, req: Req<"gen">): Promise<GenResult> {
       // pair with pair.json last: a crash before pair.json leaves a fresh store
       // with no committed browser witness (browser-none, nothing advanced yet).
       await witnessFor(vfs, witnessKind).bootstrap(pairId);
-      await writePairMeta(vfs, { pairId, label: req.label, createdAt, witness: witnessKind });
+      // Provenance rides in the SAME pair.json commit that already makes the
+      // browser metadata authoritative — no second file, no second transaction.
+      // A crash before this leaves a bare store whose origin is `unknown`: it
+      // works normally and is simply never eligible to be forwarded.
+      await writePairMeta(vfs, { pairId, label: req.label, createdAt, witness: witnessKind, origin: "generated-here" });
     });
   } finally {
     // AFTER the awaited provisioning has settled — never before it, so nothing
@@ -1125,12 +1193,61 @@ const BUNDLE_FILES: readonly string[] = [
 ];
 const BUNDLE_FILE_SET = new Set(BUNDLE_FILES);
 
+/* Export is a HANDOFF, and a pad gets one.
+ *
+ * Two gates precede the bytes, in this order.
+ *
+ * PROVENANCE. An `imported` pad may never be exported onward. Phase 0.5 caught
+ * the sealed version of this — Alice seals to Bob, Bob seals the same pad to
+ * Charlie — and provenance closed it. The physical version is the same two-time
+ * pad by a slower route: Alice hands the pad to Bob, Bob imports it, Bob picks
+ * "Save the pad file" and gives that to Charlie. Bob and Charlie then hold
+ * independently consumable copies of the same directional material and the same
+ * one-time authentication keys. Once provenance exists, software CAN tell this
+ * case apart from a first handoff, so it does.
+ *
+ *   generated-here → may perform the first software-mediated handoff
+ *   imported       → may NEVER export or seal onward
+ *   unknown        → legacy physical export only, never sealed transfer
+ *
+ * `unknown` is an explicit legacy boundary, not evidence that forwarding is
+ * safe. It exists so pads written before this field keep working.
+ *
+ * HANDOFF STATE, then, and MARKER-LAST. The container is built in worker memory
+ * and NOT released until the physical marker has been written and read back:
+ * bytes that left without a record would be a handoff nothing knows about. A
+ * sealed marker refuses; a torn marker refuses; a physical marker permits
+ * re-export under the frozen legacy policy and does NOT rewrite the marker.
+ */
 async function exportImpl(vfs: Vfs, req: Req<"export-pair">): Promise<ExportResult> {
   const pairId = req.pairId;
   return vfs.withLock(pairId, async (): Promise<ExportResult> => {
     await requireNotDestroyed(vfs, pairId);
     await requireImportComplete(vfs, pairId);
     await requirePair(vfs, pairId);
+
+    const meta = await readPairMeta(vfs, pairId);
+    if (meta.origin === "imported") {
+      throw new EngineRefused(
+        "imported-pair-cannot-export",
+        "This pad arrived from someone else, so TruePad will not save another copy of it to pass on. " +
+          "Two people holding the same pad would each use the same material, which is the one failure this " +
+          "product exists to prevent. Generate a new pad to share with someone new."
+      );
+    }
+
+    const handoff = await readHandoffState(vfs, pairId);
+    if (handoff.kind === "unreadable-spent") {
+      throw new EngineRefused(REFUSE_UNREADABLE, handoff.message);
+    }
+    if (handoff.kind === "sealed") {
+      throw new EngineRefused(
+        REFUSE_ALREADY_SEALED,
+        "This pad has already been sent by sealed transfer, so it will not also be saved as a file to pass on. " +
+          "Generate a new pad for any further transfer."
+      );
+    }
+
     const files: CourierFile[] = [];
     for (const rel of BUNDLE_FILES) {
       const bytes = await vfs.readFile(`${pairId}/${rel}`);
@@ -1140,8 +1257,17 @@ async function exportImpl(vfs: Vfs, req: Req<"export-pair">): Promise<ExportResu
       files.push({ path: rel, bytes });
     }
     // §4: the container is packed IN THE WORKER and returned as one transferred
-    // buffer. No pad material is base64-stringified on the UI thread.
+    // buffer. No pad material is base64-stringified on the UI thread. The
+    // container carries EXACTLY the six FORMAT-V2 files — never pair.json,
+    // never the handoff record, never provenance.
     const container = packContainer(pairId, files);
+
+    // MARKER LAST, and before the container is released. A first export records
+    // the handoff; a re-export under an existing physical marker leaves it
+    // alone, so the recorded time stays the time of the FIRST handoff.
+    if (handoff.kind === "absent") {
+      await commitPhysicalHandoff(vfs, pairId, new Date().toISOString());
+    }
     return { ok: true, op: "export-pair", container, fileCount: files.length };
   });
 }
@@ -1292,7 +1418,18 @@ async function importImpl(vfs: Vfs, req: Req<"import-pair">): Promise<ImportResu
         }
       });
     }
-    await writePairMeta(vfs, { pairId, label: req.label, createdAt: new Date().toISOString(), witness: witnessKind });
+    // origin is a FIELD of the pair.json the commit already writes, before
+    // importing.json is removed. There is no ordering in which an imported pair
+    // becomes active carrying "generated-here", and no ordering in which a
+    // crash upgrades a pad's provenance: a crash before this leaves
+    // importing.json in place, so the pair is not committed at all.
+    await writePairMeta(vfs, {
+      pairId,
+      label: req.label,
+      createdAt: new Date().toISOString(),
+      witness: witnessKind,
+      origin: "imported"
+    });
     await vfs.remove(importMarkerPath(pairId)); // COMMIT: the pair is now active
     await removeStoreFiles(vfs, stagingDir(pairId));
     await vfs.remove(stagingDir(pairId));

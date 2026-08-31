@@ -10,6 +10,10 @@ import { describe, expect, it } from "vitest";
  * src/exhibit/ the browser build: may import core. May NOT import cli, and
  *              may NOT import node: builtins (they would break the bundle).
  * src/cli/     the operational tool: may import core. May NOT import exhibit.
+ * src/spt/     Sealed Pad Transfer's cryptographic core: self-contained. It may
+ *              import only from src/spt (plus its one pinned package), and
+ *              NOTHING may make src/core depend on it — the arrow points one
+ *              way, so the frozen message core never inherits a KEM.
  *
  * Import direction is one-way into core. This test runs under `npm test`,
  * which gates the build in .github/workflows/deploy.yml, so a violation is
@@ -20,7 +24,7 @@ const SRC = resolve(__dirname, "..", "src");
 // src/browser is the Browser Edition (the OPFS-worker product). Like exhibit,
 // it may import core; it may NOT import cli (node-only) or exhibit, and it
 // runs in the browser/worker so it uses no node: builtins.
-const LAYERS = ["core", "exhibit", "cli", "browser"] as const;
+const LAYERS = ["core", "exhibit", "cli", "browser", "spt"] as const;
 type Layer = (typeof LAYERS)[number];
 
 // Every static or dynamic import specifier in a TS source file:
@@ -108,11 +112,27 @@ describe("layering: import direction is one-way into src/core", () => {
     expect(importsOf("cli").some((i) => i.target === "core")).toBe(true);
   });
 
-  it("src/browser (Browser Edition) imports only core — never cli, exhibit, or node: builtins", () => {
+  it("src/browser (Browser Edition) imports only core and spt — never cli, exhibit, or node: builtins", () => {
     const bad = importsOf("browser").filter(
       (i) => i.target === "cli" || i.target === "exhibit" || i.target === "node"
     );
     expect(describeViolations(bad)).toBe("");
+  });
+
+  it("src/spt is self-contained — it imports only src/spt and its one package", () => {
+    const bad = importsOf("spt").filter((i) => i.target !== "spt" && i.target !== "package");
+    expect(describeViolations(bad)).toBe("");
+    // And the one package really is the pinned KEM, not something new.
+    const packages = new Set(importsOf("spt").filter((i) => i.target === "package").map((i) => i.specifier));
+    for (const p of packages) expect(p.startsWith("@noble/post-quantum/")).toBe(true);
+  });
+
+  it("nothing makes src/core depend on src/spt", () => {
+    // Restating the direction that matters most: the frozen message core must
+    // never acquire a KEM by transitive import.
+    expect(importsOf("core").filter((i) => i.target === "spt")).toEqual([]);
+    expect(importsOf("exhibit").filter((i) => i.target === "spt")).toEqual([]);
+    expect(importsOf("cli").filter((i) => i.target === "spt")).toEqual([]);
   });
 
   it("no layer imports from outside src/", () => {

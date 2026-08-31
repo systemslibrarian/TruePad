@@ -175,6 +175,11 @@ the X25519 shared secret is all-zero and abort. `@noble/curves`' X25519 is
 therefore a **conforming RFC 7748 implementation exercising a permitted
 policy** — not a broken one, and not a TruePad invention.
 
+**B′ — TruePad writes no such check, and no X25519 of its own.** There is no
+all-zero test, no contributory-behaviour test, and no hand-written curve code
+anywhere in `src/spt`. What TruePad does is select a dependency and accept its
+behaviour.
+
 **C — TruePad.** The selected production dependency inherits that stricter
 rejection. Consequently:
 

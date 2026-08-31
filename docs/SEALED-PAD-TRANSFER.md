@@ -1,57 +1,64 @@
 # Sealed Pad Transfer v1
 
-**STATUS: PHASE 1A — CRYPTOGRAPHIC/TRANSPORT CORE IMPLEMENTED;
-PRODUCT TRANSFER FLOW NOT IMPLEMENTED.**
+**STATUS: PHASE 1B — STORAGE / PROVENANCE FOUNDATION IMPLEMENTED;
+SEALED TRANSFER PRODUCT FLOW NOT IMPLEMENTED.**
 
 **Nothing in the shipped product offers sealed transfer.** There is no UI, no
-verb, no menu item, and no way for an operator to reach any of it. TruePad does
-**not** support online PQC pad transfer, and this document must not be read as
-saying it does.
+verb, no menu item, no QR, and no way for an operator to reach any of it.
+TruePad does **not** support online PQC pad transfer, and this document must not
+be read as saying it does.
 
-What Phase 1A implemented, in `src/spt/**` — an isolated module family that owns
-no product state and that `src/core/**` does not depend on:
+**Phase 1A** implemented suite `0x0001` in `src/spt/**` — the X-Wing wrapper
+(§2.2), the TPR2 (§5) and TPS2 (§7.1) codecs, the key schedule (§7.3), the
+derived nonce (§7.4), AES-256-GCM, `requestHash`, the `requestWords132` and
+`confirmationWords88` indices, `packageIdentity`, and committed reference
+vectors. `docs/SEALED-PAD-TRANSFER-VALIDATION.md` records the dependency audit,
+the draft-10 vectors, the cross-implementation run against an independent
+draft-10 implementation, and one **accepted** divergence: the pinned library
+aborts when X25519 yields all-zero — a policy RFC 7748 §6.1 permits and which it
+inherits rather than TruePad adding — where draft-10 specifies no abort. That
+decision is closed; suite `0x0001`'s wire bytes are unchanged.
 
-* suite `0x0001` — the X-Wing wrapper (§2.2), validated against draft-10's own
-  Appendix C vectors **and** against an independent draft-10 implementation;
-* the TPR2 receive-request codec (§5) and the TPS2 sealed-package codec (§7.1);
-* the key schedule (§7.3), the derived nonce (§7.4), and AES-256-GCM;
-* `requestHash`, `requestWords132` indices, `confirmationWords88` indices (§6, §8.2);
-* `packageIdentity`, and committed deterministic reference vectors.
+**Phase 1B** implemented the storage foundation, in `src/browser/engine/**`:
 
-What Phase 1A did **not** implement, and what therefore does not exist:
+* **pair provenance** — `origin` on `pair.json` (§10.7), written by `gen` and by
+  every import, never backfilled and never inferred;
+* **the imported-forwarding refusal** — an `imported` pad may no longer be
+  exported onward either, closing the walking-pace twin of the sealed hole
+  (§10.7.1);
+* **the one-handoff record** — the marker-last transaction, its frozen file
+  layout and marker grammar, and `HANDOFF-SPENT / UNREADABLE` (§10.9);
+* **physical/sealed cross-mode semantics** on the existing `export-pair`;
+* **crash behaviour under the non-atomic `writeFileAtomic` fallback**, tested
+  against a fault-injecting backing rather than assumed from `MemoryVfs`.
 
-* persisted receive requests, and the `PENDING`/`CANCELLED`/`CONSUMED` machine (§10.1);
-* the sender handoff record `handoff.json` and its enforcement (§10.9);
-* `origin` provenance on `pair.json` and its refusals (§10.7);
-* the cross-mode physical/sealed export gating (§10.8);
+Still **not** implemented, and therefore not existing:
+
+* persisted receive requests and the `PENDING`/`CANCELLED`/`CONSUMED` machine (§10.1);
+* the one-time recipient `dk` lifecycle;
+* the TPR2 operator ceremony and the §6 words;
+* sender verification state (§10.5);
+* the product `seal(body, pairId)` operation, `openSealed`, `commitReceive`,
+  `reject`, `abandon`;
 * the cross-tab receive session and its Web Locks (§10.10);
-* courier lifecycle integration, any Browser UI, and any CLI verb.
+* any Browser UI, QR, or CLI verb.
 
 The low-level `sealPayloadV1` / `openPayloadV1` take **bytes**. They are for
 cryptographic composition and reference vectors. The product operation remains
 `seal(body, pairId)`, reading the live store inside the worker; there must never
-be an RPC named `seal(body, padFileBytes)` (§18, §20).
+be an RPC named `seal(body, padFileBytes)` (§18, §20). The Phase 1B storage
+helpers are likewise internal: `commitSealedHandoff` is not a worker RPC.
 
-`docs/SEALED-PAD-TRANSFER-VALIDATION.md` records the dependency audit, the
-vector results, the cross-implementation run, and **one accepted divergence**
-between the pinned library and §2.2. In short: `@noble/post-quantum` 0.7.1
-aborts when X25519 yields all-zero — a policy RFC 7748 §6.1 permits and which
-the library inherits rather than TruePad adding — where draft-10 specifies no
-abort. **The decision is closed: the stricter rejection is accepted, the
-dependency is kept, and suite `0x0001`'s wire bytes are unchanged.** Honest
-encapsulations and every reference vector stay byte-identical; only adversarial
-low-order `ct_X` **decapsulation** differs, and that difference does not
-authenticate anyone — §8's confirmation ceremony still owns sender identity.
-
-> **Carried forward — PHASE 1B STORAGE-INTEGRATION PREREQUISITE.** §10.9 requires
-> `handoff.json` to be written by one atomic replace. `OpfsVfs.writeFileAtomic()`
-> is genuinely atomic only where `FileSystemFileHandle.move()` exists; its
-> fallback truncates, writes and flushes, and can leave a torn file after a
-> crash. Phase 1A implements no persistent transfer state, so this blocks
-> nothing here — but before Phase 1B, §10.9 needs either a persistence design
-> that fails closed under the non-atomic fallback, another exact crash-safe
-> representation, or an explicitly narrower platform claim. It is not papered
-> over.
+> **The Phase-1A storage prerequisite, and what became of it.** Phase 1A carried
+> forward that §10.9's "one atomic replace" could not be honoured because
+> `OpfsVfs.writeFileAtomic()` is atomic only where `FileSystemFileHandle.move()`
+> exists. Three resolutions were open: a design that fails closed under the
+> fallback, another crash-safe representation, or a narrower platform claim.
+> Phase 1B took the **first**: §10.9 is now marker-last, and a torn marker fails
+> closed as `HANDOFF-SPENT / UNREADABLE`. `OpfsVfs` was not modified and its
+> fallback is **still not atomic** — that is a standing fact about the platform,
+> now designed around rather than assumed away, and the fault-injection tests
+> exercise it directly rather than trusting `MemoryVfs`.
 
 ---
 
@@ -229,15 +236,31 @@ def Combiner(ss_M, ss_X, ct_X, pk_X):
 `Encaps` **MUST** perform the FIPS 203 §7.2 encapsulation-key check and raise on
 failure. `Decaps` is **NOT** required to perform the decapsulation-key check.
 
-> **On the all-zero X25519 result: draft-10 explicitly declines to mandate a
-> check, and TruePad does not add one.** Adding an ad-hoc contributory-behaviour
-> check would take suite `0x0001` outside the construction that was proven, and
-> would break interoperability with any conforming X-Wing implementation, for a
-> property X-Wing's own security argument does not rest on — the combiner hashes
-> `ct_X` and `pk_X` alongside `ss_X`, and IND-CCA follows from ML-KEM-768 **or**
-> gap-CDH on Curve25519. Adding checks to a frozen suite because they feel
-> prudent is precisely how a "hybrid standard" stops being the thing that was
-> analysed.
+> **On the all-zero X25519 result — three facts, and TruePad adds no check of
+> its own.**
+>
+> 1. **draft-10 specifies no all-zero abort.** `Decapsulate` is
+>    `ss_X = X25519(sk_X, ct_X)`, and the draft discusses low-order,
+>    contributory or all-zero behaviour nowhere.
+> 2. **TruePad writes no such check, and no X25519 of its own.** Adding an
+>    ad-hoc contributory-behaviour check would take suite `0x0001` outside the
+>    construction that was proven, for a property X-Wing's own security argument
+>    does not rest on — the combiner hashes `ct_X` and `pk_X` alongside `ss_X`,
+>    and IND-CCA follows from ML-KEM-768 **or** gap-CDH on Curve25519. Adding
+>    checks to a frozen suite because they feel prudent is precisely how a
+>    "hybrid standard" stops being the thing that was analysed.
+> 3. **The pinned dependency does abort, and TruePad accepts that.**
+>    `@noble/post-quantum` 0.7.1, via `@noble/curves`, raises when X25519 yields
+>    all-zero — a policy **RFC 7748 §6.1 explicitly permits**. It is inherited,
+>    not added. The decision to keep the dependency is closed, and suite
+>    `0x0001` and every wire byte are unchanged.
+>
+> What this does and does not mean: honestly generated ciphertexts, all frozen
+> wire bytes, and every reference vector are unaffected. Only **adversarial
+> low-order `ct_X` decapsulation** differs, and TruePad therefore does not claim
+> arbitrary-malformed-ciphertext decapsulation equivalence with every draft-10
+> implementation. `docs/SEALED-PAD-TRANSFER-VALIDATION.md` §6 is the full
+> record; the two documents must not drift apart.
 
 **Cryptographic dependencies of this suite, in full:** ML-KEM-768 (FIPS 203),
 X25519 (RFC 7748), **SHAKE-256** (key expansion), **SHA3-256** (combiner), and
@@ -1237,24 +1260,40 @@ default. Unknown *other* fields stay tolerated, as today.
 with no `origin` — or no `pair.json` at all, which `readPairMeta` today answers
 with defaults — yields `origin = unknown` in memory. `unknown` is never written.
 
-### 10.7.1 `unknown` is not `generated-here`
+### 10.7.1 What each provenance may do
 
 **A pad whose provenance is `unknown` may not be sealed.** This follows from
 §10.6(1) as a matter of fact, not of caution: TruePad cannot tell a
 locally-generated legacy pad from one that arrived by courier before this field
 existed, and it must not guess in the direction that produces a two-time pad.
 
-| `origin` | May be sealed (§10.6) | Everything else — send, open, export, destroy |
-| --- | --- | --- |
-| `"generated-here"` | yes, subject to §10.6(1), (2) and §10.8 | unchanged |
-| `"imported"` | **never** | unchanged |
-| `unknown` (absent field, or absent `pair.json`) | **never** | **unchanged** |
+**And an `imported` pad may not be exported onward either.** An earlier draft
+gated *sealing* only, and said ordinary physical export was unchanged for
+imported pads. That left the same two-time pad reachable at walking pace:
 
-`unknown` gates **sealing only**. Every pad that works today keeps working
-today: legacy pads send, open, export, and destroy exactly as before. The single
-new refusal is *"this pad cannot be sent by sealed transfer; generate a new pad
-for that"* — a cost of seconds, paid only by operators who want the new feature
-on an old pad.
+> Alice hands the pad to Bob → Bob imports it → Bob picks **"Save the pad
+> file"** → Bob gives that file to Charlie. Bob and Charlie now hold
+> independently consumable copies of the same directional material and the same
+> Wegman–Carter keys. No operator error by the product's own rules — just the
+> forwarding the sealed path already refuses, done with a file manager.
+
+Before provenance existed there was nothing to check. Now there is, so the rule
+covers **both** software-mediated routes:
+
+| `origin` | First software-mediated handoff (export **or** seal) | Everything else — send, open, retire, destroy |
+| --- | --- | --- |
+| `"generated-here"` | **yes** — export or seal, subject to §10.6 and §10.8 | unchanged |
+| `"imported"` | **never, by either route** | unchanged |
+| `unknown` (absent field, or absent `pair.json`) | **physical export only**, never sealed | unchanged |
+
+`unknown` keeping physical export is a **legacy compatibility boundary, and not
+evidence that forwarding is safe**. Pads written before this field exists must
+keep working, and for them TruePad genuinely does not know where the pad came
+from; the operator assumption of §10.8 is all there is. It is stated as a
+concession, not a finding.
+
+Send, open, retire and destroy are untouched for every value. An imported pad is
+a fully working pad — it simply cannot be passed on again.
 
 **No migration, no backfill, no "assume generated-here for pads older than X".**
 A backfill would have to guess, and a wrong guess is exactly the two-time pad.
@@ -1302,6 +1341,10 @@ side.
 
 The handoff record of §10.9 gains a `mode` and is written by **both** paths:
 
+First, provenance (§10.7.1): an `imported` pad is refused **both** routes, and
+an `unknown` pad is refused sealing. What follows applies to a pad this
+installation generated.
+
 | First handoff | Then export again | Then seal |
 | --- | --- | --- |
 | none yet | allowed — records `mode: "physical"` | allowed (subject to §10.6, §10.7) |
@@ -1333,61 +1376,143 @@ already left: *n* physical copies of one pad remain *n* copies. The assumption
 that survives §10.8 is **not** "one pad, one other person" — it is the narrower
 **"a pad file, once exported, went to at most one other person."**
 
-### 10.9 The sender handoff record — one file, one atomic replace
+**Why re-export stays open for a physical marker, when forwarding does not.**
+The distinction is what the software actually knows. For a `generated-here` pad
+whose first handoff was physical, TruePad cannot tell a re-save destined for the
+same peer from one destined for a third person — so the operator assumption
+above is genuinely all there is, and refusing "Save the pad file again" would
+break a shipped affordance to buy nothing. For an `imported` pad it is not a
+question of assumption: the pad demonstrably **already arrived from somewhere
+else**, so a copy leaving here is a second recipient by construction. Software
+refuses what it knows, and documents what it cannot.
 
-§10.5 persists sender state; §10.6(2) persists a marker; §20's `seal()` says the
-marker and the package are "ONE durable step". **Frozen: they are one object in
-one file, replaced atomically. Never two files, never two writes.**
+### 10.9 The sender handoff record — marker-last, not one atomic file
+
+**The Phase-0.6 model is withdrawn.** It required the marker, the sealed package
+and the confirmation value to land in **one** `handoff.json` by a single atomic
+replace, on the reasoning that two writes admit a crash between them.
+
+That reasoning was right about the hazard and wrong about the primitive.
+`OpfsVfs.writeFileAtomic()` is genuinely atomic only where
+`FileSystemFileHandle.move()` works; elsewhere it falls back to
 
 ```
-<pairId>/handoff.json      ← the ONLY durable sender-side handoff state
-
-{
-  pairId,                  # 32 lowercase hex
-  mode: "physical" | "sealed",
-  at,                      # ISO-8601, informational only
-  # present iff mode == "sealed":
-  requestHash,             # 32 bytes, base64url — rule (2) compares THIS
-  package,                 # the EXACT TPS2 bytes, base64url
-  confirmValue             # the 11 bytes behind §8's words, base64url
-}
+truncate(0)  →  write  →  flush
 ```
 
-**Why one file.** Two files admit an interleaving in which one lands and the
-other does not, and both orders are harmful. A marker without a package **bricks
-the pad**: rule (2) refuses a re-seal of a package Alice never received. A
-package without a marker **releases confirmation words Alice cannot reproduce**,
-which §10.5 already names as the outcome to avoid. Neither is hypothetical —
-both are the ordinary result of a crash between two writes.
+on the target itself, so a crash leaves a target that **exists and is wrong**.
+"One atomic replace" was therefore not a primitive this product has everywhere.
+Two repairs were available and both are refused: narrowing supported browsers to
+make the old prose true would choose the document over the users, and calling
+the fallback atomic would be false. The transaction is restructured instead.
 
-**Write discipline (frozen).** Serialize the complete record, write it to a
-temporary name in the same directory, `flush`, then **replace** the target in one
-step; on any failure, remove the temporary and change nothing. This is the same
-durable-replace discipline the store already applies to `head.json`. The record
-is written **once**, before any package byte is released to the UI (§10.5 step
-5); it is never appended to and never partially updated.
+**Frozen layout.** Three browser-local files. None is Store Format v2, and none
+travels in the six-file courier bundle — this is bookkeeping *about* a pad, not
+part of it.
 
-**One writer.** Every write happens under **`vfs.withLock(pairId)`** — the
-store's own pad lock (§10.10.1), which `seal`, `exportPad` and the importer all
-take. A pad's handoff state therefore has exactly one writer at a time, and that
-writer excludes the importer too.
+```
+<pairId>/handoff.json            the permanent COMMIT MARKER
+<pairId>/handoff/package.tps2    the exact TPS2 bytes    (sealed only)
+<pairId>/handoff/confirm.bin     the exact 11 bytes      (sealed only)
+```
 
-**Dismissal clears the package, never the record.** §10.5 says cleanup removes
-CONFIRMED and SEALED state when the operator dismisses a transfer. Applied
-literally to one file that would delete `handoff.json` — and with it rule (2)'s
-marker, re-opening the pad to a second seal by the ordinary act of tidying up.
-**Frozen: dismissal may clear `package` and `confirmValue`; `pairId`, `mode`,
-`at` and `requestHash` are permanent for the life of the pad.** A dismissed
-transfer is a spent handoff whose bytes are no longer kept, which is exactly what
-the operator asked for and nothing more. After dismissal, a repeat seal of the
-*same* `requestHash` is refused rather than re-encapsulated: §10.5's idempotent
-"return the stored package" needs the package, and inventing a second one is the
-double-encapsulation §10.5 exists to prevent.
+**Frozen marker.** Canonical JSON, written in exactly this property order:
 
-**Not a witness.** `handoff.json` is browser-local bookkeeping. A profile
-rollback can rewind it exactly as it can rewind sender state (§10.5) and
-receiver state (§10.4.1), and the Browser Edition has no independent authority to
-appeal to. This is recorded, not claimed away.
+```
+physical: { "version":1, "pairId", "mode":"physical", "at" }
+
+sealed:   { "version":1, "pairId", "mode":"sealed", "at",
+            "requestHash",      // canonical unpadded base64url, 32 bytes
+            "packageIdentity",  // ditto — SHA-256 of the COMPLETE package
+            "confirmHash" }     // ditto — SHA-256(confirmValue)
+```
+
+The reader need not depend on property order, but refuses everything else: a
+non-object, a missing or extra field, a wrong version, a pairId that is not 32
+lowercase hex or names another pair, an unsupported mode, a non-canonical
+timestamp, malformed or padded or non-canonical base64url, a wrong decoded size,
+a physical marker carrying sealed-only fields, and a sealed marker missing any
+of them. No permissive defaults anywhere.
+
+`packageIdentity` is the §10.1 definition — SHA-256 over the complete TPS2
+bytes — and there is exactly one such definition in the codebase. `confirm.bin`
+holds the 11-byte value and nothing else: never words, never indices, never a
+mnemonic. The marker keeps only `SHA-256(confirmValue)`, so a dismissed
+confirmation is genuinely gone.
+
+### 10.9.1 The marker-last transaction
+
+Under `vfs.withLock(pairId)` — the store's own pad lock (§10.10.1):
+
+1. require the marker **absent**;
+2. remove recognised pre-commit staging (safe only because there is no marker);
+3. write `package.tps2`; 4. read it back and require byte equality;
+5. require `SHA-256(package) == packageIdentity` as supplied;
+6. write `confirm.bin`; 7. read it back and require byte equality;
+8. compute `confirmHash`; 9. build the marker;
+10. **write `handoff.json` LAST**; 11. read it back and strict-parse;
+12. require it to describe the staged bytes;
+13. only now may any package byte or confirmation datum reach a caller.
+
+`handoff.json` **is** the commit point. Everything before it is pre-commit and,
+by invariant, was never released — so it can be discarded and retried. Everything
+after it is spent.
+
+### 10.9.2 Existence is load-bearing
+
+**A `handoff.json` that exists but cannot be read is not "no handoff".**
+Empty, truncated, malformed, semantically invalid, or merely unreadable, it means
+`HANDOFF-SPENT / STATE UNREADABLE`, and every operation that could produce
+another recipient copy refuses. The file is never auto-deleted, never
+auto-repaired, and never interpreted as absence. There is no
+`catch { return absent }` on this path.
+
+This is how the non-atomic fallback fails safely, and it has a price, stated
+plainly:
+
+> **A torn marker may cost the handoff. It must never reopen the pad.
+> LOSS IS ACCEPTABLE. REUSE IS NOT.**
+
+The operator is told that TruePad cannot determine the handoff state and
+therefore will not create another copy. They are **not** told to delete the
+file — that is precisely the action that would convert a lost handoff into a
+reused pad.
+
+### 10.9.3 Crash points, frozen
+
+| Crash point | Marker | Released? | Then |
+| --- | --- | --- | --- |
+| before staging | absent | no | retry |
+| package torn | absent | no | staging is a pre-commit orphan; clean and retry |
+| package done, before confirm | absent | no | clean and retry |
+| package + confirm done, before marker | absent | no | clean and retry |
+| **during the marker's fallback write** | **exists, maybe corrupt** | no | **SPENT / unreadable — never retry with another package** |
+| marker written, worker dies before replying | valid | no | reload the **exact** staged bytes, verify against the marker, return them — **never re-encapsulate** |
+| marker valid, package missing or altered | valid | — | **SPENT / unrecoverable** — no reseal |
+| marker valid, confirmation missing or altered | valid | — | **SPENT / unrecoverable** — no reseal |
+
+### 10.9.4 The marker is permanent
+
+Once `handoff.json` exists it is **never deleted** by normal product operation —
+not on dismissal, download, share, retry, transfer completion, or removing the
+pad from the ordinary UI. Dismissing a sealed transfer may delete
+`handoff/package.tps2` and `handoff/confirm.bin`; it may not delete the marker.
+After that cleanup the pad stays permanently handed off, a same-request re-share
+is correctly unavailable, and **no new package is created in its place**.
+
+### 10.9.5 What the storage layer is not
+
+The substrate persists bytes a caller has already produced. It does not parse
+TPR2, generate keys, encapsulate, choose a pad, judge genesis eligibility, or
+verify any human ceremony — Phase 1C owns all of that, and a storage layer that
+guessed at authorization would be a second, weaker gate. In particular it takes
+no `origin` argument: provenance is the caller's check (§10.7.1), enforced where
+the product decision is made.
+
+**Not a witness.** These files are browser-local bookkeeping. A profile rollback
+can rewind them exactly as it can rewind sender state (§10.5) and receiver state
+(§10.4.1), and the Browser Edition has no independent authority to appeal to.
+Recorded, not claimed away.
 
 ### 10.10 The receive session across tabs
 
@@ -1723,9 +1848,12 @@ TruePad** and is not addressed by this protocol.
 | 46 | X-Wing draft revision drift | Suite `0x0001` is frozen by **this** document | §2.2.1 | A future revision becomes suite `0x0002`; it does not mutate `0x0001` |
 | 47 | **Seal to Bob, then "Save the pad file again" to Charlie** | **Refused** — export after a sealed handoff is `pad-already-sealed` | §10.8 cross-mode policy; one `handoff.json` per pairId (§10.9) | The one existing-verb behaviour change Phase 1 owes. The reverse order (export, then seal) is refused too |
 | 48 | Pad imported by **ordinary courier**, then sealed onward | **Refused** — the courier import writes `origin: "imported"` in the same `pair.json` the commit already writes | §10.7.2 | Same two-time pad as #41 by a different route |
-| 49 | Legacy pad (no `origin` field) sealed | **Refused** — `unknown` is not `generated-here`; no backfill, no guess | §10.7.1 | Gates **sealing only**; legacy pads send, open, export and destroy unchanged |
+| 49 | Legacy pad (no `origin` field) sealed | **Refused** — `unknown` is not `generated-here`; no backfill, no guess | §10.7.1 | Physical export stays available for `unknown` as an explicit legacy boundary, not as evidence forwarding is safe |
 | 50 | Two tabs open the **same** package, or two packages for one request | **Refused** — `openSealed` takes `"spt-recv:"‖requestId` with `ifAvailable` and holds it for the session's life | §10.10 | Deliberately does **not** queue: queueing would let a second decapsulation begin the instant the first session ended |
-| 51 | Crash between the handoff marker and the sealed package | **Not possible** — one file, one atomic replace | §10.9 | Two writes would either brick the pad or release words Alice cannot reproduce |
+| 51 | Crash between the sealed package and the handoff marker | **Safe** — the marker is written LAST and is the commit point; staging without a marker was never released, so it is discarded and retried | §10.9.1 | The Phase-0.6 "one atomic replace" model was withdrawn: `OpfsVfs.writeFileAtomic()` is atomic only where `move()` works |
+| 53 | Crash DURING the marker's own non-atomic write | **Refused thereafter** — a marker that exists and cannot be read is `HANDOFF-SPENT / UNREADABLE`, never absence | §10.9.2 | A torn marker may cost the handoff. It never reopens the pad |
+| 54 | **Imported pad re-exported physically** to a third party | **Refused** — `imported` may not export onward, not only may not seal | §10.7.1 | The walking-pace twin of #41. Gating sealing alone left it open |
+| 55 | Corrupt marker deleted to "unstick" the pad | **Never automatic** — no code path deletes `handoff.json`, and the refusal does not suggest it | §10.9.2, §10.9.4 | Deleting it is exactly what turns a lost handoff into a reused pad |
 | 52 | Stale tab commits after the operator rejected in another tab | **Refused** — `CANCELLED` is written durably before any acknowledgement, and `commitReceive` re-checks | §10.10.3 | Correctness rests on durable state, never on a `BroadcastChannel` notice |
 
 ---

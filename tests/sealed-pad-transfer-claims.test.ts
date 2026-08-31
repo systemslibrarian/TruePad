@@ -18,9 +18,9 @@ const SPEC = readFileSync(join(ROOT, "docs", "SEALED-PAD-TRANSFER.md"), "utf8");
 const FLAT = SPEC.replace(/^\s*>\s?/gm, "").replace(/\*\*/g, "").replace(/\s+/g, " ");
 
 describe("the document says exactly what is and is not implemented", () => {
-  it("carries the Phase 1A status", () => {
+  it("carries the Phase 1B status", () => {
     expect(SPEC).toContain(
-      "STATUS: PHASE 1A — CRYPTOGRAPHIC/TRANSPORT CORE IMPLEMENTED;\nPRODUCT TRANSFER FLOW NOT IMPLEMENTED."
+      "STATUS: PHASE 1B — STORAGE / PROVENANCE FOUNDATION IMPLEMENTED;\nSEALED TRANSFER PRODUCT FLOW NOT IMPLEMENTED."
     );
   });
 
@@ -35,10 +35,11 @@ describe("the document says exactly what is and is not implemented", () => {
   it("lists the product machinery that does NOT exist", () => {
     for (const absent of [
       "persisted receive requests",
-      "handoff.json",
-      "origin` provenance on `pair.json",
+      "one-time recipient `dk` lifecycle",
+      "TPR2 operator ceremony",
+      "sender verification state",
       "cross-tab receive session",
-      "any CLI verb"
+      "any Browser UI, QR, or CLI verb"
     ]) {
       expect(FLAT, `${absent} must be listed as not implemented`).toContain(absent);
     }
@@ -54,15 +55,40 @@ describe("the document says exactly what is and is not implemented", () => {
     }
   });
 
-  it("no product surface reaches the transfer code yet", () => {
-    // The claim "nothing in the shipped product offers it" is checked against
-    // the tree, not trusted to the prose.
-    for (const dir of ["src/browser/engine", "src/browser/ui", "src/cli", "src/cli/v2"]) {
+  it("no product surface reaches the transfer CRYPTO", () => {
+    // Phase 1B gave the browser engine a storage substrate, so a blanket "the
+    // engine never mentions src/spt" is no longer the right guard — it would
+    // now be false for a reason that is fine. The precise claim is that the
+    // engine may use the PURE byte modules (base64url, the frozen sizes, and
+    // the one packageIdentity definition) and may NOT reach the KEM, the key
+    // schedule, or the request codec. Those are Phase 1C.
+    const ENGINE_ALLOWED = new Set(["bytes.ts", "constants.ts", "sealed-package.ts"]);
+    for (const file of readdirSync(join(ROOT, "src/browser/engine"), { withFileTypes: true })) {
+      if (!file.isFile() || !file.name.endsWith(".ts")) continue;
+      const source = readFileSync(join(ROOT, "src/browser/engine", file.name), "utf8");
+      for (const m of source.matchAll(/from "[^"]*spt\/([^"]+)"/g)) {
+        expect(ENGINE_ALLOWED.has(m[1]), `engine/${file.name} may not import spt/${m[1]}`).toBe(true);
+      }
+    }
+    // The UI and the CLI reach NONE of it. There is no user-facing surface.
+    for (const dir of ["src/browser/ui", "src/cli", "src/cli/v2"]) {
       for (const file of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
         if (!file.isFile() || !file.name.endsWith(".ts")) continue;
         const source = readFileSync(join(ROOT, dir, file.name), "utf8");
         expect(source, `${dir}/${file.name} must not reach src/spt`).not.toMatch(/from "[^"]*spt\//);
       }
+    }
+  });
+
+  it("the KEM is still absent from the shipped browser bundle", () => {
+    // The engine imports only pure byte modules, so no X-Wing, ML-KEM, SHA-3 or
+    // X25519 code should reach dist. If this fails, an import crept sideways.
+    const dist = join(ROOT, "dist", "assets");
+    if (!existsSync(dist)) return; // no build in this run
+    for (const file of readdirSync(dist)) {
+      if (!file.endsWith(".js")) continue;
+      const source = readFileSync(join(dist, file), "utf8");
+      expect(source, `${file} must not contain KEM code`).not.toMatch(/ml_kem768|x25519|shake256|sha3_256/);
     }
   });
 
@@ -89,10 +115,14 @@ describe("the document says exactly what is and is not implemented", () => {
     expect(lock.packages["node_modules/@noble/post-quantum"].integrity).toMatch(/^sha512-/);
   });
 
-  it("the Phase 1B storage prerequisite is carried, not quietly dropped", () => {
-    expect(FLAT).toMatch(/PHASE 1B STORAGE-INTEGRATION PREREQUISITE/);
-    expect(FLAT).toMatch(/writeFileAtomic\(\)`?\s*is genuinely atomic only where/);
-    expect(FLAT).toMatch(/It is not papered\s*over/);
+  it("says what became of the storage prerequisite, and does not claim the platform got safer", () => {
+    expect(FLAT).toMatch(/The Phase-1A storage prerequisite, and what became of it/);
+    expect(FLAT).toMatch(/atomic only where `FileSystemFileHandle\.move\(\)`\s*exists/);
+    // The resolution taken, named as one of the three that were open.
+    expect(FLAT).toMatch(/Phase 1B took the first: §10\.9 is now marker-last/);
+    // ...and the honest standing fact.
+    expect(FLAT).toMatch(/fallback is still not atomic/);
+    expect(FLAT).toMatch(/rather than trusting `MemoryVfs`/);
   });
 });
 
@@ -231,7 +261,7 @@ describe("the X-Wing suite is COMPLETELY frozen, not just its combiner", () => {
     expect(SPEC).toContain("ct[1088:1120]");
     // The mandated check, and the deliberately absent one.
     expect(FLAT).toMatch(/FIPS 203 §7\.2/);
-    expect(FLAT).toMatch(/declines to mandate a check, and TruePad does not add one/);
+    expect(FLAT).toMatch(/three facts, and TruePad adds no check of\s*its own/i);
   });
 
   it("names every random-oracle dependency, not only the combiner", () => {
@@ -555,11 +585,25 @@ describe("provenance has ONE frozen representation", () => {
   });
 
   it("unknown provenance is not generated-here, and is never backfilled", () => {
-    expect(FLAT).toMatch(/unknown` is not `generated-here|unknown is not generated-here/);
+    expect(FLAT).toMatch(/A pad whose provenance is `unknown` may not be sealed/);
     expect(FLAT).toMatch(/No migration, no backfill/);
     expect(FLAT).toMatch(/The absence of a field is information/);
-    // It gates sealing ONLY — legacy pads keep working.
-    expect(FLAT).toMatch(/gates sealing only/i);
+  });
+
+  it("an imported pad may not be EXPORTED onward either, not only not sealed", () => {
+    // The walking-pace twin of the sealed hole. Gating sealing alone left it
+    // open, and the document now says so in its own words.
+    expect(FLAT).toMatch(/And an `imported` pad may not be exported onward either/);
+    expect(FLAT).toMatch(/An earlier draft\s*gated \*?sealing\*? only/);
+    expect(FLAT).toMatch(/done with a file manager/);
+    expect(FLAT).toMatch(/never, by either route/i);
+  });
+
+  it("unknown keeping physical export is called a legacy boundary, not a safety finding", () => {
+    expect(FLAT).toMatch(/legacy compatibility boundary, and not\s*evidence that forwarding is safe/);
+    expect(FLAT).toMatch(/stated as a\s*concession, not a finding/);
+    // And the reason software refuses one and not the other is given.
+    expect(FLAT).toMatch(/Software\s*refuses what it knows, and documents what it cannot/);
   });
 
   it("the ordinary courier import records imported, in the existing write", () => {
@@ -583,16 +627,46 @@ describe("the cross-mode gap is closed by policy, not by assumption", () => {
   });
 });
 
-describe("the sender handoff record is one file, one atomic replace", () => {
-  it("names the file and forbids two writes", () => {
-    expect(SPEC).toContain("<pairId>/handoff.json");
-    expect(FLAT).toMatch(/Never two files, never two writes/);
-    expect(FLAT).toMatch(/atomically replace/);
+describe("the sender handoff record is marker-last", () => {
+  it("withdraws the one-atomic-file model, and says why", () => {
+    expect(FLAT).toMatch(/The Phase-0\.6 model is withdrawn/);
+    expect(FLAT).toMatch(/right about the hazard and wrong about the primitive/);
+    // Both bad repairs are refused by name.
+    expect(FLAT).toMatch(/narrowing supported browsers to\s*make the old prose true would choose the document over the users/);
+    expect(FLAT).toMatch(/calling\s*the fallback atomic would be false/);
   });
 
-  it("says what each half-write would cost", () => {
-    expect(FLAT).toMatch(/A marker without a package bricks\s*the pad/);
-    expect(FLAT).toMatch(/A\s*package without a marker releases confirmation words Alice cannot reproduce/);
+  it("names the three files and puts the marker LAST", () => {
+    expect(SPEC).toContain("<pairId>/handoff.json");
+    expect(SPEC).toContain("<pairId>/handoff/package.tps2");
+    expect(SPEC).toContain("<pairId>/handoff/confirm.bin");
+    expect(FLAT).toMatch(/write `handoff\.json` LAST/);
+    expect(FLAT).toMatch(/`handoff\.json` is the commit point/i);
+  });
+
+  it("no package byte is released before the commit", () => {
+    expect(FLAT).toMatch(/only now may any package byte or confirmation datum reach a caller/i);
+    expect(FLAT).toMatch(/Everything before it is pre-commit and,\s*by invariant, was never released/);
+  });
+
+  it("existence is load-bearing: a torn marker is SPENT, never absence", () => {
+    expect(FLAT).toMatch(/A `handoff\.json` that exists but cannot be read is not "no handoff"/);
+    expect(FLAT).toMatch(/HANDOFF-SPENT \/ STATE UNREADABLE/);
+    expect(FLAT).toMatch(/LOSS IS ACCEPTABLE\. REUSE IS NOT/);
+    expect(FLAT).toMatch(/There is no\s*`catch \{ return absent \}` on this path/);
+    // ...and the operator is not told to delete it.
+    expect(FLAT).toMatch(/They are not told to delete the\s*file/);
+  });
+
+  it("the marker is permanent", () => {
+    expect(FLAT).toMatch(/Once `handoff\.json` exists it is never deleted by normal product operation/);
+    expect(FLAT).toMatch(/it may not delete the marker/);
+    expect(FLAT).toMatch(/no new package is created in its place/i);
+  });
+
+  it("the storage layer is not the authorization layer", () => {
+    expect(FLAT).toMatch(/it takes\s*no `origin` argument/);
+    expect(FLAT).toMatch(/a storage layer that\s*guessed at authorization would be a second, weaker gate/);
   });
 
   it("is not claimed to be a rollback authority", () => {
@@ -696,11 +770,15 @@ describe("the session lock is released on every path", () => {
 });
 
 describe("tidying up cannot un-spend a handoff", () => {
-  it("dismissal clears the package, never the record", () => {
-    expect(FLAT).toMatch(/Dismissal clears the package, never the record/);
-    expect(FLAT).toMatch(/`pairId`, `mode`,\s*`at` and `requestHash` are permanent for the life of the pad/);
-    // The specific regression: deleting the file re-opens the pad to a second seal.
-    expect(FLAT).toMatch(/re-opening the pad to a second seal by the ordinary act of tidying up/);
+  it("dismissal clears the payload files, never the marker", () => {
+    // The §10.9 rewrite moved the payload out of the marker, so the rule is now
+    // stated over files rather than fields — but it is the same rule, and the
+    // same regression it exists to prevent: tidying up must not re-open the pad.
+    expect(FLAT).toMatch(/Dismissing a sealed transfer may delete/);
+    expect(FLAT).toMatch(/it may not delete the marker/);
+    expect(FLAT).toMatch(/the pad stays permanently handed off/);
+    expect(FLAT).toMatch(/no new package is created in its place/i);
+    expect(FLAT).toMatch(/a same-request re-share\s*is correctly unavailable/);
   });
 });
 
@@ -714,5 +792,128 @@ describe("provenance is not claimed to survive endpoint compromise", () => {
   it("says OPFS is reachable from the page", () => {
     expect(FLAT).toMatch(/OPFS is reachable from the page as well\s*as the worker/);
     expect(FLAT).toMatch(/it is not a hole this\s*field could close/i);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Phase 1B — the storage foundation, checked against the tree
+ * ------------------------------------------------------------------------ */
+
+describe("the normative spec and the validation record do not drift apart", () => {
+  const VALIDATION = readFileSync(join(ROOT, "docs", "SEALED-PAD-TRANSFER-VALIDATION.md"), "utf8");
+  const VFLAT = VALIDATION.replace(/^\s*>\s?/gm, "").replace(/\*\*/g, "").replace(/\s+/g, " ");
+
+  it("both say the same three things about the all-zero abort", () => {
+    for (const doc of [FLAT, VFLAT]) {
+      // draft-10 specifies none...
+      expect(doc).toMatch(/draft-10 specifies no all-zero abort|specifies no all-zero abort/);
+      // ...TruePad adds none...
+      expect(doc).toMatch(/TruePad (adds|writes) no such check|TruePad adds no check of its own/);
+      // ...the dependency does, on RFC 7748's permission, and it is accepted.
+      expect(doc).toMatch(/RFC 7748 §6\.1/);
+    }
+    // The specific claim, in the normative document: the DEPENDENCY aborts, and
+    // that is accepted. Dropping it would leave the spec saying nothing aborts
+    // while the record says one does.
+    expect(FLAT).toMatch(/The pinned dependency does abort, and TruePad accepts that/);
+    expect(VFLAT).toMatch(/Noble aborts on an all-zero X25519 result/);
+    expect(FLAT).toMatch(/It is inherited,\s*not added/);
+    expect(FLAT).toMatch(/The decision to keep the dependency is closed/);
+    // The normative section points at the record, so a reader cannot get one
+    // half of the story.
+    expect(FLAT).toMatch(/SEALED-PAD-TRANSFER-VALIDATION\.md` §6 is the full\s*record; the two documents must not drift apart/);
+  });
+});
+
+describe("Phase 1B implemented what it says it implemented", () => {
+  /** Prose in this codebase quotes the anti-patterns it forbids, so a guard
+   *  that scanned raw text would fire on the very comment explaining the rule.
+   *  These guards read CODE. */
+  const codeOf = (rel: string) =>
+    readFileSync(join(ROOT, rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const verbs = readFileSync(join(ROOT, "src/browser/engine/verbs.ts"), "utf8");
+  const verbsCode = codeOf("src/browser/engine/verbs.ts");
+  const handoff = readFileSync(join(ROOT, "src/browser/engine/handoff.ts"), "utf8");
+  const handoffCode = codeOf("src/browser/engine/handoff.ts");
+
+  it("gen writes generated-here and import writes imported, in the same pair.json", () => {
+    expect(verbs).toMatch(/origin: "generated-here"/);
+    expect(verbs).toMatch(/origin: "imported"/);
+    // One writer for pair.json, so provenance cannot arrive by a second path.
+    expect(verbs.match(/async function writePairMeta/g)?.length).toBe(1);
+    // No separate provenance file anywhere.
+    expect(verbsCode).not.toMatch(/origin\.json|provenance\.json/);
+  });
+
+  it("there is no backfill and no inference", () => {
+    // `unknown` is never written, and nothing derives origin from counters,
+    // genesis or a timestamp.
+    expect(verbsCode).not.toMatch(/origin: "unknown"[^;]*writeFileAtomic/);
+    expect(verbsCode).not.toMatch(/origin\s*=\s*.*(createdAt|nextOffset|genesis)/);
+    // Reading it never rewrites it: readPairMeta has no write.
+    const readFn = verbsCode.slice(verbsCode.indexOf("async function readPairMeta"), verbsCode.indexOf("async function writePairMeta"));
+    expect(readFn).not.toMatch(/writeFileAtomic|writePairMeta/);
+  });
+
+  it("export refuses an imported pad, a sealed marker, and a torn marker", () => {
+    const fn = verbsCode.slice(verbsCode.indexOf("async function exportImpl"), verbsCode.indexOf("function validateBundleFileSet"));
+    expect(fn).toMatch(/imported-pair-cannot-export/);
+    expect(fn).toMatch(/REFUSE_ALREADY_SEALED/);
+    expect(fn).toMatch(/REFUSE_UNREADABLE/);
+    // The marker is committed AFTER the container is built, and only when absent.
+    expect(fn.indexOf("packContainer(")).toBeLessThan(fn.indexOf("commitPhysicalHandoff("));
+    expect(fn).toMatch(/if \(handoff\.kind === "absent"\)\s*\{\s*await commitPhysicalHandoff/);
+  });
+
+  it("the handoff module never treats a present marker as absence", () => {
+    // The specific anti-pattern the whole design turns on.
+    expect(handoffCode).not.toMatch(/catch\s*\{[^}]*absent/);
+    expect(handoffCode).toMatch(/kind: "unreadable-spent"/);
+    // ...and nothing in it ever removes the marker.
+    const removals = [...handoffCode.matchAll(/vfs\.remove\(([^)]*)\)/g)].map((m) => m[1]);
+    expect(removals.length).toBeGreaterThan(0);
+    for (const target of removals) {
+      expect(target, `handoff.ts must never remove ${target}`).not.toMatch(/markerPath/);
+    }
+  });
+
+  it("the marker is the last write of the sealed transaction", () => {
+    const fn = handoffCode.slice(handoffCode.indexOf("export async function commitSealedHandoff"));
+    expect(fn.indexOf("handoffPackagePath")).toBeLessThan(fn.indexOf("writeAndVerifyMarker"));
+    expect(fn.indexOf("handoffConfirmPath")).toBeLessThan(fn.indexOf("writeAndVerifyMarker"));
+  });
+
+  it("the storage helpers are not worker RPCs", () => {
+    const protocol = readFileSync(join(ROOT, "src/browser/engine/protocol.ts"), "utf8");
+    for (const name of ["commitSealedHandoff", "loadCommittedSealedHandoff", "dismissSealedPayload", "seal", "openSealed"]) {
+      expect(protocol, `${name} must not be an engine op`).not.toMatch(new RegExp(`op: "${name}"`));
+    }
+    // And no UI reaches them.
+    for (const file of readdirSync(join(ROOT, "src/browser/ui"))) {
+      if (!file.endsWith(".ts")) continue;
+      // "physical handoff" appears in the claims copy as ordinary English; what
+      // must not appear is a reference to the storage module or its helpers.
+      const ui = codeOf(join("src/browser/ui", file));
+      expect(ui, `${file} must not reach the handoff storage`).not.toMatch(
+        /handoff\.ts|commitSealedHandoff|readHandoffState|dismissSealedPayload/
+      );
+    }
+  });
+
+  it("there is exactly one pad lock namespace", () => {
+    // Phase 0.6's lesson: two locks over one pair exclude nothing.
+    for (const file of ["verbs.ts", "handoff.ts"]) {
+      const source = codeOf(join("src/browser/engine", file));
+      expect(source, `${file} must not open a second pad lock namespace`).not.toMatch(/"spt-pad:|"spt-seal:/);
+      for (const m of source.matchAll(/withLock\(([^,)]+)[,)]/g)) {
+        expect(m[1].trim(), `${file} locks on ${m[1]}`).toMatch(/^(pairId|scope|req\.pairId)$/);
+      }
+    }
+  });
+
+  it("the courier bundle still lists exactly the six FORMAT-V2 files", () => {
+    const bundle = verbsCode.slice(verbsCode.indexOf("const BUNDLE_FILES"), verbsCode.indexOf("const BUNDLE_FILE_SET"));
+    expect(bundle).not.toMatch(/pair\.json|handoff|origin|PAIR_META_FILE/);
+    expect((bundle.match(/SUBDIR/g) ?? []).length).toBe(6);
   });
 });
