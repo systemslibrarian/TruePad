@@ -55,7 +55,7 @@ test("a non-technical happy path: create → save pad → send → import → op
   const padPath = testInfo.outputPath("shared.pad");
   const [download] = await Promise.all([
     alice.waitForEvent("download"),
-    alice.getByRole("button", { name: "Save pad for other person" }).click()
+    alice.getByRole("button", { name: "Save pad file" }).click()
   ]);
   await download.saveAs(padPath);
 
@@ -71,6 +71,9 @@ test("a non-technical happy path: create → save pad → send → import → op
   await bob.goto("/");
   await bob.getByRole("button", { name: "Add a shared pad" }).click();
   await expect(bob.getByRole("heading", { name: "Add a shared pad" })).toBeVisible();
+  // The method chooser: this is the pad-FILE half of it.
+  await bob.getByText("I have a pad file").click();
+  await expect(bob.getByRole("heading", { name: "Add a pad file" })).toBeVisible();
   await bob.getByPlaceholder("e.g. Chat with Sam").fill("Chat with Alice");
   await bob.locator('input[type="file"]').setInputFiles(padPath);
   await bob.getByRole("button", { name: "Add pad" }).click();
@@ -141,7 +144,7 @@ test("compact transport: TP2 is what you copy, canonical JSON is one disclosure 
   const padPath = testInfo.outputPath("compact.pad");
   const [download] = await Promise.all([
     alice.waitForEvent("download"),
-    alice.getByRole("button", { name: "Save pad for other person" }).click()
+    alice.getByRole("button", { name: "Save pad file" }).click()
   ]);
   await download.saveAs(padPath);
   await alice.getByRole("button", { name: "Start using TruePad" }).click();
@@ -163,6 +166,7 @@ test("compact transport: TP2 is what you copy, canonical JSON is one disclosure 
   const bob = await bobContext.newPage();
   await bob.goto("/");
   await bob.getByRole("button", { name: "Add a shared pad" }).click();
+  await bob.getByText("I have a pad file").click();
   await bob.getByPlaceholder("e.g. Chat with Sam").fill("Compact chat");
   await bob.locator('input[type="file"]').setInputFiles(padPath);
   await bob.getByRole("button", { name: "Add pad" }).click();

@@ -13,6 +13,7 @@
  * ========================================================================= */
 
 import { h, icon } from "./dom.ts";
+import { friendlyRefusal } from "./spt-shared.ts";
 import type { Ctx } from "./context.ts";
 
 function suggestedFilename(pairId: string): string {
@@ -50,7 +51,10 @@ export function savePadFileButton(
     const reply = await ctx.engine.exportPair({ pairId });
     btn.disabled = false;
     if (!reply.ok) {
-      ctx.toast(`Could not prepare the pad file: ${reply.message}`, "danger");
+      // A pad that already left by the OTHER route refuses here, and the
+      // operator gets the plain reason rather than the engine's sentence. The
+      // engine is the authority on eligibility; this only translates it.
+      ctx.toast(reply.kind === "refused" ? friendlyRefusal(reply.reason) : reply.message, "danger");
       return;
     }
     triggerDownload(reply.container, suggestedFilename(pairId));

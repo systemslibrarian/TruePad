@@ -18,36 +18,46 @@ const SPEC = readFileSync(join(ROOT, "docs", "SEALED-PAD-TRANSFER.md"), "utf8");
 const FLAT = SPEC.replace(/^\s*>\s?/gm, "").replace(/\*\*/g, "").replace(/\s+/g, " ");
 
 describe("the document says exactly what is and is not implemented", () => {
-  it("carries the Phase 1C status", () => {
-    expect(SPEC).toContain(
-      "STATUS: PHASE 1C — SEALED PAD TRANSFER ENGINE FLOW IMPLEMENTED;\nBEGINNER PRODUCT UI NOT YET OFFERED."
-    );
+  it("carries the Phase 1D status", () => {
+    expect(SPEC).toContain("STATUS: PHASE 1D — BEGINNER BROWSER SEALED PAD TRANSFER UI IMPLEMENTED.");
+    // And no longer carries the Phase 1C one, in any form. A status line left
+    // behind is worse than none: it is a false statement with a date on it.
+    expect(SPEC).not.toContain("BEGINNER PRODUCT UI NOT YET OFFERED");
+    expect(SPEC).not.toMatch(/STATUS: PHASE 1[ABC]\b/);
   });
 
-  it("says the engine exists and the product still does not offer it", () => {
-    expect(FLAT).toMatch(/TruePad does not offer online sealed pad transfer/);
-    expect(FLAT).toMatch(/The engine exists; no\s*product surface reaches it/);
+  it("says where it IS offered, and where it is not", () => {
+    expect(FLAT).toMatch(/Sealed transfer is offered in the Browser Edition/);
+    expect(FLAT).toMatch(/The CLI offers nothing of it/);
     expect(FLAT).toMatch(/it cannot know who\s*spoke first/);
     expect(FLAT).toMatch(/Indices are not a mnemonic/);
   });
 
   it("refuses the promotion the status line invites", () => {
-    // Phase 1A ships a cryptographic core, not a feature. The sentence a
-    // reader would otherwise write for us is refused in the document itself.
-    expect(FLAT).toMatch(/Nothing in the shipped product offers sealed transfer/);
-    expect(FLAT).toMatch(/TruePad does not support online PQC pad transfer/);
-    expect(FLAT).toMatch(/There is no UI, no\s*verb, no menu item/);
+    // Shipping the UI is exactly when "so it's the recommended way now" gets
+    // written. The document refuses it in its own voice: offered, not default,
+    // not better, and never without the claim distinction.
+    expect(FLAT).toMatch(/It is not the default and not presented as\s*better/);
+    expect(FLAT).toMatch(/the claim distinction travels with the online path wherever it is\s*offered/);
+    // The old absence claims are GONE, not merely contradicted elsewhere.
+    expect(FLAT).not.toMatch(/Nothing in the shipped product offers sealed transfer/);
+    expect(FLAT).not.toMatch(/TruePad does not support online PQC pad transfer/);
+    expect(FLAT).not.toMatch(/TruePad does not offer online sealed pad transfer/);
+    expect(FLAT).not.toMatch(/no\s*product surface reaches it/);
   });
 
-  it("lists the product machinery that does NOT exist", () => {
+  it("lists the product machinery that STILL does not exist", () => {
     for (const absent of [
-      "any Browser screen, button, route or file picker",
       "QR encoding or scanning",
-      "word rendering",
-      "beginner ceremony UX",
-      "any CLI sealed-transfer command"
+      "any CLI sealed-transfer command",
+      "any upload, backend, account, analytics or sync"
     ]) {
       expect(FLAT, `${absent} must be listed as not implemented`).toContain(absent);
+    }
+    // ...and the machinery Phase 1D DID build is named, so "still not offered"
+    // can never quietly re-absorb it.
+    for (const built of ["the method chooser", "receiver-first masking", "the comparison wordlist"]) {
+      expect(FLAT, `${built} must be recorded as implemented`).toContain(built);
     }
   });
 
@@ -1169,7 +1179,7 @@ describe("the request claim is enforced in storage, not merely documented", () =
     expect(fn).toMatch(/if \(!landed\) throw error/);
   });
 
-  it("no product surface reaches the claim yet", () => {
+  it("the request claim stays inside the worker — no RPC and no UI reaches it", () => {
     const protocol = readFileSync(join(ROOT, "src/browser/engine/protocol.ts"), "utf8");
     for (const name of ["claimRequestForPair", "readRequestClaim", "requireClaimedByPair"]) {
       expect(protocol, `${name} must not be an engine op`).not.toContain(name);
@@ -1477,16 +1487,19 @@ describe("the engine's write order is structural", () => {
     expect(verbs.match(/readFile\(`\$\{pairId\}\/\$\{rel\}`\)/g)?.length).toBe(1);
   });
 
-  it("no SPT screen exists", () => {
+  it("the UI reaches the engine, never the cryptography", () => {
+    // Phase 1D builds the screens, so "no SPT screen exists" is retired — it
+    // was correct only while the feature had no surface. What still holds is
+    // the boundary: the UI calls typed RPCs and maps indices to words. It does
+    // not import the KEM, the key schedule, or any hashing. If it recomputed a
+    // fingerprint, a bug there could make the words agree while the underlying
+    // values did not, which is the failure the comparison exists to catch.
     for (const file of readdirSync(join(ROOT, "src/browser/ui"))) {
       if (!file.endsWith(".ts")) continue;
       const ui = readFileSync(join(ROOT, "src/browser/ui", file), "utf8");
-      expect(ui, `${file} must not offer sealed transfer`).not.toMatch(
-        /spt-create-request|spt-seal|spt-open-sealed|Send securely online|Receive a pad/
-      );
+      expect(ui, `${file} must not import spt crypto`).not.toMatch(/from "[^"]*spt\//);
+      expect(ui, `${file} must not hash anything`).not.toMatch(/crypto\.subtle|requestFingerprint\(|packageIdentity\(/);
     }
-    const main = readFileSync(join(ROOT, "src/browser/main.ts"), "utf8");
-    expect(main).not.toMatch(/spt-|sealed-transfer/);
   });
 });
 
@@ -1598,5 +1611,172 @@ describe("every TTL decision reads the clock under its own lock", () => {
     expect(FLAT).toMatch(/TTL is judged at the decision, not before the wait/);
     expect(FLAT).toMatch(/has expired, and is treated as expired/);
     expect(FLAT).toMatch(/would let a queue extend a deadline, and the deadline\s*is the point/);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Phase 1D — the beginner UI
+ * ------------------------------------------------------------------------ */
+
+describe("the online-transfer UI keeps its promises", () => {
+  /** Source with comments removed. Comments in this codebase deliberately quote
+   *  the anti-patterns they forbid, so a guard that scanned raw text would fire
+   *  on the very explanation of the rule. */
+  const codeOf = (f: string) =>
+    readFileSync(join(ROOT, "src/browser/ui", f), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
+  /** Comment-stripped source. An earlier version of this helper tried to pull
+   *  out only the string literals, which desynchronises the moment a template
+   *  literal contains a quote — after that, code reads as copy and copy as
+   *  code. Scanning the whole of the comment-stripped source is coarser and
+   *  correct; the terms below do not appear as identifiers in UI code. */
+  const copyOf = (f: string) => codeOf(f);
+
+  const receive = codeOf("receive-online.ts");
+  const send = codeOf("send-online.ts");
+  const shared = codeOf("spt-shared.ts");
+  const create = codeOf("create-pair.ts");
+  const dashboard = codeOf("dashboard.ts");
+  const home = codeOf("home.ts");
+  const main = readFileSync(join(ROOT, "src/browser/main.ts"), "utf8").replace(/\/\/.*$/gm, "");
+  const ALL_COPY = ["receive-online.ts", "send-online.ts", "spt-shared.ts", "create-pair.ts", "dashboard.ts", "home.ts"]
+    .map(copyOf)
+    .join("\n");
+
+  it("the home screen gained nothing", () => {
+    expect(copyOf("home.ts")).not.toMatch(/Send securely online|Receive securely online|QR|Post-Quantum|X-Wing/);
+    expect(home).toMatch(/Add a shared pad/);
+  });
+
+  it("Level 1 speaks no cryptography", () => {
+    // The collapsed technical panel is the ONE place any of this may appear,
+    // and it lives in spt-shared.ts. Everything a person meets on the way
+    // through must be ordinary English.
+    const level1 = ["receive-online.ts", "send-online.ts", "create-pair.ts", "dashboard.ts", "home.ts"]
+      .map(copyOf)
+      .join("\n")
+      .toLowerCase();
+    for (const jargon of ["ml-kem", "x25519", "x-wing", "decapsulat", "post-quantum", "aes-gcm", "hkdf", "aead", "ciphertext"]) {
+      expect(level1, `"${jargon}" must stay under Details`).not.toContain(jargon);
+    }
+  });
+
+  it("all twelve and all eight words are rendered — no partial comparison", () => {
+    expect(shared).toMatch(/Check all \$\{count\}/);
+    expect(ALL_COPY).not.toMatch(/first (three|3) words|quick verification|short code|close enough/i);
+    expect(receive).toMatch(/checkAllNote\(12\)/);
+    expect(receive).toMatch(/checkAllNote\(8\)/);
+    expect(send).toMatch(/checkAllNote\(12\)/);
+    expect(send).toMatch(/checkAllNote\(8\)/);
+  });
+
+  it("the sender's words are BUILT on reveal, not hidden by CSS", () => {
+    const sealed = send.slice(send.indexOf("function sealedCard"));
+    expect(sealed).toMatch(/heard\.addEventListener\("click"[\s\S]{0,240}comparisonWords\(indices/);
+    const beforeReveal = sealed.slice(0, sealed.indexOf("heard.addEventListener"));
+    expect(beforeReveal, "nothing may render the words before the reveal").not.toMatch(/comparisonWords\(indices/);
+    // Never smuggled into markup, storage, the URL, or a log instead.
+    expect(send).not.toMatch(/display:\s*none|visibility:\s*hidden/);
+    expect(send).not.toMatch(/localStorage|sessionStorage|console\.|dataset:/);
+  });
+
+  it("the recipient sees their words immediately — receiver-first", () => {
+    const confirm = receive.slice(receive.indexOf("export function renderReceiveConfirm"));
+    expect(confirm).toMatch(/comparisonWords\(session\.confirmationIndices/);
+    expect(copyOf("receive-online.ts")).toMatch(/Read these words to the sender FIRST/);
+  });
+
+  it("the three recipient buttons map to three different outcomes, once each", () => {
+    const confirm = receive.slice(receive.indexOf("export function renderReceiveConfirm"));
+    expect(confirm.match(/sptCommitReceive\(/g)?.length).toBe(1);
+    expect(confirm.match(/sptReject\(/g)?.length).toBe(1);
+    // Twice: the explicit "Close for now" button, and the route cleanup.
+    expect(confirm.match(/sptAbandon\(/g)?.length).toBe(2);
+  });
+
+  it("leaving the confirmation screen abandons the session", () => {
+    const confirm = receive.slice(receive.indexOf("export function renderReceiveConfirm"));
+    expect(confirm).toMatch(/ctx\.onLeave\(/);
+    expect(confirm).toMatch(/sptAbandon\(\{ sessionId: session\.sessionId \}\)/);
+    expect(main).toMatch(/runLeaveHandlers\(\)/);
+  });
+
+  it("commit, confirm and seal carry only their handles", () => {
+    expect(receive).toMatch(/sptCommitReceive\(\{ sessionId: session\.sessionId \}\)/);
+    expect(send).toMatch(/sptConfirmRequest\(\{ reviewId \}\)/);
+    expect(send).toMatch(/sptSeal\(\{ requestHash, pairId \}\)/);
+    expect(receive).not.toMatch(/sptCommitReceive\(\{[^}]*(package|pairId|bytes)/);
+    expect(send).not.toMatch(/sptConfirmRequest\(\{[^}]*(text|body|package)/);
+    expect(send).not.toMatch(/sptSeal\(\{[^}]*(body|container|bytes)/);
+  });
+
+  it("the receive code is copyable; the raw pad still is not", () => {
+    expect(receive).toMatch(/clipboard\.writeText\(req\.tpr2\)/);
+    expect(copyOf("receive-online.ts")).toMatch(/Receive code copied/);
+    expect(copyOf("receive-online.ts")).not.toMatch(/Secret copied/);
+    expect(codeOf("courier.ts"), "the pad file still never reaches the clipboard").not.toMatch(/clipboard/);
+  });
+
+  it("the sealed file is saved as EXACT bytes, with no wrapper", () => {
+    expect(shared).toMatch(/new File\(\[copy\], filename/);
+    expect(shared).not.toMatch(/btoa|base64/i);
+    expect(shared).toMatch(/\.tps2/);
+  });
+
+  it("nothing uploads, and no QR service is contacted", () => {
+    const allCode = ["receive-online.ts", "send-online.ts", "spt-shared.ts"].map(codeOf).join("\n");
+    expect(allCode).not.toMatch(/fetch\(|XMLHttpRequest|chart\.googleapis|api\.qrserver/);
+    // The distinction has to be in the COPY, not only in a comment: TruePad
+    // makes the file; the person chooses the channel.
+    expect(copyOf("send-online.ts")).toMatch(/TruePad does not send it for you/);
+  });
+
+  it("the words are never called a mnemonic or a recovery phrase", () => {
+    const wordlist = readFileSync(join(ROOT, "src/browser/ui/wordlist/index.ts"), "utf8");
+    const code = wordlist.replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(ALL_COPY + code).not.toMatch(/generateMnemonic|seedPhrase|recoveryPhrase|seed phrase|recovery phrase/i);
+    expect(wordlist).toMatch(/not mnemonics/i);
+  });
+
+  it("online delivery is never called information-theoretic, and the distinction is stated", () => {
+    expect(copyOf("spt-shared.ts")).toMatch(/does not have the same information-theoretic claim/);
+    for (const bad of [/perfectly secure/i, /unbreakable/i, /quantum[- ]proof/i, /quantum[- ]safe/i, /identity verified/i, /authenticated (bob|person)/i, /safe to email/i]) {
+      expect(ALL_COPY, `overclaim ${String(bad)}`).not.toMatch(bad);
+    }
+    expect(copyOf("send-online.ts")).toMatch(/The words matched/);
+    expect(copyOf("send-online.ts")).not.toMatch(/\bVerified\b/);
+  });
+
+  it("the HNDL note is honest about what deleting can and cannot do", () => {
+    expect(copyOf("spt-shared.ts")).toMatch(/could become readable/);
+    expect(copyOf("spt-shared.ts")).toMatch(/Delete copies you no longer need/);
+    expect(ALL_COPY).not.toMatch(/erase[^"]{0,40}(email|chat|cloud|backup)/i);
+  });
+
+  it("a removed pad's history cannot resurface through a transfer error", () => {
+    const friendly = shared.slice(shared.indexOf('case "pair-destroyed"'), shared.indexOf("default:"));
+    expect(friendly).toMatch(/This pad can't be added\. Ask the other person for a new pad\./);
+    expect(friendly).not.toMatch(/label|createdAt|previously|used to be/i);
+  });
+
+  it("the four core actions stay primary; sharing lives in details", () => {
+    for (const tile of ["Send message", "Open message", "Send file", "Open file"]) {
+      expect(dashboard, `${tile} must remain`).toContain(tile);
+    }
+    expect(dashboard.indexOf("Send securely online")).toBeGreaterThan(dashboard.indexOf("Open file"));
+    expect(copyOf("dashboard.ts")).not.toMatch(/PQC|Quantum-safe|Hybrid|OTP Secure|128-bit/);
+  });
+
+  it("both delivery methods are offered on the created-pad screen, neither automatic", () => {
+    expect(copyOf("create-pair.ts")).toMatch(/Send securely online/);
+    expect(copyOf("create-pair.ts")).toMatch(/Save pad file/);
+    expect(copyOf("create-pair.ts")).toMatch(/Use one delivery method for each pad/);
+    expect(create).not.toMatch(/autoExport|setTimeout\([^)]*export/);
+  });
+
+  it("the session handle never reaches the URL", () => {
+    expect(main).toMatch(/case "receive-confirm":\s*\n\s*return "#\/receive-confirm";/);
+    expect(receive).not.toMatch(/location\.hash|history\.pushState/);
   });
 });

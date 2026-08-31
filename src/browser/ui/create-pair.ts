@@ -470,14 +470,26 @@ function renderCreated(ctx: Ctx, root: HTMLElement, pairId: string, claim: Sourc
     icon("chevron")
   ) as HTMLButtonElement;
 
-  const saveBtn = savePadFileButton(ctx, pairId, "Save pad for other person", {
+  const saveBtn = savePadFileButton(ctx, pairId, "Save pad file", {
     variant: "primary lg",
     onSaved: () => {
       // Once the pad file exists on disk, the next step is no longer saving it.
       saveBtn.className = "btn lg";
+      onlineBtn.className = "btn lg";
       startBtn.className = "btn primary lg";
     }
   });
+
+  // Both delivery methods, offered together, neither preselected. The FIRST one
+  // that succeeds decides this pad's handoff mode for good — the engine records
+  // it and refuses the other afterwards — so the choice belongs here, before
+  // either irreversible step, rather than being implied by which button is
+  // bigger.
+  const onlineBtn = h(
+    "button",
+    { class: "btn primary lg", type: "button", on: { click: () => ctx.navigate({ name: "send-online", pairId }) } },
+    h("span", { text: "Send securely online" })
+  ) as HTMLButtonElement;
 
   // The pad source is only half of an OTP deployment: the pad FILE is secret
   // too. The essential warning is the same on both paths; the ceremony
@@ -502,7 +514,20 @@ function renderCreated(ctx: Ctx, root: HTMLElement, pairId: string, claim: Sourc
       h("p", { class: "muted", text: "One thing left: give the other person their copy. Until they have it, neither of you can read anything the other sends." }),
       callout({ tone: "warn", title: "The pad file is the secret", body: DELIVERY_ESSENTIAL }),
       delivery,
-      h("div", { class: "btn-row" }, saveBtn),
+      h("h2", { class: "sub", text: "Give the other person their copy" }),
+      h("p", { class: "muted", text: "Choose one way. Use one delivery method for each pad." }),
+      h("div", { class: "btn-row" }, onlineBtn, saveBtn),
+      claim.kind === "external"
+        ? h("p", {
+            class: "faint small",
+            text:
+              "Sending online adds computational encryption assumptions. A secret physical handoff is the route that " +
+              "keeps the stronger conditional one-time-pad delivery claim you chose when you supplied your own random material."
+          })
+        : h("p", {
+            class: "faint small",
+            text: "Sending online seals the pad so it can travel through ordinary channels; it relies on computational cryptography."
+          }),
       sourceClaimPanel(claim),
       h("hr", { class: "divider" }),
       h("div", { class: "btn-row" }, startBtn)
@@ -512,6 +537,36 @@ function renderCreated(ctx: Ctx, root: HTMLElement, pairId: string, claim: Sourc
 }
 
 /* ---- Add a shared pad (import) ------------------------------------------ */
+
+/** "Add a shared pad" now asks HOW the pad arrived before showing either flow.
+ *
+ *  Both answers are ordinary sentences about what the other person did, not a
+ *  choice between cryptographic transports. The home screen stays as small as
+ *  it was: this is the only new fork, and it lives one level down. */
+export function renderAddPad(ctx: Ctx, root: HTMLElement): void {
+  const fileBtn = h(
+    "button",
+    { class: "choice", type: "button", on: { click: () => ctx.navigate({ name: "import-file" }) } },
+    h("span", { class: "choice-title", text: "I have a pad file" }),
+    h("span", { class: "choice-note", text: "The secret pad file they gave me privately." })
+  );
+  const onlineBtn = h(
+    "button",
+    { class: "choice", type: "button", on: { click: () => ctx.navigate({ name: "receive-online" }) } },
+    h("span", { class: "choice-title", text: "Receive securely online" }),
+    h("span", { class: "choice-note", text: "Create a receive code they can use to send the pad securely." })
+  );
+  mount(
+    root,
+    h(
+      "div",
+      { class: "screen" },
+      backLink(() => ctx.navigate({ name: "home" }), "Home"),
+      screenHead({ title: "Add a shared pad", lede: "How did the other person send it?" }),
+      h("div", { class: "choices" }, fileBtn, onlineBtn)
+    )
+  );
+}
 
 export async function renderImport(ctx: Ctx, root: HTMLElement): Promise<void> {
   const nameInput = h("input", { type: "text", placeholder: "e.g. Chat with Sam", value: "" }) as HTMLInputElement;
@@ -574,9 +629,9 @@ export async function renderImport(ctx: Ctx, root: HTMLElement): Promise<void> {
     h(
       "div",
       { class: "screen" },
-      backLink(() => ctx.navigate({ name: "home" }), "Home"),
+      backLink(() => ctx.navigate({ name: "import" }), "Add a shared pad"),
       screenHead({
-        title: "Add a shared pad",
+        title: "Add a pad file",
         lede: "Add a pad file another person created and gave you. Once it is added, the two of you can message each other."
       }),
       h(

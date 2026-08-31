@@ -2145,3 +2145,156 @@ table.matrix td small {
     scroll-behavior: auto !important;
   }
 }
+
+
+/* ============================================================================
+ * Sealed Pad Transfer — the comparison words and the delivery choices
+ * ----------------------------------------------------------------------------
+ * Two people read these aloud to each other, so legibility IS the security
+ * control. The words are large, the numbers are always visible, and the grid
+ * collapses to a single column early rather than shrinking the type: a wall of
+ * tiny pills is exactly the interface that gets skimmed instead of compared.
+ * ========================================================================= */
+
+.words {
+  list-style: none;
+  margin: 1rem 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.5rem;
+}
+
+@media (min-width: 26rem) {
+  .words {
+    grid-template-columns: 1fr 1fr;
+    column-gap: 1rem;
+  }
+}
+
+.word {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.45rem 0.7rem;
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.09));
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.word-n {
+  flex: 0 0 1.6rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted, #9aa4b2);
+  font-size: 0.9rem;
+}
+
+.word-w {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 1.15rem;
+  letter-spacing: 0.01em;
+  word-break: break-word;
+  /* Selectable: someone may want to copy one word to check a spelling. */
+  user-select: text;
+}
+
+@media (max-width: 22rem) {
+  .word-w {
+    font-size: 1.05rem;
+  }
+}
+
+/* The receive code. Wraps on screen; what is COPIED is the exact single line. */
+.code-area {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  word-break: break-all;
+  padding: 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  color: inherit;
+  resize: vertical;
+}
+
+/* The two delivery answers on "Add a shared pad". */
+.choices {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.choices .choice {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  color: inherit;
+  cursor: pointer;
+}
+
+.choices .choice:hover {
+  border-color: var(--accent, #7aa2f7);
+}
+
+.choices .choice-title {
+  display: block;
+  font-weight: 600;
+  font-size: 1.05rem;
+  margin-bottom: 0.2rem;
+}
+
+.choices .choice-note {
+  display: block;
+  color: var(--muted, #9aa4b2);
+  font-size: 0.92rem;
+}
+
+.rule {
+  border: 0;
+  border-top: 1px solid var(--line, rgba(255, 255, 255, 0.09));
+  margin: 1.25rem 0;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0.9rem 0;
+}
+
+.actions.quiet {
+  margin-top: 1.25rem;
+}
+
+.linkish {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--muted, #9aa4b2);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+.linkish.danger {
+  color: var(--danger, #f7768e);
+}
+
+h3.sub {
+  margin: 1.25rem 0 0.35rem;
+  font-size: 1.05rem;
+}
+
+p.note {
+  color: var(--muted, #9aa4b2);
+  font-size: 0.95rem;
+}

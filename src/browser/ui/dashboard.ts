@@ -250,11 +250,28 @@ export async function renderDashboard(ctx: Ctx, root: HTMLElement, pairId: strin
       { term: "Messages you can still send", value: fmtInt(sendable) },
       { term: "Created", value: pair.createdAt ? new Date(pair.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : "—" }
     ]),
+    // Sharing lives HERE, in details — not as a fifth tile beside the four
+    // things this screen is actually for. Handing a pad over is provisioning,
+    // and it happens once.
     h(
       "div",
       { class: "save-row" },
-      h("div", { class: "btn-row" }, savePadFileButton(ctx, pairId, "Save the pad file again")),
-      h("p", { class: "save-note", text: "Keep this file secret — anyone who has it can read these messages." })
+      h("h3", { class: "sub", text: "Share this pad" }),
+      h("p", { class: "save-note", text: "Choose one way to give the other person their copy." }),
+      h(
+        "div",
+        { class: "btn-row" },
+        h(
+          "button",
+          { class: "btn", type: "button", on: { click: () => ctx.navigate({ name: "send-online", pairId }) } },
+          h("span", { text: "Send securely online" })
+        ),
+        savePadFileButton(ctx, pairId, "Save pad file")
+      ),
+      // The engine decides eligibility — provenance, genesis, and which handoff
+      // this pad already committed. Reproducing those rules here would be a
+      // second, weaker copy that drifts.
+      h("p", { class: "save-note", text: "Keep the pad file secret — anyone who has it can read these messages." })
     ),
     // Level 3 begins here and nowhere above it.
     panel(

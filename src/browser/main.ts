@@ -16,11 +16,13 @@
 
 import "./style.css";
 import { h, icon, mount } from "./ui/dom.ts";
-import type { Ctx, Engine, Reply, Route, ToastTone } from "./ui/context.ts";
+import type { Ctx, Engine, ReceiveSessionState, Reply, Route, ToastTone } from "./ui/context.ts";
+import { renderReceiveConfirm, renderReceiveOnline } from "./ui/receive-online.ts";
+import { renderSendOnline } from "./ui/send-online.ts";
 import type { EngineRequest, EngineResponse } from "./engine/protocol.ts";
 import { renderHome } from "./ui/home.ts";
 import { renderDashboard } from "./ui/dashboard.ts";
-import { renderCreate, renderImport } from "./ui/create-pair.ts";
+import { renderAddPad, renderCreate, renderImport } from "./ui/create-pair.ts";
 import { renderSend } from "./ui/send.ts";
 import { renderOpen } from "./ui/open.ts";
 import { renderDestroy } from "./ui/destroy.ts";
@@ -86,6 +88,34 @@ class WorkerEngine implements Engine {
         reject(err);
       }
     });
+  }
+
+  sptCreateRequest(): Promise<Reply<"spt-create-request">> {
+    return this.#call({ op: "spt-create-request" }) as Promise<Reply<"spt-create-request">>;
+  }
+  sptCancelRequest(args: { requestId: string }): Promise<Reply<"spt-cancel-request">> {
+    return this.#call({ op: "spt-cancel-request", ...args }) as Promise<Reply<"spt-cancel-request">>;
+  }
+  sptInspectRequest(args: { text: string }): Promise<Reply<"spt-inspect-request">> {
+    return this.#call({ op: "spt-inspect-request", ...args }) as Promise<Reply<"spt-inspect-request">>;
+  }
+  sptConfirmRequest(args: { reviewId: string }): Promise<Reply<"spt-confirm-request">> {
+    return this.#call({ op: "spt-confirm-request", ...args }) as Promise<Reply<"spt-confirm-request">>;
+  }
+  sptSeal(args: { requestHash: string; pairId: string }): Promise<Reply<"spt-seal">> {
+    return this.#call({ op: "spt-seal", ...args }) as Promise<Reply<"spt-seal">>;
+  }
+  sptOpenSealed(args: { package: Uint8Array }): Promise<Reply<"spt-open-sealed">> {
+    return this.#call({ op: "spt-open-sealed", ...args }) as Promise<Reply<"spt-open-sealed">>;
+  }
+  sptCommitReceive(args: { sessionId: string }): Promise<Reply<"spt-commit-receive">> {
+    return this.#call({ op: "spt-commit-receive", ...args }) as Promise<Reply<"spt-commit-receive">>;
+  }
+  sptReject(args: { sessionId: string }): Promise<Reply<"spt-reject">> {
+    return this.#call({ op: "spt-reject", ...args }) as Promise<Reply<"spt-reject">>;
+  }
+  sptAbandon(args: { sessionId: string }): Promise<Reply<"spt-abandon">> {
+    return this.#call({ op: "spt-abandon", ...args }) as Promise<Reply<"spt-abandon">>;
   }
 
   listPairs(): Promise<Reply<"list-pairs">> {
@@ -204,12 +234,28 @@ function toast(message: string, tone: ToastTone = "info"): void {
 
 /* ---- router ------------------------------------------------------------- */
 
+/** The one piece of ceremony state the router carries. It is set immediately
+ *  before navigating to the confirmation screen and cleared when that screen is
+ *  left, so it never outlives the session and never reaches the URL — a
+ *  sessionId in a hash would land in history and in the referrer of anything
+ *  the page loads. */
+let pendingSession: ReceiveSessionState | null = null;
+
 function parseHash(): Route {
   const raw = location.hash.replace(/^#\/?/, "");
   const parts = raw.split("/").filter((p) => p.length > 0);
   if (parts.length === 0) return { name: "home" };
   if (parts[0] === "create") return { name: "create" };
   if (parts[0] === "import") return { name: "import" };
+  if (parts[0] === "import-file") return { name: "import-file" };
+  if (parts[0] === "receive-online") return { name: "receive-online" };
+  if (parts[0] === "receive-confirm") {
+    // Reachable only through route STATE. A bare hash — a reload, a pasted
+    // link, the back button after the session ended — lands on the receive
+    // screen rather than a confirmation screen with no session behind it.
+    return pendingSession === null ? { name: "receive-online" } : { name: "receive-confirm", session: pendingSession };
+  }
+  if (parts[0] === "send-online" && parts[1]) return { name: "send-online", pairId: decodeURIComponent(parts[1]) };
   if (parts[0] === "security" || parts[0] === "advanced") return { name: "security" };
   if (parts[0] === "pair" && parts[1]) {
     const pairId = decodeURIComponent(parts[1]);
@@ -230,6 +276,14 @@ function formatHash(route: Route): string {
       return "#/create";
     case "import":
       return "#/import";
+    case "import-file":
+      return "#/import-file";
+    case "receive-online":
+      return "#/receive-online";
+    case "receive-confirm":
+      return "#/receive-confirm";
+    case "send-online":
+      return `#/send-online/${encodeURIComponent(route.pairId)}`;
     case "security":
       return "#/advanced";
     case "pair":
@@ -299,6 +353,7 @@ async function bootstrap(): Promise<void> {
   const engine = new WorkerEngine();
 
   const navigate = (route: Route): void => {
+    if (route.name === "receive-confirm") pendingSession = route.session;
     const next = formatHash(route);
     if (location.hash === next) void render();
     else location.hash = next;
@@ -315,7 +370,8 @@ async function bootstrap(): Promise<void> {
     navigate,
     toast,
     storagePersistent: persistent,
-    requestPersistent
+    requestPersistent,
+    onLeave: (cleanup) => leaving.push(cleanup)
   };
 
   // Every route that names a pad passes through here first. A pad the user
@@ -330,14 +386,33 @@ async function bootstrap(): Promise<void> {
       case "send":
       case "open":
       case "destroy":
+      case "send-online":
         return isRemoved(route.pairId) ? route.pairId : null;
       default:
         return null;
     }
   }
 
+  // Cleanups registered by the screen currently on the page. They run BEFORE
+  // the next screen renders, exactly once, whatever caused the navigation:
+  // an in-app navigate, a hash change, or the browser's own back button.
+  let leaving: (() => void)[] = [];
+  function runLeaveHandlers(): void {
+    const pending = leaving;
+    leaving = [];
+    for (const fn of pending) {
+      try {
+        fn();
+      } catch {
+        /* a cleanup must never block navigation */
+      }
+    }
+  }
+
   async function render(): Promise<void> {
+    runLeaveHandlers();
     const route = parseHash();
+    if (route.name !== "receive-confirm") pendingSession = null;
     mount(mainEl, h("div", { class: "screen" }, h("p", { class: "faint", text: "Loading…" })));
     if (removedPairId(route) !== null) {
       renderNotFound(ctx, mainEl);
@@ -353,6 +428,9 @@ async function bootstrap(): Promise<void> {
           await renderCreate(ctx, mainEl);
           break;
         case "import":
+          renderAddPad(ctx, mainEl);
+          break;
+        case "import-file":
           await renderImport(ctx, mainEl);
           break;
         case "pair":
@@ -369,6 +447,15 @@ async function bootstrap(): Promise<void> {
           break;
         case "security":
           await renderSecurity(ctx, mainEl);
+          break;
+        case "receive-online":
+          await renderReceiveOnline(ctx, mainEl);
+          break;
+        case "receive-confirm":
+          renderReceiveConfirm(ctx, mainEl, route.session);
+          break;
+        case "send-online":
+          await renderSendOnline(ctx, mainEl, route.pairId);
           break;
       }
     } catch (err) {

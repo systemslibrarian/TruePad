@@ -68,7 +68,7 @@ test("removing a disabled pad erases it from the product and never revives it", 
   const padPath = testInfo.outputPath("doomed.pad");
   const [download] = await Promise.all([
     page.waitForEvent("download"),
-    page.getByRole("button", { name: "Save pad for other person" }).click()
+    page.getByRole("button", { name: "Save pad file" }).click()
   ]);
   await download.saveAs(padPath);
 
@@ -125,6 +125,8 @@ test("removing a disabled pad erases it from the product and never revives it", 
   // --- 11. the old pad file is still refused: no resurrection --------------
   await page.getByRole("button", { name: "Add a shared pad" }).click();
   await expect(page.getByRole("heading", { name: "Add a shared pad" })).toBeVisible();
+  await page.getByText("I have a pad file").click();
+  await expect(page.getByRole("heading", { name: "Add a pad file" })).toBeVisible();
   await page.getByPlaceholder("e.g. Chat with Sam").fill("Back from the dead");
   await page.locator('input[type="file"]').setInputFiles(padPath);
   await page.getByRole("button", { name: "Add pad" }).click();

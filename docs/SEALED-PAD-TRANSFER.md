@@ -1,12 +1,12 @@
 # Sealed Pad Transfer v1
 
-**STATUS: PHASE 1C — SEALED PAD TRANSFER ENGINE FLOW IMPLEMENTED;
-BEGINNER PRODUCT UI NOT YET OFFERED.**
+**STATUS: PHASE 1D — BEGINNER BROWSER SEALED PAD TRANSFER UI IMPLEMENTED.**
 
-**Nothing in the shipped product offers sealed transfer.** There is no UI, no
-verb, no menu item, no QR, and no way for an operator to reach any of it.
-TruePad does **not** support online PQC pad transfer, and this document must not
-be read as saying it does.
+Sealed transfer is **offered in the Browser Edition** as one of two ways to give
+the other person their copy of a pad. It is not the default and not presented as
+better: the created-pad screen offers *Send securely online* beside *Save pad
+file*, and the claim distinction travels with the online path wherever it is
+offered. The CLI offers nothing of it.
 
 **Phase 1A** implemented suite `0x0001` in `src/spt/**` — the X-Wing wrapper
 (§2.2), the TPR2 (§5) and TPS2 (§7.1) codecs, the key schedule (§7.3), the
@@ -49,19 +49,36 @@ then exchange ordinary TP2 messages over the delivered pad, in both directions,
 through the unchanged message path. Sealed transfer delivers the existing pad;
 it is not a parallel cryptosystem beside it.
 
-Still **not offered**, and therefore not reachable by an operator:
+**Phase 1D** built the operator-facing ceremony over that engine, in
+`src/browser/ui/**`:
 
-* any Browser screen, button, route or file picker for sealed transfer;
-* QR encoding or scanning;
-* word rendering — the engine returns 12 and 8 **indices**, and the wordlist's
-  provenance and display are Phase 1D's job. Indices are not a mnemonic;
-* the beginner ceremony UX, including the receiver-first masking of §8.2 that
-  the engine cannot enforce;
-* any CLI sealed-transfer command.
+* the **method chooser** on *Add a shared pad* — a pad file, or a receive code;
+* the **receiver** screens — create a receive code, the twelve comparison words,
+  cancellation, the browser-storage warning, choosing the sealed file, the eight
+  confirmation words, and the three terminal choices (matched / did not match /
+  close for now);
+* the **sender** screens — paste a receive code, compare the twelve words, seal,
+  save or share the sealed file, and the eight confirmation words held behind
+  **receiver-first masking**: they are not in the document until the sender says
+  she has heard the recipient's (§8.2);
+* the **comparison wordlist** — 2048 entries vendored verbatim under
+  `src/browser/ui/wordlist/`, pinned by SHA-256 with its provenance and licence
+  recorded. Index position is the protocol mapping; the UI recomputes nothing.
+  **Indices are not a mnemonic**, and the list is not a mnemonic facility;
+* **Level-1 refusal wording** for every typed engine reason, with the engine's
+  own text one disclosure down.
 
-**TruePad does not offer online sealed pad transfer.** The engine exists; no
-product surface reaches it. `src/browser/ui/**`, `src/cli/**` and `bin/**`
-contain no reference to any of it, and guards check that against the tree.
+The UI bent around the engine. No frozen item moved: `src/core/**`, `src/spt/**`
+and the reference vectors are byte-identical to Phase 1A, and the nine RPCs are
+unchanged.
+
+Still **not offered**:
+
+* QR encoding or scanning — Phase 1D **deferred** it; see §5.3;
+* any CLI sealed-transfer command. `src/cli/**` and `bin/**` contain no
+  reference to any of it, and guards check that against the tree;
+* any upload, backend, account, analytics or sync. TruePad makes the sealed
+  file; the operator chooses how to deliver it.
 
 > **What the engine can and cannot claim about the ceremony.** It returns
 > Alice's eight confirmation indices when she seals, and it cannot know who
@@ -435,6 +452,17 @@ So a TPR2 request fits a single QR code at version 40, EC level L or M
 comfortably and Q only just. A version-40 symbol is 177×177 modules and demands
 a decent camera and a large display. **QR is optional convenience; copy/paste
 and file export are the normative channels.**
+
+**Phase 1D decision: DEFERRED, not implemented.** The measurement above is why
+it is optional rather than why it is easy. A 1652-byte symbol lands at
+version 40, 177×177 modules; on a 320 px screen each module is under two
+device-independent pixels, which is exactly the reading a beginner blames on
+themselves. Scanning would also add a camera permission and a decoder to a build
+that currently asks for neither and fetches nothing, and TruePad's copy/paste
+path is already complete, testable, and offline. QR moves transport convenience,
+not security: it carries the same TPR2 the clipboard carries, and the twelve
+spoken words are what actually authenticates it either way. Nothing in the
+frozen protocol assumes QR, so adding it later changes no bytes.
 
 ---
 

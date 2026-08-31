@@ -380,6 +380,31 @@ messengers **do not** preserve that claim. They may be perfectly good
 guarantee, not a weaker version of the same one. Move the pad that way and the
 end-to-end claim becomes computational, whatever the pad material was.
 
+### Two ways to give the other person their copy
+
+The Browser Edition offers both, and asks you to use **one delivery method for
+each pad**:
+
+* **Save pad file** — you move the file yourself. Hand it over in person, or
+  send it on a channel only the two of you control. Nothing about that delivery
+  rests on a computational assumption.
+* **Send securely online** — TruePad seals the pad for one receive code, and you
+  send the sealed file through an ordinary channel. The two of you compare
+  twelve spoken words before the pad is sealed and eight after, so a channel
+  that substituted the code does not pass unnoticed.
+
+Neither is presented as the better one; they answer different questions, and
+TruePad does not choose for you. The messages the pad then carries are identical
+either way — the same one-time pad, the same `wc-one-time-v1` tags. What differs
+is the **delivery**: sealing uses X-Wing (ML-KEM-768 with X25519), HKDF-SHA-256
+and AES-256-GCM, so a sealed delivery is protected computationally, and an
+archived sealed file is exposed to a future break of that cryptography. A pad
+you carried yourself is not.
+
+TruePad does not send anything for you. It makes the sealed file; you choose the
+channel. The sealed path exists in the Browser Edition only — `truepad-pad` and
+`truepad2` have no sealed-transfer command.
+
 ---
 
 ## truepad2 — Store Format v2: authenticated envelopes
