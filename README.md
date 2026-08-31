@@ -274,8 +274,20 @@ computed.
 
 ## What about quantum computers?
 
-TruePad is **not** "post-quantum cryptography" in the usual ML-KEM / ML-DSA
-sense. It is not a lattice scheme, and it is not competing in that space.
+TruePad's *message* cipher is **not** "post-quantum cryptography" in the usual
+ML-KEM / ML-DSA sense. It is not a lattice scheme, and it is not competing in
+that space.
+
+One optional part of the Browser Edition is. **Sealed online delivery** — the
+second of the two ways to give someone their copy of a pad, described under
+["Two ways to give the other person their copy"](#two-ways-to-give-the-other-person-their-copy)
+below — seals the pad with X-Wing (ML-KEM-768 with X25519). That is a *delivery*
+mechanism, not the cipher your messages use, and it runs once. But it means a pad
+delivered that way carries a **computational** end-to-end claim rather than the
+conditional information-theoretic one, and an archived sealed file is subject to
+harvest-now-decrypt-later. A pad you carried yourself is untouched by any of
+this, and so are the messages either way: after import they use the one-time pad
+and Wegman–Carter authentication, not ML-KEM.
 
 The one-time-pad confidentiality theorem predates modern public-key
 cryptography and does not rest on a computational problem for an attacker to
@@ -398,7 +410,8 @@ TruePad does not choose for you. The messages the pad then carries are identical
 either way — the same one-time pad, the same `wc-one-time-v1` tags. What differs
 is the **delivery**: sealing uses X-Wing (ML-KEM-768 with X25519), HKDF-SHA-256
 and AES-256-GCM, so a sealed delivery is protected computationally, and an
-archived sealed file is exposed to a future break of that cryptography. A pad
+archived sealed file is exposed both to a future break of that cryptography and
+to a restore of the recipient's device storage from a backup. A pad
 you carried yourself is not.
 
 TruePad does not send anything for you. It makes the sealed file; you choose the

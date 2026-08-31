@@ -29,8 +29,10 @@ Creating a receive code is like putting out a **one-time locked mailbox**.
 
 The receive code is the part anyone can see: it carries the public information a
 sender needs in order to lock something for that particular mailbox. The private
-information needed to *open* the mailbox never leaves the recipient's TruePad —
-it stays in their browser's local storage.
+information needed to *open* the mailbox never leaves the recipient's TruePad. It
+is held in the browser's private per-site file storage, written and read only by
+TruePad's background worker — not in `localStorage`, which the page itself could
+read.
 
 Two things this picture does **not** mean:
 
@@ -89,13 +91,19 @@ If even one word differs, or appears in a different position, stop.
 
 ## 3. The sender seals the pad
 
-Once Alice confirms the twelve words matched, TruePad remembers that exact
-receive request.
+Once Alice confirms the twelve words matched, TruePad **records that exact
+receive request** and works from its own copy of it from then on.
 
-When she chooses **Seal pad**, TruePad uses the public cryptographic material
-inside Bob's receive code to produce a fresh encryption key — one that only Bob's
-saved private key can recover. That key encrypts Alice's existing TruePad pad
-into a sealed file:
+This is what the comparison buys. When Alice chooses **Seal pad**, the screen
+does not hand the code over again — it names the request that was already
+confirmed, and TruePad seals against the copy it recorded. So there is no gap
+between "we compared the words" and "the pad was sealed" for a different code to
+slip into: the words she compared and the request she sealed for are the same
+stored thing.
+
+Sealing uses the public cryptographic material in that recorded request to
+produce a fresh encryption key — one that only Bob's saved private key can
+recover. That key encrypts Alice's existing TruePad pad into a sealed file:
 
 ```
 truepad-sealed-<id>.tps2
@@ -119,14 +127,25 @@ Their two results are combined into shared secret key material. **HKDF-SHA-256**
 derives the delivery keys from it, and **AES-256-GCM** encrypts and authenticates
 the pad container.
 
-Combining the two is the point: an attacker has to break *both* to recover the
-pad, so the delivery survives a future break of either one alone.
+Combining the two is the point, but it is worth being exact about what the
+combination buys, because the popular shorthand for it is wrong. It is **not**
+that an attacker must break both, so that the work multiplies. The two branches
+cover *different adversaries*: a quantum computer able to attack cryptography
+breaks X25519 outright, and against that adversary ML-KEM-768 carries the claim
+by itself; against a classical adversary, or a flaw found in ML-KEM, X25519 does.
+
+And the delivery does not rest on the KEM alone. It also depends on the hash and
+key-derivation functions, on AES-256-GCM, on the randomness your device
+generates, on your device not being compromised, and on the two of you actually
+comparing the words. A break of the key derivation or of AES would open an
+archived sealed file with no work against either KEM at all.
 
 State the standards status accurately, because it is easy to overstate:
 
-* **ML-KEM is standardised.** X-Wing is **not**. It is an IETF *draft*; TruePad
-  has frozen the draft-10 construction and will not silently follow the draft.
-* X-Wing is not a NIST standard, not an RFC, and not IETF-approved.
+* **ML-KEM is standardised** (NIST FIPS 203). **X-Wing is not.** It is an
+  Internet-Draft on the Independent Submission stream — not adopted by the CFRG,
+  not an RFC, and not a NIST or IETF standard. TruePad has frozen the draft-10
+  construction and will not silently follow later revisions.
 * The delivery claim is **computational** — it rests on those problems being
   hard, not on information theory.
 
@@ -170,9 +189,15 @@ The two ceremonies check different things, at different times:
 * the **eight** words check the sealed package **after** she created it.
 
 The order matters. **Bob sees his eight words first and reads them to Alice.**
-Only after Alice says she has heard them does TruePad show Alice her own eight —
-before that they are not merely hidden on her screen, they are not in the page at
-all.
+Only after Alice says she has heard them does TruePad put her own eight on the
+screen. Before that they are not merely styled to be invisible — they are not in
+the page's document at all, so there is nothing to reveal by poking at it.
+
+Being exact about the limit of that: the worker hands Alice's screen the eight
+values at the moment she seals, so they do sit in the page's memory before she
+reveals them. What the ordering protects is an honest operator against her own
+temptation to look first. It is not a defence against the page itself, which
+already holds far more than eight words.
 
 The reason is that hearing Bob's words first hands an attacker a value he must
 already have matched, rather than a target to aim at. If Alice's words appeared
@@ -189,16 +214,35 @@ software changes it.
 
 ## Why the receive code is one-time
 
-A receive code is deliberately tied to one transfer.
+A receive code is deliberately tied to one transfer. Four things end it, and
+TruePad never reverses any of them:
 
-* When Bob successfully adds a pad, the request is **used up**.
-* If he rejects the comparison, the request ends permanently.
-* If it expires — after about seven days — it can no longer be used.
+* Bob accepts a sealed pad — the request is **spent**. It is spent at the moment
+  TruePad records the acceptance, which is *before* the pad is saved. If saving
+  then fails, the request stays spent and that transfer is lost. This is
+  deliberate: a lost transfer is fixed by making a new one, and a reused one-time
+  key cannot be fixed at all.
+* Bob answers **They did not match** — the request ends permanently.
+* Bob presses **Cancel this receive code** on the receive screen.
+* It expires, after about seven days.
 
-None of these can be undone, and a used or rejected request never becomes
-available again. This is what stops a recipient's one-time private key from
-quietly turning into a reusable, general-purpose delivery endpoint that anyone
-who once saw the code could send to.
+A spent, rejected, cancelled or expired request never becomes available again.
+That is what stops a recipient's one-time private key from quietly turning into a
+reusable, general-purpose delivery endpoint that anyone who once saw the code
+could send to.
+
+**What does *not* end it.** Creating the code does not, and neither does looking
+at it, sending it, or having the sender paste it. In particular, **Close for now**
+on the confirmation screen is not a cancellation: it puts the transfer down
+without deciding, and Bob can open the same sealed file again later and finish.
+Use it whenever you want to check something before answering.
+
+**One thing the sender cannot see.** Alice's TruePad cannot ask whether Bob's
+request is still alive — the two halves are deliberately separate, and her side
+never contacts his. So she can seal to a request Bob has already cancelled or let
+expire, and that spends her pad's one handoff on a package nobody can open. If a
+transfer has gone stale, start again with a fresh pad and a fresh code rather
+than sealing into silence.
 
 ## Why a pad is handed off only once
 
@@ -214,8 +258,18 @@ The same rule runs the other way: once a receive request has been claimed for on
 pad, it cannot be redirected to a different pad. Retrying the *same* pad after an
 interrupted attempt is fine; switching pads is not.
 
-A pad that arrived from someone else can never be passed onward at all, by either
-method.
+Two other kinds of pad cannot be sent online at all, and TruePad says so rather
+than failing obscurely:
+
+* **A pad that has already been used.** Sealing sends the whole pad from its
+  beginning, so a pad that has carried even one message can no longer be given to
+  someone new. Make a fresh pad for a new person.
+* **A pad that arrived from someone else**, or one whose origin TruePad cannot
+  determine. Neither can be passed onward, by either method.
+
+The sealed copy is also not re-creatable from nothing: if the stored package is
+ever lost or damaged, TruePad refuses rather than sealing a second one, and that
+pad's delivery is over. Make a new pad.
 
 ## 7. After the pad is added, normal TruePad messaging begins
 
@@ -317,8 +371,11 @@ Either would let the archived package be opened, which would reveal the pad — 
 because the pad decrypts the messages made with it, archived messages could be at
 risk too.
 
-So the online **delivery** layer is computational. This says nothing about the
-messages themselves: they were never encrypted with AES or X-Wing.
+So the online **delivery** layer is computational. That is a statement about how
+the pad travelled, not about the cipher — your messages were never encrypted with
+AES or X-Wing. It still reaches them, though, because whoever recovers the pad can
+read the messages it protected. That is the paragraph above, and it is why this
+distinction is worth understanding rather than filing away.
 
 ## Keeping a sealed file around
 
@@ -380,11 +437,13 @@ No. It proves the two of you are looking at the same cryptographic values. Who
 you are talking to is established by the channel you compare them over — a voice
 you recognise, or a person in front of you.
 
-### What if I lose the sealed file before the recipient opens it?
+### What if the sealed file is lost, or the share is cancelled?
 
-Ask for it again — the same receive code returns the identical sealed file, byte
-for byte. TruePad does not create a second package, and there is nothing to
-re-seal.
+The sender goes back to **Send securely online** and pastes the **same** receive
+code again. TruePad returns the identical sealed file it already made, byte for
+byte — it does not seal a second time, and there is nothing new to compare. The
+pad was handed off the moment it was sealed, so this is the same package coming
+back, not a second delivery.
 
 ---
 

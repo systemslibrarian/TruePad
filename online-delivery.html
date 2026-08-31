@@ -38,6 +38,9 @@
         border-radius: var(--r-sm, 6px);
         background: var(--sunk, #14130f);
       }
+      /* Focusable because it scrolls: a keyboard user must be able to reach the
+         right-hand half of the diagram, and must be able to see that they have. */
+      .flow:focus-visible { outline: 2px solid var(--gold, #d8b678); outline-offset: 2px; }
       .odx h2 { margin: 2rem 0 0.5rem; }
       .odx h3 { margin: 1.25rem 0 0.35rem; font-size: 1.05rem; }
       .odx table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; }
@@ -66,7 +69,7 @@
 
       <main id="main" class="main">
         <div class="screen odx">
-          <p><a class="back-link" href="index.html">&larr; Back to TruePad</a></p>
+          <p><a class="back-link" href="index.html"><span aria-hidden="true">&larr;</span> Back to TruePad</a></p>
 
           <div class="screen-head">
             <h1>How online pad delivery works</h1>
@@ -91,7 +94,8 @@
           <p>
             Creating a receive code is like putting out a one-time locked mailbox. The code is the part
             anyone may see: it carries what a sender needs in order to lock something for that mailbox.
-            The private half needed to open it never leaves your browser.
+            The private half needed to open it never leaves your browser — it is held in the browser's
+            private per-site file storage, written and read only by TruePad's background worker.
           </p>
           <p class="note">
             There is no mailbox on a server. TruePad has no backend and no account — nothing is
@@ -124,7 +128,13 @@
 
           <h2>3. The sender seals the pad</h2>
           <p>
-            TruePad uses the public material in the receive code to make a fresh encryption key that
+            When the sender confirms the words matched, TruePad <strong>records that exact receive
+            request</strong>. Sealing then works from its own recorded copy — the screen does not hand
+            the code over again — so no different code can slip in between comparing the words and
+            sealing the pad.
+          </p>
+          <p>
+            It uses the public material in that recorded request to make a fresh encryption key that
             only the recipient's saved private key can recover, and encrypts the existing pad into a
             sealed <code class="mono">.tps2</code> file. That file is a sealed copy of the pad — it is
             not the raw pad file.
@@ -139,16 +149,16 @@
           <div class="wrap">
             <table>
               <thead>
-                <tr><th></th><th>What it contains</th><th>Ordinary channel?</th></tr>
+                <tr><th scope="col">File</th><th scope="col">What it contains</th><th scope="col">Ordinary channel?</th></tr>
               </thead>
               <tbody>
                 <tr>
-                  <td><strong>Raw <code class="mono">.pad</code></strong></td>
+                  <th scope="row">Raw <code class="mono">.pad</code></th>
                   <td>the secret pad itself</td>
                   <td><strong>No.</strong> Anyone holding it can read and forge this pad's messages.</td>
                 </tr>
                 <tr>
-                  <td><strong>Sealed <code class="mono">.tps2</code></strong></td>
+                  <th scope="row">Sealed <code class="mono">.tps2</code></th>
                   <td>an encrypted delivery of the pad, locked to one receive request</td>
                   <td>Yes — that is what it is for.</td>
                 </tr>
@@ -170,9 +180,14 @@
           </p>
           <p>
             <strong>The recipient reads his eight words first.</strong> Only after the sender says she
-            has heard them does TruePad show her own — before that they are not on her screen at all.
-            Hearing his first hands an impersonator a value they must already have matched, rather than
-            a target to repeat back.
+            has heard them does TruePad put her own on the screen — before that they are not in the page's
+            document at all. Hearing his first hands an impersonator a value they must already have
+            matched, rather than a target to repeat back.
+          </p>
+          <p class="note">
+            To be exact: the sender's screen is given those eight values when she seals, so they are in
+            its memory before she reveals them. The ordering protects an honest operator from looking
+            first; it is not a defence against the page itself.
           </p>
           <p class="note">
             TruePad controls the order of its own screens. It cannot know whether two people actually
@@ -192,7 +207,7 @@
           </div>
 
           <h2>The whole flow</h2>
-          <div class="flow" role="img" aria-label="Flow: the recipient creates a receive code and twelve comparison words; the sender pastes it, compares all twelve, and seals the existing pad with X-Wing, HKDF-SHA-256 and AES-256-GCM into a sealed .tps2 file; the file travels through an ordinary channel; the recipient opens it with the private key saved with the request, reads eight confirmation words first, the sender then reveals hers, and once they match the pad is added and normal one-time-pad messaging begins.">
+          <div class="flow" tabindex="0" role="img" aria-label="Flow: the recipient creates a receive code and twelve comparison words; the sender pastes it, compares all twelve, and seals the existing pad with X-Wing, HKDF-SHA-256 and AES-256-GCM into a sealed .tps2 file; the file travels through an ordinary channel; the recipient opens it with the private key saved with the request, reads eight confirmation words first, the sender then reveals hers, and once they match the pad is added and normal one-time-pad messaging begins.">
   RECIPIENT                            SENDER
   ─────────                            ──────
   Create receive code
@@ -284,9 +299,10 @@
                 </table>
               </div>
               <p class="note">
-                <strong>ML-KEM is standardised</strong> (NIST FIPS 203). <strong>X-Wing is a draft</strong> —
-                TruePad has frozen the draft-10 construction. It is not a NIST standard, not an RFC, and not
-                IETF-approved. The delivery claim is computational.
+                <strong>ML-KEM is standardised</strong> (NIST FIPS 203). <strong>X-Wing is not</strong> — it is
+                an Internet-Draft on the Independent Submission stream, not adopted by the CFRG, not an RFC,
+                and not a NIST or IETF standard. TruePad has frozen the draft-10 construction. The delivery
+                claim is computational.
               </p>
               <p class="note">
                 The words come from the BIP-39 English list, used purely as a readable mapping for fixed

@@ -86,8 +86,9 @@ Through the product both this and an AEAD tag failure surface as one public reas
 No timing claim is made.
 
 **Harvest-now, decrypt-later.** An archived `.tps2` is computationally protected
-transport ciphertext. If its delivery cryptography is broken in future, archived
-copies could expose the pad. The pad's own messages remain OTP; deleting a local
+transport ciphertext. Two things could make it readable: a future break of the
+delivery cryptography, or a restore of the recipient's device storage — bringing
+back the one-time key state with it. The pad's own messages remain OTP; deleting a local
 copy does not delete anyone else's.
 
 **Erasure.** Best-effort wipes are hygiene. Blobs, object URLs, the OS download

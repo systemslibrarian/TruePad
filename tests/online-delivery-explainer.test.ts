@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -47,6 +47,79 @@ describe("both explanations make the same claims", () => {
       );
       expect(text, `${where} must say the recipient speaks first`).toMatch(
         /(reads|read)[^.]{0,80}(his )?eight words first|eight words first/i
+      );
+    }
+  });
+
+  it("says ALL of the words are compared, never a prefix", () => {
+    // A shortened fingerprint is a weaker fingerprint. The security credit is
+    // for the words actually compared, so neither artefact may suggest a
+    // first-few check is enough.
+    for (const [where, text] of BOTH) {
+      // The INSTRUCTION must say all of them. Asserting the phrase merely
+      // exists somewhere is not enough — "If all twelve match" is a different
+      // sentence and survives gutting the instruction, which is exactly how an
+      // injected "compare the first three" slipped past an earlier version.
+      const flat = text.replace(/\s+/g, " ");
+      expect(flat, `${where} must instruct comparing all twelve`).toMatch(
+        /compare[^.]{0,60}all\s*\**\s*twelve|all\s*\**\s*twelve\s*\**[^.]{0,40}(in order|match)/i
+      );
+      expect(flat, `${where} must instruct checking all eight`).toMatch(/all\s*\**\s*eight|eight words/i);
+      expect(flat, `${where} must not offer a prefix shortcut`).not.toMatch(
+        /(compare|check|read)[^.]{0,40}first (three|few|couple|\d+)|first (three|few|couple|\d+)[^.]{0,30}(is|are) enough|just the first|only the first/i
+      );
+    }
+  });
+
+  it("gets the one-time lifecycle right, including the case that is NOT terminal", () => {
+    // Three things end a request; abandoning is not one of them. `abandonImpl`
+    // writes no durable marker — it only drops the in-memory session — so
+    // "Close for now" leaves the request pending and reopenable. Omitting that
+    // leaves a person mid-ceremony afraid to put the transfer down.
+    expect(DOC).toMatch(/Close for now/);
+    expect(DOC, "abandoning must be described as non-terminal").toMatch(
+      /Close for now[^.]{0,120}(not a cancellation|is not a cancel)/i
+    );
+    // All FOUR terminal outcomes, including the button the recipient can press
+    // on the receive screen. An earlier draft listed three and then asserted
+    // nothing else could end the request, which was simply false.
+    // Scope to the SECTION, and to the bullet that carries each claim. Asserting
+    // a word exists somewhere in a 440-line document is not a test: "spent"
+    // appears four times, so a guard looking only for it survives gutting the
+    // one bullet that matters.
+    const section = DOC.slice(DOC.indexOf("## Why the receive code is one-time"));
+    // Strip emphasis markers: these assertions are about what the text SAYS, and
+    // "*before* the pad is saved" means the same as "before the pad is saved".
+    const bullets = section
+      .slice(0, section.indexOf("**What does"))
+      .replace(/\s+/g, " ")
+      .replace(/\*/g, "");
+    expect(bullets, "acceptance bullet must say the request is spent").toMatch(
+      /Bob accepts a sealed pad[\s\S]{0,40}spent/i
+    );
+    expect(bullets, "rejection must be named").toMatch(/did not match/i);
+    expect(bullets, "the Cancel button must be named").toMatch(/Cancel this receive code/);
+    expect(bullets, "expiry must be named").toMatch(/expires/i);
+    // The order that makes a failed save lose the transfer rather than reuse the
+    // key. One assertion, no alternation to hide behind.
+    expect(bullets, "consume-before-save ordering must be explained").toMatch(
+      /before the pad is saved/i
+    );
+    // ...and creating or pasting the code must not be described as spending it.
+    expect(DOC).toMatch(/Creating the code does not/i);
+  });
+
+  it("says sealing works from the recorded request, not a re-supplied code", () => {
+    // spt-seal carries (requestHash, pairId) only; the worker reads the
+    // confirmed body from durable storage. That is what closes the gap between
+    // comparing the words and sealing, and it is the whole payoff of the
+    // twelve-word ceremony — so both artefacts have to say it.
+    for (const [where, text] of BOTH) {
+      expect(text, `${where} must say the request is recorded at confirmation`).toMatch(
+        /record(s|ed)?\s+that\s+exact\s+receive\s+request/i
+      );
+      expect(text, `${where} must say the code is not handed over again`).toMatch(
+        /does\s+not\s+hand\s+the\s+code\s+over\s+again/i
       );
     }
   });
@@ -105,6 +178,37 @@ describe("both explanations make the same claims", () => {
   });
 });
 
+describe("the README's quantum section matches the shipped product", () => {
+  // The Phase 1E release audit recorded this as repaired while the file was
+  // never touched — two batched edits failed, one traceback was misattributed,
+  // and the record outran the tree. A guard is cheaper than remembering.
+  const README = readFileSync(join(ROOT, "README.md"), "utf8");
+  const QUANTUM = README.slice(README.indexOf("## What about quantum computers?"));
+  const SECTION = QUANTUM.slice(0, QUANTUM.indexOf("\n---")).replace(/\s+/g, " ");
+
+  it("does not deny ML-KEM while the product ships it", () => {
+    expect(SECTION, "the section must name the sealed delivery path").toMatch(/ML-KEM-768/);
+    expect(SECTION, "and say it is a delivery mechanism, not the message cipher").toMatch(
+      /deliver(y|s)[^.]{0,80}not the cipher|not the cipher[^.]{0,80}deliver/i
+    );
+    // Attached to the DELIVERY sentence, not merely present in the section — the
+    // word already appears there for other reasons, so a loose match would
+    // survive deleting the one place it is load-bearing.
+    expect(SECTION, "the delivered-that-way claim must say computational").toMatch(
+      /deliver(ed|y)[^.]{0,60}computational|computational[^.]{0,60}(end-to-end|deliver)/i
+    );
+    // The old blanket denial must be gone: it was true of the cipher and false
+    // of the product.
+    expect(SECTION).not.toMatch(/TruePad is \*\*not\*\* "post-quantum cryptography"/);
+  });
+
+  it("still says the MESSAGE cipher is not a lattice scheme", () => {
+    // Correcting the overreach must not flip into the opposite overclaim.
+    expect(SECTION).toMatch(/not a lattice scheme/i);
+    expect(SECTION).toMatch(/message.{0,20}cipher/i);
+  });
+});
+
 describe("the explainer does not oversell", () => {
   const FORBIDDEN = [
     /quantum[- ]proof/i,
@@ -123,6 +227,65 @@ describe("the explainer does not oversell", () => {
     for (const [where, text] of BOTH) {
       for (const bad of FORBIDDEN) {
         expect(text, `${where} must not claim ${String(bad)}`).not.toMatch(bad);
+      }
+    }
+  });
+
+  it("never says the attacker must break both branches of the hybrid", () => {
+    // The normative spec withdraws this exact shorthand as FALSE
+    // (SEALED-PAD-TRANSFER.md: "The popular shorthand 'the attacker must break
+    // both' is *false* ... stating it would be an overclaim"), and the beginner
+    // explainer had it anyway. A quantum adversary breaks X25519 outright, so
+    // ML-KEM-768 carries the claim alone; and a break of HKDF or AES opens an
+    // archive with no KEM work at all.
+    const OVERCLAIM = [
+      /(has|have|must|needs?)\s+to\s+break\s+\*{0,2}both/i,
+      /break\s+\*{0,2}both\*{0,2}\s+(to|before)/i,
+      /survives?\s+a?\s*future\s+break\s+of\s+either/i,
+      /no single (primitive|component) break opens/i
+    ];
+    for (const [where, text] of BOTH) {
+      for (const bad of OVERCLAIM) {
+        expect(text, `${where} must not use the "break both" shorthand`).not.toMatch(bad);
+      }
+    }
+    // The correct framing must be present, so this cannot be satisfied by
+    // deleting the explanation of the hybrid instead of fixing it.
+    expect(DOC, "the doc must say the branches cover different adversaries").toMatch(
+      /different adversaries|carries the claim by itself|carries the entire claim/i
+    );
+  });
+
+  it("names BOTH routes back to an archived pad, on every surface that raises it", () => {
+    // The 1E audit repaired HNDL_NOTE and stopped; the technical line in the
+    // very panel a sender reads before sealing still named one route, and so
+    // did the README and the audit's own Boundaries list.
+    const surfaces: [string, string][] = [
+      ["the doc", DOC],
+      ["the page", PAGE],
+      ["spt-shared.ts", readFileSync(join(ROOT, "src/browser/ui/spt-shared.ts"), "utf8")],
+      ["README.md", readFileSync(join(ROOT, "README.md"), "utf8")],
+      ["the release audit", readFileSync(join(ROOT, "docs/SEALED-PAD-TRANSFER-RELEASE-AUDIT.md"), "utf8")]
+    ];
+    for (const [where, text] of surfaces) {
+      // Scope to the HNDL PASSAGE. Whole-file matching passes on an unrelated
+      // "restore" elsewhere in the same file — which is exactly how three
+      // surfaces kept a single-route warning while looking guarded. Sentence
+      // matching alone over-fires, because a file may mention an archived copy
+      // while explaining something else (what the hybrid does and does not buy).
+      // So: find each place that says an archive could BECOME READABLE, and
+      // require both routes within that passage.
+      const flat = text.replace(/\s+/g, " ");
+      const claims = [...flat.matchAll(/archived[^.]{0,80}?(sealed file|\.?tps2|copies|package)/gi)];
+      for (const m of claims) {
+        // Look BOTH ways: a document may list the two routes and then refer back
+        // to them ("either would let the archived package be opened").
+        const at = m.index ?? 0;
+        const window = flat.slice(Math.max(0, at - 420), at + 420);
+        if (!/exposed|readable|reveal|expose the pad/i.test(window)) continue; // not an HNDL claim
+        expect(window, `${where} raises HNDL but names only the cryptanalysis route`).toMatch(
+          /restor(e|ed|ing)|backup|clon(e|ed)/i
+        );
       }
     }
   });
@@ -161,6 +324,34 @@ describe("the explainer is reachable, and only from the right places", () => {
     expect(SHARED).toMatch(/box\.appendChild\(explainerLink\(\)\)/);
     for (const f of ["send-online.ts", "receive-online.ts"]) {
       expect(ui(f), `${f} must render the shared online Details panel`).toMatch(/onlineDetailsPanel\(\)/);
+    }
+  });
+
+  it("the link is relative, so it survives the project base path", () => {
+    // The site is served from https://…github.io/TruePad/ , and every screen
+    // that links to the explainer is a hash route under that same directory. A
+    // root-absolute "/online-delivery.html" would resolve to the domain root
+    // and 404; the relative form resolves under /TruePad/.
+    expect(SHARED).toMatch(/ONLINE_EXPLAINER_HREF = "online-delivery\.html"/);
+    expect(SHARED, "no leading slash").not.toMatch(/ONLINE_EXPLAINER_HREF = "\//);
+    expect(SHARED, "no absolute origin").not.toMatch(/ONLINE_EXPLAINER_HREF = "https?:/);
+    // The page's own links must be relative for the same reason. `/src/...` is
+    // excluded: it is a build-time source reference that Vite rewrites into a
+    // hashed relative asset, so the thing that must actually be relative is
+    // what ships — asserted against dist/ below when a build is present.
+    const relOf = (html: string) =>
+      [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]).filter((h) => !/^https?:|^#|^mailto:/.test(h));
+    for (const h of relOf(PAGE)) {
+      if (h.startsWith("/src/")) continue;
+      expect(h, `"${h}" must be relative to survive the /TruePad/ base path`).not.toMatch(/^\//);
+    }
+    const built = join(ROOT, "dist", "online-delivery.html");
+    if (!existsSync(built)) {
+      if (process.env.CI) throw new Error("dist/online-delivery.html missing: build before testing");
+      return;
+    }
+    for (const h of relOf(readFileSync(built, "utf8"))) {
+      expect(h, `built page: "${h}" would resolve to the domain root, not /TruePad/`).not.toMatch(/^\//);
     }
   });
 

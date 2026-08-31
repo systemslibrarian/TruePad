@@ -208,8 +208,8 @@ export function onlineDetailsPanel(): HTMLElement {
       class: "faint small",
       text:
         "Technical: X-Wing (draft-10) suite 0x0001 — ML-KEM-768 with X25519 — HKDF-SHA-256 and AES-256-GCM. " +
-        "An archived sealed file is exposed to a future break of that delivery cryptography; the pad itself is not " +
-        "used to protect it."
+        "An archived sealed file is exposed to a future break of that delivery cryptography, and to a restore " +
+        "of this device's storage from a backup; the pad itself is not used to protect it."
     })
   );
   box.appendChild(explainerLink());
@@ -220,9 +220,12 @@ export function onlineDetailsPanel(): HTMLElement {
  *
  *  It lives INSIDE the disclosure, not beside the buttons: a person mid-ceremony
  *  is comparing words with someone who is waiting, and a link that pulls them
- *  off the screen at that moment is a worse interface than no link. Both online
- *  screens render this one panel, so the link cannot appear on one and not the
- *  other. */
+ *  off the screen at that moment is a worse interface than no link.
+ *
+ *  Both online screens render this one panel, so neither can lose the link while
+ *  the other keeps it. They do not show it at the same POINT, though: the
+ *  receiver's panel sits outside the per-stage body and is there throughout,
+ *  while the sender's belongs to the ready stage. */
 export function explainerLink(): HTMLElement {
   return h(
     "p",
