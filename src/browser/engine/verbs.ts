@@ -1657,7 +1657,7 @@ function requireRuntime(runtime: SptRuntime | undefined): SptRuntime {
   return runtime;
 }
 
-const SEAL_DEPS = { requirePadSealable, buildContainer: buildLiveCourierContainer };
+const SEAL_DEPS = { requireNotDestroyed, requirePadSealable, buildContainer: buildLiveCourierContainer };
 const OPEN_DEPS = { validateBundle: validateBundleForImport, requireImportable };
 const COMMIT_DEPS = {
   importUnderPairLock: (vfs: Vfs, unpacked: { pairId: string; files: CourierFile[] }, label: string) =>

@@ -6,7 +6,8 @@ import { unpackContainer } from "../src/browser/engine/courier-format";
 import { MemoryLockProvider, SptRuntime } from "../src/browser/engine/spt-runtime";
 import { readHandoffState } from "../src/browser/engine/handoff";
 import { readRequestClaim } from "../src/browser/engine/request-claim";
-import { readReceiverState } from "../src/browser/engine/spt-receiver-state";
+import { readReceiverState, cancelledPath } from "../src/browser/engine/spt-receiver-state";
+import { handoffPackagePath, markerPath } from "../src/browser/engine/handoff";
 import { confirmedPath } from "../src/browser/engine/spt-confirmed";
 import type { EngineOk, EngineRequest, EngineResponse } from "../src/browser/engine/protocol";
 import { bytesToHex } from "../src/core/hex";
@@ -671,3 +672,258 @@ describe("sealed import uses the existing importer", () => {
     expect(label).toBe("Received pad");
   });
 });
+
+/* ---------------------------------------------------------------------------
+ * Phase 1C.1 — an exact re-share is not a new seal
+ * ------------------------------------------------------------------------ */
+
+describe("re-sharing a committed package after the pad has been USED", () => {
+  /** Seal, deliver, and then actually use the pad — which is the whole point of
+   *  having delivered it, and which makes Alice's live store no longer genesis. */
+  async function deliveredAndUsed() {
+    const { alice, bob, pairId, created } = await ceremony();
+    const first = ok(await alice.tab.send({ op: "spt-seal", requestHash: created.requestHash, pairId }), "spt-seal");
+    const session = ok(await bob.tab.send({ op: "spt-open-sealed", package: first.package }), "spt-open-sealed");
+    ok(await bob.tab.send({ op: "spt-commit-receive", sessionId: session.sessionId }), "spt-commit-receive");
+
+    const burn = ok(
+      await alice.tab.send({ op: "burn", pairId, as: "A", plaintext: utf8.encode("now the pad is in use") }),
+      "burn"
+    );
+    ok(await bob.tab.send({ op: "open", pairId, as: "B", envelope: burn.envelope }), "open");
+    return { alice, bob, pairId, created, first };
+  }
+
+  it("still re-shares the EXACT committed package once the pad is past genesis", async () => {
+    const { alice, pairId, created, first } = await deliveredAndUsed();
+
+    // The live pad is demonstrably no longer at genesis...
+    const status = ok(await alice.tab.send({ op: "status", pairId }), "status");
+    const advanced = Object.values(status.pair.meters).some(
+      (m) => m.encryption.nextOffset > 0 || m.authentication.nextSequence > 0
+    );
+    expect(advanced, "the pad must have advanced for this test to mean anything").toBe(true);
+
+    // ...and the committed package is still reachable, byte for byte.
+    const again = ok(await alice.tab.send({ op: "spt-seal", requestHash: created.requestHash, pairId }), "spt-seal");
+    expect(again.reshared).toBe(true);
+    expect(bytesToHex(again.package)).toBe(bytesToHex(first.package));
+    expect(again.packageIdentity).toBe(first.packageIdentity);
+    expect(again.confirmationIndices).toEqual(first.confirmationIndices);
+  });
+
+  it("the re-share mutates nothing — no marker rewrite, no claim rewrite, no counter move", async () => {
+    const { alice, pairId, created } = await deliveredAndUsed();
+    const markerBefore = bytesToHex((await alice.vfs.readFile(markerPath(pairId)))!);
+    const claimBefore = await readRequestClaim(alice.vfs, hexBytes(created.requestHash));
+    const statusBefore = ok(await alice.tab.send({ op: "status", pairId }), "status");
+
+    ok(await alice.tab.send({ op: "spt-seal", requestHash: created.requestHash, pairId }), "spt-seal");
+
+    expect(bytesToHex((await alice.vfs.readFile(markerPath(pairId)))!)).toBe(markerBefore);
+    const claimAfter = await readRequestClaim(alice.vfs, hexBytes(created.requestHash));
+    expect(JSON.stringify(claimAfter)).toBe(JSON.stringify(claimBefore));
+    const statusAfter = ok(await alice.tab.send({ op: "status", pairId }), "status");
+    expect(JSON.stringify(statusAfter.pair.meters)).toBe(JSON.stringify(statusBefore.pair.meters));
+  });
+
+  it("still re-shares after a retire advances the pad further", async () => {
+    const { alice, pairId, created, first } = await deliveredAndUsed();
+    const status = ok(await alice.tab.send({ op: "status", pairId }), "status");
+    const ab = status.pair.meters["A->B"];
+    ok(
+      await alice.tab.send({
+        op: "retire",
+        pairId,
+        direction: "A->B",
+        throughSequence: ab.authentication.nextSequence,
+        reason: "test advance"
+      }),
+      "retire"
+    );
+    const again = ok(await alice.tab.send({ op: "spt-seal", requestHash: created.requestHash, pairId }), "spt-seal");
+    expect(again.reshared).toBe(true);
+    expect(bytesToHex(again.package)).toBe(bytesToHex(first.package));
+  });
+
+  it("a re-share needs no current confirmation, even after the pad is used", async () => {
+    const { alice, pairId, created, first } = await deliveredAndUsed();
+    await alice.vfs.remove(confirmedPath(created.requestHash));
+    const again = ok(await alice.tab.send({ op: "spt-seal", requestHash: created.requestHash, pairId }), "spt-seal");
+    expect(bytesToHex(again.package)).toBe(bytesToHex(first.package));
+  });
+
+  it("DESTRUCTION still overrides a committed package", async () => {
+    const { alice, pairId, created } = await deliveredAndUsed();
+    ok(await alice.tab.send({ op: "destroy", pairId, confirm: pairId }), "destroy");
+    // The stored package may well still be on disk; it must not come back out.
+    expect(await alice.vfs.exists(handoffPackagePath(pairId))).toBe(true);
+    expect(refused(await alice.tab.send({ op: "spt-seal", requestHash: created.requestHash, pairId })).reason).toBe(
+      "pair-destroyed"
+    );
+  });
+
+  it("a corrupt committed payload stays unrecoverable, used pad or not", async () => {
+    const { alice, pairId, created } = await deliveredAndUsed();
+    const tampered = (await alice.vfs.readFile(handoffPackagePath(pairId)))!;
+    tampered[0] ^= 0x01;
+    await alice.vfs.writeFileAtomic(handoffPackagePath(pairId), tampered);
+    expect(refused(await alice.tab.send({ op: "spt-seal", requestHash: created.requestHash, pairId })).reason).toBe(
+      "handoff-unrecoverable"
+    );
+    // And no new encapsulation was attempted to "fix" it.
+    const again = refused(await alice.tab.send({ op: "spt-seal", requestHash: created.requestHash, pairId }));
+    expect(again.reason).toBe("handoff-unrecoverable");
+  });
+
+  it("a DIFFERENT request against the same sealed pad still refuses", async () => {
+    const { alice, bob, pairId } = await deliveredAndUsed();
+    const other = ok(await bob.tab.send({ op: "spt-create-request" }), "spt-create-request");
+    const review = ok(await alice.tab.send({ op: "spt-inspect-request", text: other.tpr2 }), "spt-inspect-request");
+    ok(await alice.tab.send({ op: "spt-confirm-request", reviewId: review.reviewId }), "spt-confirm-request");
+    expect(refused(await alice.tab.send({ op: "spt-seal", requestHash: other.requestHash, pairId })).reason).toBe(
+      "pad-already-sealed"
+    );
+  });
+});
+
+describe("a FIRST seal still requires genesis", () => {
+  it("a used pad with no committed handoff refuses", async () => {
+    // The gate moved later in the function; it did not go away.
+    const { alice, pairId, created } = await ceremony();
+    ok(await alice.tab.send({ op: "burn", pairId, as: "A", plaintext: utf8.encode("used first") }), "burn");
+    expect((await readHandoffState(alice.vfs, pairId)).kind).toBe("absent");
+    expect(refused(await alice.tab.send({ op: "spt-seal", requestHash: created.requestHash, pairId })).reason).toBe(
+      "pad-not-at-genesis"
+    );
+    // ...and nothing was claimed or committed by the refused attempt.
+    expect((await readRequestClaim(alice.vfs, hexBytes(created.requestHash))).kind).toBe("absent");
+    expect((await readHandoffState(alice.vfs, pairId)).kind).toBe("absent");
+  });
+
+  it("an imported pad with no handoff still refuses, before any genesis test", async () => {
+    const { alice, bob, pairId, created } = await ceremony();
+    const container = await buildLiveCourierContainer(alice.vfs, pairId);
+    ok(await bob.tab.send({ op: "import-pair", label: "bob", container }), "import-pair");
+    const review = ok(await bob.tab.send({ op: "spt-inspect-request", text: (await freshRequest()).tpr2 }), "spt-inspect-request");
+    const conf = ok(await bob.tab.send({ op: "spt-confirm-request", reviewId: review.reviewId }), "spt-confirm-request");
+    expect(refused(await bob.tab.send({ op: "spt-seal", requestHash: conf.requestHash, pairId })).reason).toBe(
+      "imported-pair-cannot-export"
+    );
+    void created;
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Phase 1C.1 — TTL decisions belong to the moment they are made
+ * ------------------------------------------------------------------------ */
+
+describe("expiry is judged under the authority lock, not before the wait", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  /** Start an operation while `scope` is held by someone else, let `holdMs` of
+   *  real time pass with it queued, then release and return its result.
+   *
+   *  The operation is NOT awaited while the lock is held — doing that would
+   *  deadlock, since it cannot settle until the lock frees. */
+  async function afterWaiting<T>(vfs: Vfs, scope: string, holdMs: number, start: () => Promise<T>): Promise<T> {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const acquired = new Promise<void>((r) => {
+      void vfs.withLock(scope, async () => {
+        r();
+        await held;
+      });
+    });
+    await acquired;
+    const pending = start(); // queues behind the held lock
+    await new Promise((r) => setTimeout(r, holdMs));
+    release();
+    return pending;
+  }
+
+  it("A — a confirmation that expires while seal waits is expired", async () => {
+    const { alice, pairId, created } = await ceremony();
+    // Rewrite the confirmation so it is valid now and expires in a moment.
+    const raw = JSON.parse(fromUtf8.decode((await alice.vfs.readFile(confirmedPath(created.requestHash)))!));
+    const confirmedAt = new Date(Date.now() - 7 * DAY + 50).toISOString();
+    raw.confirmedAt = confirmedAt;
+    raw.expiresAt = new Date(Date.parse(confirmedAt) + 7 * DAY).toISOString();
+    await alice.vfs.writeFileAtomic(confirmedPath(created.requestHash), utf8.encode(JSON.stringify(raw)));
+
+    // It is valid at this instant...
+    expect(Date.parse(raw.expiresAt)).toBeGreaterThan(Date.now());
+    // ...and seal waits past it on the sender lock.
+    const sealResult = await afterWaiting(alice.vfs, `spt-send:${created.requestHash}`, 150, () =>
+      alice.tab.send({ op: "spt-seal", requestHash: created.requestHash, pairId })
+    );
+    expect(refused(sealResult).reason).toBe("spt-confirmation-expired");
+    expect((await readHandoffState(alice.vfs, pairId)).kind).toBe("absent");
+  });
+
+  it("B — a request that expires while open waits does not yield a key", async () => {
+    const { alice, bob, pairId, created } = await ceremony();
+    const sealed = ok(await alice.tab.send({ op: "spt-seal", requestHash: created.requestHash, pairId }), "spt-seal");
+    // Rewrite the stored request so it expires in a moment.
+    await expireRequestIn(bob.vfs, created.requestId, 60);
+
+    const openResult = await afterWaiting(bob.vfs, `spt-req:${created.requestId}`, 150, () =>
+      bob.tab.send({ op: "spt-open-sealed", package: sealed.package })
+    );
+    // The open must have refused as expired, and the request terminalized.
+    expect(refused(openResult).reason).toBe("spt-request-expired");
+    const state = await readReceiverState(bob.vfs, created.requestId, new Date());
+    expect(state.kind).toBe("cancelled");
+    if (state.kind === "cancelled") expect(state.reason).toBe("expired");
+  });
+
+  it("C — a request that expires during the human comparison is not imported", async () => {
+    const { alice, bob, pairId, created } = await ceremony();
+    const sealed = ok(await alice.tab.send({ op: "spt-seal", requestHash: created.requestHash, pairId }), "spt-seal");
+    const session = ok(await bob.tab.send({ op: "spt-open-sealed", package: sealed.package }), "spt-open-sealed");
+    // The operator takes a long time; the request lapses meanwhile.
+    await expireRequestIn(bob.vfs, created.requestId, -1000);
+    const r = refused(await bob.tab.send({ op: "spt-commit-receive", sessionId: session.sessionId }));
+    expect(r.reason).toBe("spt-request-expired");
+    expect(await bob.vfs.exists(`${pairId}/pair.json`)).toBe(false);
+    const state = await readReceiverState(bob.vfs, created.requestId, new Date());
+    expect(state.kind).toBe("cancelled");
+    if (state.kind === "cancelled") expect(state.reason).toBe("expired");
+  });
+
+  it("D — a cancel that waits past expiry is recorded as expired, not operator", async () => {
+    const bob = origin();
+    const created = ok(await bob.tab.send({ op: "spt-create-request" }), "spt-create-request");
+    await expireRequestIn(bob.vfs, created.requestId, 80);
+
+    const cancelResult = await afterWaiting(bob.vfs, `spt-req:${created.requestId}`, 200, () =>
+      bob.tab.send({ op: "spt-cancel-request", requestId: created.requestId })
+    );
+    const res = ok(cancelResult, "spt-cancel-request");
+    // The pre-lock clock would have said "operator". The post-lock one says
+    // what actually happened.
+    expect(res.reason).toBe("expired");
+    const marker = JSON.parse(fromUtf8.decode((await bob.vfs.readFile(cancelledPath(created.requestId)))!));
+    expect(marker.reason).toBe("expired");
+  });
+
+  it("create stamps each attempt under its own request lock", async () => {
+    const bob = origin();
+    const before = Date.now();
+    const created = ok(await bob.tab.send({ op: "spt-create-request" }), "spt-create-request");
+    const raw = JSON.parse(fromUtf8.decode((await bob.vfs.readFile(`spt/receive/${created.requestId}/request.json`))!));
+    expect(Date.parse(raw.createdAt)).toBeGreaterThanOrEqual(before);
+    expect(Date.parse(raw.expiresAt) - Date.parse(raw.createdAt)).toBe(7 * DAY);
+    expect(raw.expiresAt).toBe(created.expiresAt);
+  });
+});
+
+/** Rewrite a stored request so it expires `ms` from now (negative = already). */
+async function expireRequestIn(vfs: Vfs, requestId: string, ms: number): Promise<void> {
+  const path = `spt/receive/${requestId}/request.json`;
+  const raw = JSON.parse(fromUtf8.decode((await vfs.readFile(path))!));
+  const expiresAt = new Date(Date.now() + ms).toISOString();
+  raw.expiresAt = expiresAt;
+  raw.createdAt = new Date(Date.parse(expiresAt) - 7 * 24 * 60 * 60 * 1000).toISOString();
+  await vfs.writeFileAtomic(path, utf8.encode(JSON.stringify(raw)));
+}

@@ -1305,6 +1305,56 @@ Ordering, under the pad lock (§10.10.1) and the request-scoped sender lock:
    UI;
 8. a concurrent caller waits on the lock and receives the **same stored package**.
 
+### 10.5.2 A re-share is not a seal
+
+`spt-seal` hides two operations that share a name and share almost nothing else.
+
+| | NEW SEAL | EXACT RE-SHARE |
+| --- | --- | --- |
+| creates cryptography | yes — one `XWing.Encaps` | **no** |
+| reads live pad bytes | yes | **no** |
+| moves a pad counter | no, but requires them at zero | **no, and does not care** |
+| requires `generated-here` | yes | **no** |
+| requires **genesis** | yes | **no** |
+| requires a current `CONFIRMED` | yes | **no** |
+| writes a request claim | yes | **no** |
+| commits a handoff | yes | **no** |
+| refused by destruction | yes | **yes** |
+
+So the durable handoff state must be read **before** the new-seal eligibility
+gate, not after. An earlier draft ran the gate first, which quietly made a
+committed package unreachable the moment Alice and Bob started **using** the pad
+— the very thing delivering it was for. The package is a historical committed
+artifact; the live counters have nothing to say about it.
+
+**Destruction is the exception that stays.** A destroyed pair refuses a
+re-share, even with `handoff/package.tps2` still on disk. Destroying a pad must
+not leave a product operation that deliberately exports another encrypted copy
+of it.
+
+**Fail-closed is unchanged.** A valid marker whose stored package or
+confirmation is missing or altered is still `HANDOFF-SPENT / UNRECOVERABLE`, and
+advancing the live pad does not change that.
+
+### 10.5.3 TTL is judged at the decision, not before the wait
+
+Every expiry decision reads the clock **under the authority lock that protects
+it**, immediately before the decision it governs — never before waiting in a
+queue:
+
+| Operation | Time read after acquiring |
+| --- | --- |
+| new seal (confirmation TTL) | the pad lock **and** `"spt-send:" ‖ requestHash` |
+| `openSealed` (request TTL) | the receive-session lease **and** `"spt-req:" ‖ requestId` |
+| `commitReceive` (request TTL) | `"spt-req:" ‖ requestId` — freshly, since a human comparison precedes it |
+| cancel (`operator` vs `expired`) | `"spt-req:" ‖ requestId` |
+| create (`createdAt`) | `"spt-req:" ‖ requestId`, per attempt |
+
+A confirmation or request that crosses its expiry **while an operation waits for
+a lock** has expired, and is treated as expired. Authorizing on a timestamp
+captured before the wait would let a queue extend a deadline, and the deadline
+is the point.
+
 ### 10.5.1 One request → one package, across pads
 
 Step 5 exists because steps 2–4 cannot see the failure they most need to.
@@ -2435,16 +2485,19 @@ seal(body, pairId):                                 # WORKER
 
     # LOCK ORDER: pairId lock OUTERMOST, then requestHash. Never the reverse.
     acquire vfs.withLock(pairId)                    # the store's pad lock
-      require pair.json origin == "generated-here"          # §10.7
-          # absent field or absent pair.json => unknown => REFUSE (§10.7.1)
-      require NOT exists(<pairId>/destroyed.json)
-      (ab, ba) ← loadStore(<pairId>/a-to-b), loadStore(<pairId>/b-to-a)
-      require both directions at GENESIS from the LIVE store:               # §10.6(1)
-          nextOffset == 0 and nextSequence == 0 and attemptsReserved == 0
-      # DURABLE handoff state decides, not sender ceremony state (§10.5).
+
+      # 1 — DESTRUCTION, ahead of everything including a committed package.
+      #     Destroying a pad must not leave an operation that hands out another
+      #     encrypted copy of it.
+      require NOT exists(<pairId>/destroyed.json)                # pair-destroyed
+
+      # 2 — DURABLE handoff state, BEFORE any live-pad eligibility gate. Which
+      #     operation this is decides which rules apply, and the two are not
+      #     the same operation (§10.5.2).
       state ← readHandoffState(vfs, pairId)                         # §10.9
       if state.kind == "sealed":
-          # RE-SHARE ONLY. Never a second encapsulation.
+          # EXACT RE-SHARE. No genesis test, no current confirmation, no claim
+          # rewrite, no encapsulation, no live pad read (§10.5.2).
           require state.marker.requestHash == requestHash  # else REFUSE
           committed ← loadCommittedSealedHandoff(vfs, pairId)
               # throws handoff-unrecoverable if the payload was dismissed,
@@ -2452,11 +2505,23 @@ seal(body, pairId):                                 # WORKER
           return committed.package, confirmationWords88(committed.confirmValue)
       if state.kind == "physical":         REFUSE pad-already-handed-off  # §10.8
       if state.kind == "unreadable-spent": REFUSE handoff-state-unreadable # §10.9.2
-      # state.kind == "absent" — and only here may anything be encapsulated.
+
+      # 3 — ABSENT, and ONLY NOW do the NEW-SEAL rules apply.
+      require pair whole and NOT mid-import
+      require pair.json origin == "generated-here"                   # §10.7
+          # absent field or absent pair.json => unknown => REFUSE (§10.7.1)
+      (ab, ba) ← loadStore(<pairId>/a-to-b), loadStore(<pairId>/b-to-a)
+      require both directions at GENESIS from the LIVE store:      # §10.6(1)
+          nextOffset == 0 and nextSequence == 0 and attemptsReserved == 0
 
       acquire lock "spt-send:" ‖ requestHash        # §10.10.1
         require sender state for requestHash == CONFIRMED
         mark SEALING                                # transient; not the authority
+
+        # TIME IS READ HERE, under both locks, immediately before the decision
+        # it governs (§10.5.3). A confirmation that lapsed while this call sat
+        # in the queue HAS lapsed.
+        now ← current instant
 
         # STEP 1 OF THE FROZEN WRITE ORDER (§10.5.1). Bind the REQUEST to this
         # pair BEFORE anything is encapsulated. Refuses if R is already bound to

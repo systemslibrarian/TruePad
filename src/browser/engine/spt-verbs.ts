@@ -144,10 +144,6 @@ export type CreateRequestResult = {
  *  recipient can never answer. */
 export async function createRequestImpl(vfs: Vfs, runtime: SptRuntime): Promise<CreateRequestResult> {
   void runtime;
-  const createdAt = new Date();
-  const createdAtIso = createdAt.toISOString();
-  const expiresAt = new Date(createdAt.getTime() + REQUEST_TTL_MS).toISOString();
-
   for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt += 1) {
     const requestId = crypto.getRandomValues(new Uint8Array(16));
     const requestIdHex = bytesToHex(requestId);
@@ -160,6 +156,12 @@ export async function createRequestImpl(vfs: Vfs, runtime: SptRuntime): Promise<
     const requestHash = await requestFingerprint(body);
     try {
       return await vfs.withLock(`spt-req:${requestIdHex}`, async (): Promise<CreateRequestResult> => {
+        // The seven days start at the durable creation attempt, under the
+        // request's own authority — not at whatever time the work before it
+        // began. Each collision attempt gets its own timestamp; none is reused.
+        const createdAt = new Date();
+        const createdAtIso = createdAt.toISOString();
+        const expiresAt = new Date(createdAt.getTime() + REQUEST_TTL_MS).toISOString();
         await commitPendingReceiveRequest(vfs, {
           body,
           requestId,
@@ -205,8 +207,11 @@ export async function cancelRequestImpl(vfs: Vfs, requestIdHex: string): Promise
   if (!HEX_32.test(requestIdHex)) {
     throw new EngineRefused(R_REQUEST_UNAVAILABLE, "a request identifier is 32 lowercase hex characters.");
   }
-  const now = new Date();
   return vfs.withLock(`spt-req:${requestIdHex}`, async (): Promise<CancelRequestResult> => {
+    // Under the lock: a request that crosses expiresAt while waiting is
+    // recorded as "expired", not as an operator cancellation, because that is
+    // what actually happened to it.
+    const now = new Date();
     const before = await readReceiverState(vfs, requestIdHex, now);
     // The worker chooses the reason; a caller never supplies one. An already
     // expired request is terminalized as what it is.
@@ -294,8 +299,12 @@ export type SealResult = {
 };
 
 export type SealDeps = {
-  /** Injected so the pad-eligibility gates stay in verbs.ts, where the store
-   *  helpers live, instead of being reimplemented here. */
+  /** The destruction boundary alone — checked ahead of everything, including a
+   *  committed package, and deliberately SEPARATE from `requirePadSealable` so
+   *  a re-share can honour it without inheriting the new-seal genesis gate. */
+  requireNotDestroyed(vfs: Vfs, pairId: string): Promise<void>;
+  /** The NEW-SEAL authorization gate: whole, not mid-import, generated here,
+   *  and both directions at genesis in the live store. Not a re-share rule. */
   requirePadSealable(vfs: Vfs, pairId: string): Promise<void>;
   buildContainer(vfs: Vfs, pairId: string): Promise<Uint8Array>;
 };
@@ -314,14 +323,21 @@ export async function sealImpl(
     throw new EngineRefused(R_REQUEST_UNAVAILABLE, "a request fingerprint is 64 lowercase hex characters.");
   }
   if (!HEX_32.test(pairId)) throw new EngineRefused(R_PAD_INELIGIBLE, "a pad id is 32 lowercase hex characters.");
-  const now = new Date();
 
   return vfs.withLock(pairId, async (): Promise<SealResult> => {
-    // Pad eligibility first: exists, not destroyed, not mid-import,
-    // origin "generated-here", and BOTH directions at genesis in the LIVE store.
-    await deps.requirePadSealable(vfs, pairId);
+    // DESTRUCTION FIRST, and ahead of everything, including a committed
+    // package. Destroying a pad must not leave an operation that hands out
+    // another encrypted copy of it.
+    await deps.requireNotDestroyed(vfs, pairId);
 
-
+    // Then the DURABLE HANDOFF STATE — before any live-pad eligibility gate.
+    // This ordering is the correction Phase 1C got wrong: `requirePadSealable`
+    // is the authorization gate for creating a NEW handoff, and it includes a
+    // genesis test. Running it first made an already-committed package
+    // unreachable the moment Alice and Bob started USING the pad, which is the
+    // entire point of having delivered it. A re-share creates no cryptography,
+    // reads no pad secret, moves no counter and writes no record; it hands back
+    // an immutable artifact that was authorized before its handoff committed.
     const handoff = await readHandoffState(vfs, pairId);
     if (handoff.kind === "unreadable-spent") throw new EngineRefused(REFUSE_UNREADABLE, handoff.message);
     if (handoff.kind === "physical") {
@@ -355,13 +371,23 @@ export async function sealImpl(
       };
     }
 
-    // ABSENT — and only here may anything be encapsulated.
+    // ABSENT — and ONLY NOW does live eligibility apply: exists, whole, not
+    // mid-import, origin "generated-here", and BOTH directions at genesis in
+    // the LIVE store. These are new-seal rules, and they gate exactly the
+    // operation that creates new cryptography.
+    await deps.requirePadSealable(vfs, pairId);
+
     return vfs.withLock(`spt-send:${requestHashHex}`, async (): Promise<SealResult> => {
       // Re-check the pad's handoff with BOTH locks held.
       const again = await readHandoffState(vfs, pairId);
       if (again.kind !== "absent") {
         throw new EngineRefused(REFUSE_ALREADY_SEALED, "this pad's handoff was committed concurrently.");
       }
+      // THE TIME IS READ HERE, under both locks, immediately before the
+      // decision it governs. Reading it before waiting would authorize a seal
+      // on a confirmation that expired while this call sat in the queue — the
+      // decision's timestamp must be the decision's own.
+      const now = new Date();
       const confirmed = await requireConfirmedBody(vfs, requestHashHex, now);
       const requestHash = await requestFingerprint(confirmed.body);
       if (bytesToHex(requestHash) !== requestHashHex) {
@@ -469,18 +495,15 @@ export async function openSealedImpl(
       "this transfer is already open in another tab. Finish or close it there first."
     );
   }
-  if (lease === null) {
-    throw new EngineRefused(
-      R_SESSION_BUSY,
-      "this transfer is already open in another tab. Finish or close it there first."
-    );
-  }
 
   let padFileBytes: Uint8Array | undefined;
   let dk: Uint8Array | undefined;
   try {
-    const now = new Date();
     const opened = await vfs.withLock(`spt-req:${requestIdHex}`, async () => {
+      // Under the request lock, not before it. A request that crosses its
+      // expiry while this call waits IS expired, and no key is handed out on
+      // the strength of a clock read from before the wait.
+      const now = new Date();
       const state = await readReceiverState(vfs, requestIdHex, now);
       if (state.kind === "expired-pending") {
         // Terminalize rather than merely reporting an opinion (§10.1.1).
@@ -591,10 +614,10 @@ export type RejectResult = { ok: true; op: "spt-reject"; requestId: string; stat
 export async function rejectImpl(vfs: Vfs, runtime: SptRuntime, sessionId: string): Promise<RejectResult> {
   const session = runtime.getSession(sessionId);
   if (!session) throw new EngineRefused(R_SESSION_NOT_FOUND, "that transfer is no longer open.");
-  const now = new Date();
-  const after = await vfs.withLock(`spt-req:${session.requestId}`, async () =>
-    cancelPendingReceiveRequest(vfs, session.requestId, "rejected", now.toISOString(), now)
-  );
+  const after = await vfs.withLock(`spt-req:${session.requestId}`, async () => {
+    const now = new Date();
+    return cancelPendingReceiveRequest(vfs, session.requestId, "rejected", now.toISOString(), now);
+  });
   if (after.kind !== "cancelled" && after.kind !== "terminal-unreadable" && after.kind !== "terminal-inconsistent") {
     // Nothing durable landed. Keep the session and its lock.
     throw new EngineRefused(
@@ -648,13 +671,16 @@ export async function commitReceiveImpl(
 ): Promise<CommitReceiveResult> {
   const session = runtime.getSession(sessionId);
   if (!session) throw new EngineRefused(R_SESSION_NOT_FOUND, "that transfer is no longer open.");
-  const now = new Date();
 
   return vfs.withLock(`spt-req:${session.requestId}`, async (): Promise<CommitReceiveResult> => {
     // Re-resolve: the session may have ended while we waited for the lock.
     const live = runtime.getSession(sessionId);
     if (!live) throw new EngineRefused(R_SESSION_NOT_FOUND, "that transfer is no longer open.");
 
+    // A FRESH time, here. Commit follows a human comparison that can take
+    // minutes, and then waits for this lock; the expiry decision belongs to
+    // the moment it is made.
+    const now = new Date();
     const state = await readReceiverState(vfs, live.requestId, now);
     if (state.kind === "expired-pending") {
       await cancelPendingReceiveRequest(vfs, live.requestId, "expired", now.toISOString(), now);

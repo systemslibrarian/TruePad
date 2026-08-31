@@ -970,7 +970,10 @@ describe("no live normative text describes the withdrawn atomic-single-file mode
     expect(seal).not.toMatch(/atomically replace/);
     expect(seal).not.toMatch(/package\s*=\s*header/);
     // A committed marker permits re-share only.
-    expect(seal).toMatch(/RE-SHARE ONLY\. Never a second encapsulation/);
+    // The wording moved to §10.5.2's table; the pseudocode now says what the
+    // re-share branch does NOT do, which is the same claim spelled out.
+    expect(seal).toMatch(/EXACT RE-SHARE\. No genesis test, no current confirmation/);
+    expect(seal).toMatch(/no encapsulation, no live pad read/);
   });
 
   it("§20's export pseudocode builds the container BEFORE committing the marker", () => {
@@ -1484,5 +1487,116 @@ describe("the engine's write order is structural", () => {
     }
     const main = readFileSync(join(ROOT, "src/browser/main.ts"), "utf8");
     expect(main).not.toMatch(/spt-|sealed-transfer/);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Phase 1C.1 — a re-share is not a seal, and TTL belongs to the decision
+ * ------------------------------------------------------------------------ */
+
+describe("the re-share branch is decided before the new-seal gate", () => {
+  const codeOf = (rel: string) =>
+    readFileSync(join(ROOT, rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const sptVerbs = codeOf("src/browser/engine/spt-verbs.ts");
+  const fn = sptVerbs.slice(sptVerbs.indexOf("export async function sealImpl"));
+
+  it("destruction is checked first, ahead of a committed package", () => {
+    expect(fn.indexOf("requireNotDestroyed(")).toBeGreaterThan(-1);
+    expect(fn.indexOf("requireNotDestroyed(")).toBeLessThan(fn.indexOf("readHandoffState("));
+  });
+
+  it("handoff state is read BEFORE the genesis gate", () => {
+    expect(fn.indexOf("readHandoffState(")).toBeLessThan(fn.indexOf("requirePadSealable("));
+  });
+
+  it("the genesis gate still runs, and only on the absent path", () => {
+    // It did not go away; it moved after the branch that returns a re-share.
+    expect(fn).toMatch(/requirePadSealable\(vfs, pairId\)/);
+    const reshareReturn = fn.indexOf("reshared: true");
+    expect(reshareReturn).toBeGreaterThan(-1);
+    expect(reshareReturn).toBeLessThan(fn.indexOf("requirePadSealable("));
+  });
+
+  it("the re-share branch encapsulates nothing and requires no confirmation", () => {
+    const branch = fn.slice(fn.indexOf('if (handoff.kind === "sealed")'), fn.indexOf("reshared: true"));
+    expect(branch).not.toMatch(/sealPayloadV1|requireConfirmedBody|claimRequestForPair|buildContainer|commitSealedHandoff/);
+    expect(branch).toMatch(/loadCommittedSealedHandoff\(vfs, pairId\)/);
+  });
+
+  it("the spec says a re-share is a different operation", () => {
+    expect(FLAT).toMatch(/A re-share is not a seal/);
+    expect(FLAT).toMatch(/quietly made a\s*committed package unreachable the moment Alice and Bob started/);
+    expect(FLAT).toMatch(/Destruction is the exception that stays/);
+    expect(FLAT).toMatch(/Fail-closed is unchanged/);
+  });
+});
+
+describe("every TTL decision reads the clock under its own lock", () => {
+  const codeOf = (rel: string) =>
+    readFileSync(join(ROOT, rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const sptVerbs = codeOf("src/browser/engine/spt-verbs.ts");
+
+  function slice(from: string, to?: string): string {
+    const a = sptVerbs.indexOf(from);
+    const b = to ? sptVerbs.indexOf(to) : -1;
+    return sptVerbs.slice(a, b === -1 ? undefined : b);
+  }
+
+  it("seal reads it inside the sender lock, before requireConfirmedBody", () => {
+    const fn = slice("export async function sealImpl", "function hexToBytes32");
+    const lock = fn.indexOf('vfs.withLock(`spt-send:');
+    const clock = fn.indexOf("const now = new Date()");
+    const confirm = fn.indexOf("requireConfirmedBody(");
+    expect(lock).toBeLessThan(clock);
+    expect(clock).toBeLessThan(confirm);
+    // ...and there is no earlier clock read to fall back on.
+    expect(fn.slice(0, lock)).not.toMatch(/new Date\(\)/);
+  });
+
+  it("open reads it inside the request lock", () => {
+    const fn = slice("export async function openSealedImpl", "async function preflightContainer");
+    const lock = fn.indexOf('vfs.withLock(`spt-req:');
+    const clock = fn.indexOf("const now = new Date()");
+    expect(lock).toBeLessThan(clock);
+    expect(clock).toBeLessThan(fn.indexOf("readReceiverState("));
+    expect(fn.slice(0, lock)).not.toMatch(/new Date\(\)/);
+  });
+
+  it("commit reads a FRESH one inside the request lock", () => {
+    const fn = slice("export async function commitReceiveImpl");
+    const lock = fn.indexOf('vfs.withLock(`spt-req:');
+    const clock = fn.indexOf("const now = new Date()");
+    expect(lock).toBeLessThan(clock);
+    expect(clock).toBeLessThan(fn.indexOf("readReceiverState("));
+    expect(fn.slice(0, lock)).not.toMatch(/new Date\(\)/);
+  });
+
+  it("cancel reads it inside the request lock, before choosing the reason", () => {
+    const fn = slice("export async function cancelRequestImpl", "export type InspectResult");
+    const lock = fn.indexOf('vfs.withLock(`spt-req:');
+    const clock = fn.indexOf("const now = new Date()");
+    expect(lock).toBeLessThan(clock);
+    expect(clock).toBeLessThan(fn.indexOf('"expired" : "operator"'));
+    expect(fn.slice(0, lock)).not.toMatch(/new Date\(\)/);
+  });
+
+  it("create stamps createdAt inside the request lock, per attempt", () => {
+    const fn = slice("export async function createRequestImpl", "export type CancelRequestResult");
+    const lock = fn.indexOf('vfs.withLock(`spt-req:');
+    const clock = fn.indexOf("const createdAt = new Date()");
+    expect(lock).toBeLessThan(clock);
+    expect(fn.slice(0, lock)).not.toMatch(/new Date\(\)/);
+  });
+
+  it("the session-busy check appears exactly once", () => {
+    const fn = slice("export async function openSealedImpl", "async function preflightContainer");
+    expect(fn.match(/lease === null/g)?.length).toBe(1);
+    expect(fn.match(/R_SESSION_BUSY/g)?.length).toBe(1);
+  });
+
+  it("the spec states the rule", () => {
+    expect(FLAT).toMatch(/TTL is judged at the decision, not before the wait/);
+    expect(FLAT).toMatch(/has expired, and is treated as expired/);
+    expect(FLAT).toMatch(/would let a queue extend a deadline, and the deadline\s*is the point/);
   });
 });
