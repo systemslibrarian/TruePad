@@ -16,6 +16,7 @@
 
 import { h, icon, mount } from "./dom.ts";
 import { backLink, callout, chip, panel } from "./components.ts";
+import { HNDL_NOTE, ONLINE_CLAIM_DETAIL } from "./spt-shared.ts";
 import {
   CEREMONY_CANNOT_VERIFY,
   CEREMONY_COMBINER,
@@ -90,6 +91,13 @@ function sourcePanel(): HTMLElement {
       ledgerItem("operator", "Aliasing cannot be detected", "The browser File API exposes no filesystem identity, so the edition cannot tell that two selected files alias one underlying file — a limit the CLI does not have. It states this rather than inventing identity from a pad-derived hash, and it never inspects source bytes to guess."),
       ledgerItem("protocol", "The verdict is scoped", "Generation prints the combiner's verdict verbatim: uniform IF at least one declared source was uniform and independent. Browser DRBG material is labelled computational — not information-theoretic entropy."),
       ledgerItem("operator", "Delivery is the other half", `${DELIVERY_CEREMONY} ${DELIVERY_NOT_ITS}`),
+      // The product offers a computational delivery route. A limitations screen
+      // that lists only the physical ceremony describes an earlier version of
+      // TruePad, and the operator reading it would conclude no such route
+      // exists. The wording is imported from the transfer screens rather than
+      // restated, so the two cannot drift apart.
+      ledgerItem("protocol", "Sending a pad online is computational", ONLINE_CLAIM_DETAIL),
+      ledgerItem("operator", "An archived sealed file stays attackable", HNDL_NOTE),
       ledgerItem(
         "native",
         "The source claim and the platform claim are independent",
@@ -206,7 +214,9 @@ const MATRIX: Row[] = [
   { guarantee: "Power-loss durability", klass: "native", browser: { text: "Not claimed", tone: "no" } },
   { guarantee: "External independent rollback witness", klass: "native", browser: { text: "Not offered", tone: "no" } },
   { guarantee: "Physical erasure on destroy", klass: "native", browser: { text: "Not claimed", tone: "no" } },
-  { guarantee: "Physical source provenance / alias detection", klass: "operator", browser: { text: "Declared, not verified", tone: "op" } }
+  { guarantee: "Physical source provenance / alias detection", klass: "operator", browser: { text: "Declared, not verified", tone: "op" } },
+  { guarantee: "Pad delivery — carried by hand", klass: "operator", browser: { text: "Conditional information-theoretic", tone: "op", note: "the claim the OTP theorem supports, under its stated conditions" } },
+  { guarantee: "Pad delivery — sent securely online", klass: "protocol", browser: { text: "Computational", tone: "op", note: "X-Wing draft-10 (ML-KEM-768 with X25519), HKDF-SHA-256, AES-256-GCM" } }
 ];
 
 function cell(c: Cell): HTMLElement {

@@ -210,30 +210,33 @@ cloud storage and encrypted messengers **do not preserve that claim**; they may
 be computationally secure ways to move a file, which is a *different*
 guarantee, not a weaker form of the same one.
 
-#### Sealed Pad Transfer — PARTLY BUILT, NOT OFFERED
+#### Sealed Pad Transfer — SHIPPED (Browser Edition only)
 
 `docs/SEALED-PAD-TRANSFER.md` specifies **Sealed Pad Transfer v1**: online pad
 delivery under a hybrid post-quantum/traditional KEM, with two human
-verification ceremonies. Where it stands, precisely:
+verification ceremonies. It is **offered in the Browser Edition** as one of two
+ways to give the other person their copy of a pad — *Send securely online*
+beside *Save pad file*, neither presented as better. Where it stands, precisely:
 
 | Layer | Status |
 | --- | --- |
 | Cryptographic / transport core — suite `0x0001`, TPR2 and TPS2 codecs, key schedule, reference vectors | **implemented** (`src/spt/**`) |
 | Storage / provenance foundation — pad origin, the one-handoff record, its crash behaviour | **implemented** (`src/browser/engine/**`) |
-| The product transfer flow — receive requests, the word ceremonies, sealing, opening, any screen at all | **NOT implemented** |
+| The product transfer flow — receive requests, both word ceremonies, sealing, opening, import | **implemented** (Browser Edition, `src/browser/ui/**`) |
+| QR encoding or scanning | **not implemented** — deferred; copy/paste is the normative channel |
+| Any CLI sealed-transfer command | **not implemented** — `truepad-pad` and `truepad2` have no such verb |
 
-**No product screen offers it and no operator can reach it.** TruePad does not
-support online sealed pad transfer today. What exists is machinery underneath a
-feature that has not been built, and the distinction below is recorded before it
-can be blurred:
+**The CLI offers none of it.** The distinction that matters is not whether the
+feature exists but what its delivery claims, and it is recorded here so it
+cannot be blurred:
 
 | | Physical exchange | Sealed Pad Transfer |
 | --- | --- | --- |
 | Delivery claim | can support the conditional **information-theoretic** path | **computational** — X25519 + ML-KEM-768, SHA3-256/512, SHAKE-256, HKDF-SHA-256, AES-256-GCM |
 | Recipient authentication | you are looking at them | a **12-word, 132-bit** fingerprint compared over an authenticated side channel — an OPERATOR declaration, never a verification result |
 | Against a compromised endpoint | the pad is exposed anyway | **no protection**, and specifically: an active script with transfer-worker authority is classified as endpoint compromise, not as an attacker the ceremonies stop |
-| Harvest-now-decrypt-later | no exposure from delivery | an archived package is attackable later; breaking it yields the pad, and the pad yields every archived message it protected |
-| Status | **shipped** | **core and storage built; no reachable flow** |
+| Harvest-now-decrypt-later | no exposure from delivery | an archived package is attackable later — by a future break of the delivery cryptography, or by a restored/cloned copy of the recipient key state. Either yields the pad, and the pad yields every archived message it protected |
+| Status | **shipped** | **shipped** (Browser Edition only; the CLI has no such command) |
 
 The point of the row is the middle one. Sealing an information-theoretic cipher's
 key material inside a computational envelope produces a **computational**

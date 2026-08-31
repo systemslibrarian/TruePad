@@ -187,9 +187,13 @@ export const ONLINE_CLAIM_DETAIL =
   "cryptography, so the overall delivery does not have the same information-theoretic claim as a secret physical " +
   "handoff.";
 
+/** Both ways an archive turns back into a pad. The spec calls the second one
+ *  the real risk, and naming only the first invites the reading that the danger
+ *  is decades away and hypothetical. Restoring a backup is neither. */
 export const HNDL_NOTE =
-  "The sealed file is an encrypted copy of the pad. Delete copies you no longer need. If the delivery cryptography " +
-  "is broken in the future, an archived sealed file could become readable.";
+  "The sealed file is an encrypted copy of the pad. Delete copies you no longer need. " +
+  "An archived sealed file could become readable if this device's storage is later " +
+  "restored from a backup, or if the delivery cryptography is broken in the future.";
 
 export function onlineDetailsPanel(): HTMLElement {
   const box = h("details", { class: "panel" }, h("summary", { text: "How the online delivery is protected" }));

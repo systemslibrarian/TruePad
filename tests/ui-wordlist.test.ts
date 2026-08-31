@@ -38,9 +38,22 @@ describe("the vendored file", () => {
     expect(doc).toContain("bip-0039/english.txt");
     expect(doc).toContain("942040ed50f7205cafc465496229128ba4f78e75");
     expect(doc).toContain(PINNED_SHA256);
+    // Not merely "the string MIT appears somewhere": the notice must actually
+    // be reproduced in-tree, and it must say what the licence covers rather
+    // than asserting a settled answer the upstream document does not give.
     expect(doc).toMatch(/\bMIT\b/);
+    expect(doc, "the upstream licence notice must be preserved verbatim").toContain("Copyright (c)");
+    expect(doc, "the notice must be reproduced, not just cited").toMatch(/Permission is hereby granted, free of charge/);
     // And says what it is not.
     expect(doc).toMatch(/not\*{0,2} a BIP-39 mnemonic facility/i);
+  });
+
+  it("has unique four-character prefixes, as §6.4 requires", () => {
+    // Two people comparing aloud only need the first four letters to agree.
+    // The spec makes that a property of the list; nothing pinned it before.
+    const words = RAW.toString("utf8").split("\n").slice(0, -1);
+    const prefixes = words.map((w) => w.slice(0, 4));
+    expect(new Set(prefixes).size, "every 4-character prefix must be unique").toBe(words.length);
   });
 
   it("is exactly 2048 well-formed entries", () => {

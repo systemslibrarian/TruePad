@@ -15,7 +15,9 @@
       Options would need a hosting layer that can set response headers. blob: is
       allowed for the module worker and the operator's courier/plaintext
       downloads; data: for inline icons; 'unsafe-inline' is scoped to STYLE only
-      (Vite inlines critical CSS), never to script. See docs/BROWSER-SECURITY.md
+      (a build that inlines critical CSS emits a <style> element; this one does not,
+      so the allowance is headroom rather than a current requirement), never to
+      script. See docs/BROWSER-SECURITY.md
       §7 for the exact scope and its limits.
     -->
     <meta

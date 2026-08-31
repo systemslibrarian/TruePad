@@ -12,6 +12,9 @@ import { confirmedPath } from "../src/browser/engine/spt-confirmed";
 import type { EngineOk, EngineRequest, EngineResponse } from "../src/browser/engine/protocol";
 import { bytesToHex } from "../src/core/hex";
 import { FaultVfs } from "./helpers/fault-vfs";
+import { decodeReceiveRequest, encodeRequestBody, parseRequestBody } from "../src/spt/receive-request";
+import { requestFingerprint } from "../src/spt/fingerprint";
+import { toBase64Url } from "../src/spt/bytes";
 
 /* ============================================================================
  * THE WHOLE FLOW, END TO END
@@ -599,6 +602,54 @@ describe("consume before import", () => {
     expect(refused(await bobTab.send({ op: "spt-commit-receive", sessionId: session.sessionId })).reason).toBe(
       "spt-session-not-found"
     );
+  });
+
+  it("D — the durable request is swapped under the live session: refused before consume", async () => {
+    // The session carries the requestHash it opened against. Replace the
+    // durable request.json with a DIFFERENT BUT STILL VALID request for the
+    // SAME requestId — same id, a different encapsulation key, therefore a
+    // different hash — and the commit must refuse rather than consume request R
+    // against a session that authorised itself with R'. The strict reader
+    // cannot catch this one: every relationship it checks still holds. Only the
+    // rebinding equality in commitReceiveImpl does, and nothing pinned it —
+    // deleting that check passed the entire suite.
+    const { inner, bobTab, created, session, pairId } = await readyToCommit(false);
+
+    const other = new Tab(new MemoryVfs(), new SptRuntime(new MemoryLockProvider()));
+    const rival = ok(await other.send({ op: "spt-create-request" }), "spt-create-request");
+    const rivalDecoded = decodeReceiveRequest(rival.tpr2);
+    expect(rivalDecoded.ok).toBe(true);
+    if (!rivalDecoded.ok) throw new Error("unreachable");
+
+    // Rival's key, victim's id: a body that passes every structural check.
+    const victimId = Uint8Array.from(
+      (created.requestId.match(/../g) ?? []).map((b) => Number.parseInt(b, 16))
+    );
+    const forgedBody = encodeRequestBody(victimId, rivalDecoded.request.encapsulationKey);
+    expect(parseRequestBody(forgedBody).ok).toBe(true);
+    const forgedHash = await requestFingerprint(forgedBody);
+    expect(bytesToHex(forgedHash)).not.toBe(created.requestHash);
+
+    const victimPath = `spt/receive/${created.requestId}/request.json`;
+    const original = JSON.parse(new TextDecoder().decode(await inner.readFile(victimPath)));
+    await inner.writeFileAtomic(
+      victimPath,
+      new TextEncoder().encode(
+        JSON.stringify({
+          ...original,
+          requestHash: toBase64Url(forgedHash),
+          body: toBase64Url(forgedBody)
+        })
+      )
+    );
+    // The swap really did produce a VALID pending request — otherwise this
+    // test would be proving the strict reader, not the rebinding check.
+    expect((await readReceiverState(inner, created.requestId, new Date())).kind).toBe("pending");
+
+    const r = refused(await bobTab.send({ op: "spt-commit-receive", sessionId: session.sessionId }));
+    expect(r.reason).toBe("spt-request-unavailable");
+    expect(await inner.exists(`spt/receive/${created.requestId}/consumed.json`)).toBe(false);
+    expect(await inner.exists(`${pairId}/pair.json`)).toBe(false);
   });
 
   it("C — consume valid but the import fails: LOSS, and the request stays consumed", async () => {

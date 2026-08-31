@@ -2352,15 +2352,16 @@ is the only delivery that keeps the stronger claim available.
 
 ### 16.5 Physical exchange remains first-class
 
-Future UX offers two clearly distinct choices — *Exchange in person* and *Send
-securely online* — and never presents the second as an upgrade of the first.
+The shipped UX offers two clearly distinct choices — *Save pad file* and *Send
+securely online* — side by side on the created-pad screen and inside Pad
+details, and never presents the second as an upgrade of the first.
 
 | | Physical exchange | Sealed Pad Transfer |
 | --- | --- | --- |
 | Delivery claim | can support the conditional **information-theoretic** path | **computational** |
 | Requires | meeting; removable media | an authenticated side channel for two word comparisons |
 | HNDL exposure | none from delivery | archived package is attackable later |
-| Status | **shipped** | **core and storage built; no reachable flow** |
+| Status | **shipped** | **shipped** (Browser Edition only; the CLI has no such command) |
 
 ---
 

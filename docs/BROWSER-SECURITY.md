@@ -368,6 +368,44 @@ Email, Dropbox, Google Drive, OneDrive, ordinary cloud storage and encrypted
 messengers **do not preserve that claim**. They may be computationally secure
 ways to move a file — a *different* guarantee, not a weaker form of this one.
 
+### 6.3 Sending a pad online — a computational delivery route
+
+The Browser Edition also offers **Sealed Pad Transfer**: the pad is sealed for one
+receive code and the resulting `.tps2` file travels through an ordinary channel —
+chat, email, cloud storage. TruePad makes the file; the operator chooses the
+channel. Nothing is uploaded and no recipient is stored.
+
+What that route claims, and what it does not:
+
+* **The messages are unchanged.** After the pad is added, ordinary TruePad
+  messages use the same one-time pad and the same `wc-one-time-v1` tags. Sealed
+  transfer delivers the existing pad; it is not a second cryptosystem.
+* **The delivery is computational.** Sealing uses X-Wing suite `0x0001`
+  (draft-connolly-cfrg-xwing-kem-10 — ML-KEM-768 with X25519), HKDF-SHA-256 and
+  AES-256-GCM. ML-KEM is standardised; **X-Wing is a draft**, not a NIST, RFC or
+  IETF standard. A pad delivered this way therefore carries a computational
+  end-to-end claim, not the conditional information-theoretic one §6.2 describes.
+* **Two word ceremonies, both OPERATOR declarations.** Twelve words (132 bits)
+  bind the receive code before the pad is sealed; eight (88 bits) bind the
+  package afterwards. The recipient reads his eight first, and the sender's are
+  not rendered until she says she heard them — the engine returns her indices
+  when she seals and cannot know who actually spoke first. This is support for an
+  honest operator's ceremony, never a verification result.
+* **Endpoint compromise is out of scope.** A page holding worker-RPC authority
+  can call these operations itself. No ordering in the engine changes that; it is
+  the §15 boundary, not an attacker the ceremonies stop.
+* **Harvest-now, decrypt-later.** An archived `.tps2` is computationally
+  protected transport ciphertext. It could become readable if this device's
+  storage is later restored from a backup — the recipient's one-time key state
+  coming back with it — or if the delivery cryptography is broken in future.
+  Deleting a local copy does not delete anyone else's.
+* **One delivery method per pad.** A pad given out as a file cannot also be sent
+  online, and vice versa; the engine refuses, and an imported pad can never be
+  passed on again.
+
+`docs/SEALED-PAD-TRANSFER.md` is normative for all of the above;
+`docs/SEALED-PAD-TRANSFER-RELEASE-AUDIT.md` records how it was verified.
+
 ### 6.3 The source claim is independent of the platform claim
 
 Choosing the external ceremony gives this edition **none** of §8's absent
@@ -383,9 +421,15 @@ source's physics. Three separate guarantees; never quote one for another.
 
 ## 7. Network, PWA, and privacy
 
-**BROWSER-OP.** The Browser Edition is an installable PWA (web app manifest +
-service worker) with an offline application shell. **TruePad makes zero
-network requests during cryptographic operation.** No analytics, telemetry,
+**BROWSER-OP.** The Browser Edition ships a web app manifest and a service
+worker that precaches the application shell. **The app page does not currently
+register that service worker** — only the teaching Lab entry point does, so the
+offline shell and installability arrive for a visitor who has opened the Lab and
+not for one who has only ever opened the app. This is a functionality gap, not a
+security one: the service worker precaches eighteen static build artifacts and
+registers a navigation route, and has no code path that could cache a `.pad`, a
+`.tps2`, or worker RPC traffic — which is `postMessage`, not network.
+**TruePad makes zero network requests during cryptographic operation.** No analytics, telemetry,
 remote logging, crash reporting, ad network, account, cloud pad backup,
 automatic source upload, or remote crypto/auth API. There are no third-party
 assets — the page references no external origins.

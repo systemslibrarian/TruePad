@@ -37,8 +37,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm test
+      # Build FIRST: the bundle-boundary assertion in the claim guards reads
+      # dist/ and skips when it is absent, so testing before building made
+      # the one check that keeps ML-KEM out of the UI thread a no-op in CI.
       - run: npm run build
+      - run: npm test
       # The e2e suite drives the real exhibit in Chromium against the dev
       # server (playwright.config.ts). It gates the deploy like the unit suites.
       - run: npx playwright install --with-deps chromium

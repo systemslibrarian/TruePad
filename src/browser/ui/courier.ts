@@ -24,6 +24,12 @@ function suggestedFilename(pairId: string): string {
 // object URL promptly. Used for the pad file (secret) — the calling screen
 // frames the secrecy warning; this just moves the bytes at the user's request.
 function triggerDownload(bytes: Uint8Array, filename: string): void {
+  // `new Blob([view])` snapshots the bytes immediately, so the Blob keeps its
+  // own copy the page can no longer reach. That makes zeroing OUR buffers safe
+  // right after construction — and it is why zeroing only the local copy was
+  // pointless: the buffer that actually held the pad was the caller's, and it
+  // stayed live. Both go now. This is hygiene, not erasure: the Blob, the
+  // object URL and whatever the browser wrote to disk are outside our reach.
   const view = new Uint8Array(bytes.length);
   view.set(bytes);
   const url = URL.createObjectURL(new Blob([view], { type: "application/octet-stream" }));
@@ -35,6 +41,11 @@ function triggerDownload(bytes: Uint8Array, filename: string): void {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   view.fill(0);
+  try {
+    bytes.fill(0);
+  } catch {
+    /* already detached by a transfer — nothing left to wipe */
+  }
 }
 
 // A single button that exports the pad in the worker and saves it to a file in

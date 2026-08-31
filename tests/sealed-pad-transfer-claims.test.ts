@@ -94,7 +94,13 @@ describe("the document says exactly what is and is not implemented", () => {
     // NOT gain it: the SPT protocol additions are TYPES, and if a value import
     // ever crept across, this fails.
     const dist = join(ROOT, "dist", "assets");
-    if (!existsSync(dist)) return; // no build in this run
+    // A guard that silently passes when there is nothing to check is not a
+    // guard. CI builds before it tests precisely so this one has a dist to
+    // read; if it ever does not, that is a CI regression and must be loud.
+    if (!existsSync(dist)) {
+      if (process.env.CI) throw new Error("dist/assets is missing: build before testing, or this assertion is a no-op");
+      return; // a local `vitest` with no build stays convenient
+    }
     const files = readdirSync(dist).filter((f) => f.endsWith(".js"));
     // Minification renames identifiers, so `ml_kem768` does not survive. These
     // two do: `x25519` as a string literal in the curve code, and 3329 — the
@@ -1036,14 +1042,21 @@ describe("no live normative text describes the withdrawn atomic-single-file mode
   it("status language recognises what is built without claiming the feature", () => {
     const claims = readFileSync(join(ROOT, "docs", "PRODUCT-CLAIMS.md"), "utf8");
     expect(claims).not.toMatch(/Sealed Pad Transfer — SPECIFIED, NOT IMPLEMENTED/);
-    expect(claims).toMatch(/PARTLY BUILT, NOT OFFERED/);
-    expect(claims).toMatch(/No product screen offers it and no operator can reach it/);
-    expect(claims).toMatch(/TruePad does not\s*support online sealed pad transfer today/);
-    // The three layers are stated separately, so "implemented" cannot be read
-    // as "available".
+    expect(claims).toMatch(/Sealed Pad Transfer — SHIPPED \(Browser Edition only\)/);
+    // The ledger shipped for a whole phase saying the feature was unreachable
+    // while it was on the created-pad screen. These pin the retraction: a
+    // claims document that is merely ADDED to, and never corrected, is how a
+    // false statement survives being noticed.
+    expect(claims).not.toMatch(/PARTLY BUILT, NOT OFFERED/);
+    expect(claims).not.toMatch(/No product screen offers it and no operator can reach it/);
+    expect(claims).not.toMatch(/TruePad does not\s*support online sealed pad transfer today/);
+    expect(claims).not.toMatch(/no reachable flow/);
+    // The layers are still stated separately, and what is NOT built is named.
     expect(claims).toMatch(/Cryptographic \/ transport core.*implemented/);
     expect(claims).toMatch(/Storage \/ provenance foundation.*implemented/);
-    expect(claims).toMatch(/product transfer flow.*NOT implemented/);
+    expect(claims).toMatch(/product transfer flow.*implemented/);
+    expect(claims).toMatch(/QR encoding or scanning.*not implemented/);
+    expect(claims).toMatch(/CLI sealed-transfer command.*not implemented/);
     for (const doc of [claims, SPEC]) expect(doc).not.toMatch(/specified, not implemented/i);
   });
 });
@@ -1376,8 +1389,10 @@ describe("the engine RPCs carry no security material the caller could substitute
 
   it("commitReceive takes a sessionId and nothing else", () => {
     const line = protocol.match(/op: "spt-commit-receive"[^}]*\}/)?.[0] ?? "";
-    expect(line).toContain("sessionId: string");
-    expect(line).not.toMatch(/padFileBytes|container|pairId|packageIdentity|requestHash|witnessClass/);
+    // PIN THE SHAPE, do not blacklist names. A blacklist is only as good as
+    // the words someone thought of: `padBytes` slipped past a list naming
+    // `padFileBytes`. This says commit carries an id and nothing else.
+    expect(line).toBe('op: "spt-commit-receive"; sessionId: string }');
     // ...and the implementation reads the session, never the request.
     const fn = sptVerbs.slice(sptVerbs.indexOf("export async function commitReceiveImpl"));
     expect(fn).toMatch(/runtime\.getSession\(sessionId\)/);
@@ -1751,6 +1766,11 @@ describe("the online-transfer UI keeps its promises", () => {
   it("the HNDL note is honest about what deleting can and cannot do", () => {
     expect(copyOf("spt-shared.ts")).toMatch(/could become readable/);
     expect(copyOf("spt-shared.ts")).toMatch(/Delete copies you no longer need/);
+    // BOTH ways an archive becomes a pad again. The spec calls the restored
+    // key-state one the real risk; naming only the future-cryptanalysis case
+    // reads as "decades away, hypothetical". Restoring a backup is neither.
+    expect(copyOf("spt-shared.ts")).toMatch(/restored\s+from a backup/);
+    expect(copyOf("spt-shared.ts")).toMatch(/delivery cryptography is broken/);
     expect(ALL_COPY).not.toMatch(/erase[^"]{0,40}(email|chat|cloud|backup)/i);
   });
 
@@ -1773,6 +1793,36 @@ describe("the online-transfer UI keeps its promises", () => {
     expect(copyOf("create-pair.ts")).toMatch(/Save pad file/);
     expect(copyOf("create-pair.ts")).toMatch(/Use one delivery method for each pad/);
     expect(create).not.toMatch(/autoExport|setTimeout\([^)]*export/);
+  });
+
+  it("the shipped CSP is pinned, because the meta tag is the only enforcement point", () => {
+    // GitHub Pages sends no custom response headers, so these two documents ARE
+    // the policy. Nothing asserted the string before, which made "Phase 1D did
+    // not weaken the CSP" a fact about one afternoon rather than an invariant.
+    const POLICY =
+      "default-src 'self'; script-src 'self'; worker-src 'self' blob:; child-src 'self' blob:; " +
+      "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; " +
+      "manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'";
+    for (const page of ["index.html", "learn.html"]) {
+      const html = readFileSync(join(ROOT, page), "utf8");
+      const content = html.match(/http-equiv="Content-Security-Policy"\s*\n?\s*content="([^"]+)"/)?.[1];
+      expect(content, `${page} must carry a meta CSP`).toBeTruthy();
+      expect((content ?? "").replace(/\s+/g, " ").trim(), `${page} CSP changed`).toBe(POLICY);
+    }
+  });
+
+  it("the sealed package is a FILE, never clipboard text", () => {
+    // courier.ts already had this guard for the raw pad. The sealed package is
+    // public transport, so copying it is not a secrecy break — but it is not
+    // the designed channel either, and text/base64 round-tripping is exactly
+    // how exact bytes stop being exact.
+    for (const file of ["spt-shared.ts", "send-online.ts", "receive-online.ts"]) {
+      const code = codeOf(file); // this scope's codeOf is already rooted at src/browser/ui
+      const writes = [...code.matchAll(/clipboard\.writeText\(([^)]*)\)/g)].map((m) => m[1]);
+      for (const arg of writes) {
+        expect(arg, `${file} may only copy the receive code, not ${arg}`).toMatch(/tpr2/);
+      }
+    }
   });
 
   it("the session handle never reaches the URL", () => {
