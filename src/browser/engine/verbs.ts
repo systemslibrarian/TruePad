@@ -69,6 +69,7 @@ import {
   REFUSE_ALREADY_SEALED,
   REFUSE_UNREADABLE
 } from "./handoff.ts";
+import { readReceiverState, type ReceiverState } from "./spt-receiver-state.ts";
 import type { Vfs } from "./vfs.ts";
 
 const enc = new TextEncoder();
@@ -1437,6 +1438,53 @@ async function importImpl(vfs: Vfs, req: Req<"import-pair">): Promise<ImportResu
     const pair = await buildSummary(vfs, pairId);
     return { ok: true, op: "import-pair", pair };
   });
+}
+
+/* ---- derived receive completion ------------------------------------------
+ * COMPLETE has no record of its own, deliberately. §16: writing a
+ * `complete.json`, or rewriting `consumed` → `complete`, would add a terminal
+ * state transition — and every terminal rewrite is a chance for a torn write to
+ * resurrect PENDING. So COMPLETE is DERIVED from two facts that already exist
+ * durably and independently:
+ *
+ *   1. a valid `consumed.json` for the request, and
+ *   2. the pair it names being committed here as an IMPORTED pair.
+ *
+ * The two crash orders both behave. Consumed lands and the import never
+ * commits: LOSS — real, permanent, and still not a reason to reopen the
+ * request. Consumed lands, the import commits, and the worker dies before
+ * replying: COMPLETE is derivable on the next read, with nothing to repair.
+ * ------------------------------------------------------------------------- */
+
+export type ReceiveCompletion =
+  | { kind: "complete"; requestId: string; pairId: string }
+  /** Consumed, but the pad never became a committed imported pair here. */
+  | { kind: "lost"; requestId: string; pairId: string; message: string }
+  | { kind: "not-consumed"; state: ReceiverState };
+
+export async function deriveReceiveCompletion(
+  vfs: Vfs,
+  requestIdHex: string,
+  now: Date
+): Promise<ReceiveCompletion> {
+  const state = await readReceiverState(vfs, requestIdHex, now);
+  if (state.kind !== "consumed") return { kind: "not-consumed", state };
+  const pairId = state.pairId;
+  // "Committed as an imported pair" is exactly the importer's own definition:
+  // the pair exists, its commit gate has cleared, and it says it arrived here.
+  if (await vfs.exists(importMarkerPath(pairId))) {
+    return { kind: "lost", requestId: requestIdHex, pairId, message: "the pad's import never completed." };
+  }
+  let origin: PairOrigin;
+  try {
+    origin = (await readPairMeta(vfs, pairId)).origin;
+  } catch {
+    return { kind: "lost", requestId: requestIdHex, pairId, message: "the pad's metadata cannot be read." };
+  }
+  if (origin !== "imported") {
+    return { kind: "lost", requestId: requestIdHex, pairId, message: "the pad was never committed as an imported pair." };
+  }
+  return { kind: "complete", requestId: requestIdHex, pairId };
 }
 
 /* ---- list-pairs ----------------------------------------------------------- */

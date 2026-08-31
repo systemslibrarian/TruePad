@@ -1,7 +1,7 @@
 # Sealed Pad Transfer v1
 
-**STATUS: PHASE 1B — STORAGE / PROVENANCE FOUNDATION IMPLEMENTED;
-SEALED TRANSFER PRODUCT FLOW NOT IMPLEMENTED.**
+**STATUS: PHASE 1B.3 — RECEIVER REQUEST DURABILITY FOUNDATION IMPLEMENTED;
+SEALED TRANSFER PRODUCT FLOW NOT YET REACHABLE.**
 
 **Nothing in the shipped product offers sealed transfer.** There is no UI, no
 verb, no menu item, no QR, and no way for an operator to reach any of it.
@@ -30,18 +30,24 @@ decision is closed; suite `0x0001`'s wire bytes are unchanged.
   layout and marker grammar, and `HANDOFF-SPENT / UNREADABLE` (§10.9);
 * **physical/sealed cross-mode semantics** on the existing `export-pair`;
 * **crash behaviour under the non-atomic `writeFileAtomic` fallback**, tested
-  against a fault-injecting backing rather than assumed from `MemoryVfs`.
+  against a fault-injecting backing rather than assumed from `MemoryVfs`;
+* the **sender request claim** (§10.5.1) — one request, one package, across pads;
+* **receiver request persistence** (§10.1.1) — immutable creation plus
+  terminal-by-existence `CANCELLED` / `CONSUMED` markers, a 7-day TTL that is a
+  terminal transition rather than an opinion, and `COMPLETE` derived rather than
+  written.
 
-Still **not** implemented, and therefore not existing:
+Still **not** implemented, and therefore not reachable:
 
-* persisted receive requests and the `PENDING`/`CANCELLED`/`CONSUMED` machine (§10.1);
-* the one-time recipient `dk` lifecycle;
-* the TPR2 operator ceremony and the §6 words;
-* sender verification state (§10.5);
+* the receive-request RPC, and the TPR2 operator ceremony and §6 words;
+* the inspect/confirm sender RPC and sender verification state (§10.5);
 * the product `seal(body, pairId)` operation, `openSealed`, `commitReceive`,
   `reject`, `abandon`;
-* the cross-tab receive session and its Web Locks (§10.10);
+* the transient receive session and its cross-tab Web Locks (§10.10);
 * any Browser UI, QR, or CLI verb.
+
+The storage foundations exist **underneath** a feature that has not been built.
+Nothing in `protocol.ts` names any of them, and no UI file reaches them.
 
 The low-level `sealPayloadV1` / `openPayloadV1` take **bytes**. They are for
 cryptographic composition and reference vectors. The product operation remains
@@ -888,6 +894,136 @@ COMPLETE  (pad imported, transfer private key logically destroyed)
 `PENDING`, `CANCELLED`, `CONSUMED`, and `COMPLETE` are **durable**.
 `AWAITING_CONFIRMATION` is deliberately **not**: a crash there simply returns to
 `PENDING`, having consumed nothing.
+
+### 10.1.1 How receiver state is actually represented
+
+**Not as a mutable record.** The obvious shape — one `state.json` rewritten
+`PENDING` → `CONSUMED` — is unavailable, for the reason §10.9 gives:
+`OpfsVfs.writeFileAtomic()` is atomic only where `FileSystemFileHandle.move()`
+works, and elsewhere truncates and rewrites the target in place. A torn rewrite
+of that record leaves a file that is neither value, and guessing wrong
+**resurrects a one-time decapsulation key**.
+
+So the representation is **immutable creation plus terminal-by-existence
+markers**, in the recipient's own origin:
+
+```
+spt/receive/<requestIdHex>/request.json    creation AND publication commit marker
+spt/receive/<requestIdHex>/dk.bin          the 32-byte X-Wing seed, raw
+spt/receive/<requestIdHex>/cancelled.json  terminal by existing
+spt/receive/<requestIdHex>/consumed.json   terminal by existing
+```
+
+Nothing is ever rewritten; a terminal marker is **created**, never a state
+transitioned, and no code path deletes one.
+
+| Record | Contents |
+| --- | --- |
+| `request.json` | `{ "version":1, "requestId", "requestHash", "body", "createdAt", "expiresAt" }`, frozen order, canonical unpadded base64url for the 32-byte hash and the exact 1235-byte body |
+| `dk.bin` | exactly 32 bytes — the frozen X-Wing seed, and the only persisted private representation. Never an expanded ML-KEM key, never JSON, never text |
+| `cancelled.json` | `{ "version":1, "requestId", "at", "reason" }` with `reason` one of `operator`, `expired`, `rejected` |
+| `consumed.json` | `{ "version":1, "requestId", "at", "pairId", "packageIdentity" }` |
+
+**Creation writes `request.json` LAST**, after `dk.bin` has been written and read
+back byte-for-byte, and after `request.json` itself is re-read and every
+relationship re-derived from disk. **No TPR2 may cross the worker boundary
+before that returns**: a published request whose key did not survive is a request
+the recipient can never answer.
+
+**Terminal precedence, frozen.** Markers are examined **before any private-key
+material is touched**:
+
+1. both markers present → `terminal-inconsistent`;
+2. `cancelled.json` present → valid: `CANCELLED`; malformed: `terminal-unreadable`;
+3. `consumed.json` present → valid: `CONSUMED`; malformed: `terminal-unreadable`;
+4. otherwise validate `request.json`, validate `dk.bin`, then evaluate expiry.
+
+A terminal marker that exists always beats a still-present `dk.bin`, and there
+is **no** path from "the marker is bad" to "so try `request.json` instead". A
+corrupt terminal marker is terminal. That may lose the transfer, which is the
+correct trade:
+
+> **LOSS IS ACCEPTABLE. REUSE IS NOT.**
+
+**The marker is the authority, not key deletion.** After a request is durably
+terminal, `dk.bin` is overwritten and removed on a best-effort basis — but what
+prevents reuse is `cancelled.json` / `consumed.json` **existing**. A failed
+cleanup does not change the state, does not warrant retrying the transition, and
+is never reported as "the key was erased". JavaScript cannot promise that.
+
+**A write that throws proves nothing**, so no transition is decided from an
+exception. The durable state is re-read: no marker means the transition did not
+commit and the operator must **not** be told it did; a valid marker means it
+happened; a malformed one means terminal-unreadable.
+
+**`requestId` namespaces are never recycled.** If anything at all exists under
+`spt/receive/<requestIdHex>/` — a valid request, a terminal marker, an orphan
+`dk.bin`, a torn `request.json`, junk from a failed creation — that identifier
+is unavailable in this origin forever, and the namespace is **not** cleaned up
+for reuse. Generate another; 128 bits makes honest collision negligible. The
+rule exists to remove state ambiguity, not to improve the randomness.
+
+**Validated on every read, never trusted from JSON.** Before a request is
+`PENDING`: the body decodes canonically to 1235 bytes and parses as a §5.1
+request, its embedded `requestId` equals the path, the stored `requestHash`
+equals the hash **recomputed from the body**, and `dk.bin` is exactly 32 bytes.
+A `request.json` copied into another request's directory must never cause
+request *R*'s key to be used against body *B′*.
+
+**Expiry is a terminal transition, not an opinion.** `expiresAt` is exactly
+`createdAt` + 7 days as an *instant* difference — never calendar arithmetic,
+which changes length across a DST boundary. At or after `expiresAt` a request is
+not usable and **no key is returned**; terminalizing it goes through the same
+cancellation transaction with `reason: "expired"`. A request that merely reads
+as expired while a usable `dk.bin` sits beside it with no durable terminal
+authority is precisely the state this design exists to prevent.
+
+**`COMPLETE` has no record of its own.** Writing a `complete.json`, or rewriting
+`consumed` → `complete`, would add a terminal rewrite — and every terminal
+rewrite is another chance for a torn write to resurrect `PENDING`. `COMPLETE` is
+**derived** from two facts that already exist durably and independently: a valid
+`consumed.json`, **and** the pair it names being committed here as an
+`origin: "imported"` pair. Consumed lands and the import never commits: **LOSS**,
+real and permanent, and still not a reason to reopen the request. Consumed
+lands, the import commits, the worker dies before replying: `COMPLETE` is
+derivable on the next read with nothing to repair.
+
+### 10.1.2 Four authorities, none of them the same thing
+
+| # | Authority | Lives in | Says |
+| --- | --- | --- | --- |
+| 1 | sender `CONFIRMED` | sender's origin | the operator declared the twelve words matched |
+| 2 | sender request **claim** (§10.5.1) | sender's origin, `spt/claims/` | this request is bound to this pad — one request, one package |
+| 3 | sender pair **handoff** (§10.9) | sender's origin, `<pairId>/` | this pad has been handed off — one pad, one handoff |
+| 4 | receiver request **state** (§10.1.1) | recipient's origin, `spt/receive/` | this request's one-time key may still be used — or never again |
+
+(2) and (4) both concern a request and are still different things: (2) binds a
+request to a *pad* in the **sender's** installation; (4) governs a *private key*
+in the **recipient's**. Neither can see the other, and neither substitutes for
+the other.
+
+> **Before any private-key use — the frozen `openSealed` pre-decapsulation
+> order.** `requestId` alone NEVER authorizes touching `dk`: it is a lookup
+> handle the requester chose and an attacker may choose to collide (§5.1). Given
+> a parsed TPS2: locate the receiver request by `package.requestId`; read its
+> state under the request authority; refuse **before decapsulating** if it is
+> terminal, cancelled, consumed, expired, or unusable; require
+> `package.requestHash` to equal the stored `requestHash`; require the stored
+> canonical body to recompute that same `requestHash`; and only then use `dk`.
+>
+> **Consume before import — the frozen `commitReceive` order.** Under the
+> request authority, `commitReceive` writes `consumed.json` — carrying the exact
+> `pairId` it is about to import and the exact `packageIdentity` it opened —
+> **before** the pair import commits. If the import then fails, the transfer is
+> **LOST**, and the request is still never reopened. The reverse order would let
+> an interrupted import be retried against a request whose key had already
+> decapsulated a package.
+>
+> **Terminal rejection** (§8.2.1) writes `cancelled.json` with
+> `reason: "rejected"` under the same authority, and only **after** that record
+> exists may the session be destroyed, the key dropped, and the rejection
+> acknowledged. One terminal writer, three reasons: `operator`, `expired`,
+> `rejected`.
 
 > **The decrypted pad bytes never leave the worker, and are never handed back
 > in.** `openSealed` returns an opaque `sessionId` and the confirmation words;

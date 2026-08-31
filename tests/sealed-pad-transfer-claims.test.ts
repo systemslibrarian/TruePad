@@ -18,9 +18,9 @@ const SPEC = readFileSync(join(ROOT, "docs", "SEALED-PAD-TRANSFER.md"), "utf8");
 const FLAT = SPEC.replace(/^\s*>\s?/gm, "").replace(/\*\*/g, "").replace(/\s+/g, " ");
 
 describe("the document says exactly what is and is not implemented", () => {
-  it("carries the Phase 1B status", () => {
+  it("carries the Phase 1B.3 status", () => {
     expect(SPEC).toContain(
-      "STATUS: PHASE 1B — STORAGE / PROVENANCE FOUNDATION IMPLEMENTED;\nSEALED TRANSFER PRODUCT FLOW NOT IMPLEMENTED."
+      "STATUS: PHASE 1B.3 — RECEIVER REQUEST DURABILITY FOUNDATION IMPLEMENTED;\nSEALED TRANSFER PRODUCT FLOW NOT YET REACHABLE."
     );
   });
 
@@ -34,11 +34,10 @@ describe("the document says exactly what is and is not implemented", () => {
 
   it("lists the product machinery that does NOT exist", () => {
     for (const absent of [
-      "persisted receive requests",
-      "one-time recipient `dk` lifecycle",
+      "receive-request RPC",
       "TPR2 operator ceremony",
       "sender verification state",
-      "cross-tab receive session",
+      "transient receive session",
       "any Browser UI, QR, or CLI verb"
     ]) {
       expect(FLAT, `${absent} must be listed as not implemented`).toContain(absent);
@@ -62,7 +61,18 @@ describe("the document says exactly what is and is not implemented", () => {
     // engine may use the PURE byte modules (base64url, the frozen sizes, and
     // the one packageIdentity definition) and may NOT reach the KEM, the key
     // schedule, or the request codec. Those are Phase 1C.
-    const ENGINE_ALLOWED = new Set(["bytes.ts", "constants.ts", "sealed-package.ts"]);
+    // The engine may parse and hash PUBLIC request material — that is exactly
+    // what §21's "validate body and hash on every read" requires of the
+    // receiver state module. It may NOT reach the KEM (`xwing-v1`), the key
+    // schedule or seal/open (`crypto-v1`), or the barrel that re-exports them
+    // (`index`). Those are Phase 1C.
+    const ENGINE_ALLOWED = new Set([
+      "bytes.ts",
+      "constants.ts",
+      "sealed-package.ts",
+      "fingerprint.ts",
+      "receive-request.ts"
+    ]);
     for (const file of readdirSync(join(ROOT, "src/browser/engine"), { withFileTypes: true })) {
       if (!file.isFile() || !file.name.endsWith(".ts")) continue;
       const source = readFileSync(join(ROOT, "src/browser/engine", file.name), "utf8");
@@ -1159,5 +1169,165 @@ describe("the request claim is enforced in storage, not merely documented", () =
       if (!file.endsWith(".ts")) continue;
       expect(codeOf(join("src/browser/ui", file))).not.toMatch(/request-claim|claimRequestForPair/);
     }
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Phase 1B.3 — receiver request durability
+ * ------------------------------------------------------------------------ */
+
+describe("receiver state is immutable creation plus terminal markers", () => {
+  it("is never a mutable record rewritten between values", () => {
+    expect(FLAT).toMatch(/Not as a mutable record/);
+    expect(FLAT).toMatch(/resurrects a one-time decapsulation key|resurrecting a one-time key/);
+    expect(FLAT).toMatch(/immutable creation plus terminal-by-existence\s*markers/);
+    expect(FLAT).toMatch(/a terminal marker is \*\*created\*\*, never a state\s*transitioned|a terminal marker is created, never a state transitioned/);
+    // No state.json, and no complete.json, in the frozen LAYOUT. The words may
+    // appear where the document forbids them, and only there.
+    expect(SPEC).not.toMatch(/spt\/receive\/[^\n]*state\.json/);
+    expect(SPEC).not.toMatch(/spt\/receive\/[^\n]*complete\.json/);
+    const idx = FLAT.indexOf("complete.json");
+    if (idx !== -1) expect(FLAT.slice(Math.max(0, idx - 120), idx + 120)).toMatch(/has no record of its own|Writing a/);
+  });
+
+  it("names the four files and puts request.json last", () => {
+    for (const f of ["request.json", "dk.bin", "cancelled.json", "consumed.json"]) {
+      expect(SPEC, `${f} must be frozen in the layout`).toContain(`spt/receive/<requestIdHex>/${f}`);
+    }
+    expect(FLAT).toMatch(/Creation writes `request\.json` LAST/);
+    expect(FLAT).toMatch(/No TPR2 may cross the worker boundary\s*before that returns/);
+  });
+
+  it("terminal precedence is frozen, and corruption never falls back to PENDING", () => {
+    expect(FLAT).toMatch(/examined \*\*before any private-key\s*material is touched\*\*|examined before any private-key material is touched/);
+    expect(FLAT).toMatch(/A terminal marker that exists always beats a still-present `dk\.bin`/);
+    expect(FLAT).toMatch(/no\*\* path from "the marker is bad" to "so try `request\.json` instead"|no path from "the marker is bad" to "so try `request\.json` instead"/);
+    expect(FLAT).toMatch(/A\s*corrupt terminal marker is terminal/);
+    expect(FLAT).toMatch(/LOSS IS ACCEPTABLE\. REUSE IS NOT/);
+  });
+
+  it("the marker is the reuse authority, not key deletion", () => {
+    expect(FLAT).toMatch(/The marker is the authority, not key deletion/);
+    expect(FLAT).toMatch(/what\s*prevents reuse is `cancelled\.json` \/ `consumed\.json` \*\*existing\*\*|prevents reuse is `cancelled.json` \/ `consumed.json` existing/);
+    expect(FLAT).toMatch(/A failed\s*cleanup does not change the state/);
+    expect(FLAT).toMatch(/never reported as "the key was erased"/);
+  });
+
+  it("a write that throws is never trusted to say what happened", () => {
+    expect(FLAT).toMatch(/A write that throws proves nothing/);
+    expect(FLAT).toMatch(/the operator must \*\*not\*\* be told it did|the operator must not be told it did/);
+  });
+
+  it("requestId namespaces are never recycled", () => {
+    expect(FLAT).toMatch(/`requestId` namespaces are never recycled/);
+    expect(FLAT).toMatch(/unavailable in this origin forever/);
+    expect(FLAT).toMatch(/the namespace is \*\*not\*\* cleaned up\s*for reuse|the namespace is not cleaned up for reuse/);
+    expect(FLAT).toMatch(/remove state ambiguity, not to improve the\s*randomness/);
+  });
+
+  it("a stored request is validated on every read, never trusted from JSON", () => {
+    expect(FLAT).toMatch(/Validated on every read, never trusted from JSON/);
+    expect(FLAT).toMatch(/equals the hash \*\*recomputed from the body\*\*|equals the hash recomputed from the body/);
+    expect(FLAT).toMatch(/must never cause\s*request \*R\*'s key to be used against body \*B′\*/);
+  });
+
+  it("expiry is a terminal transition with instant arithmetic", () => {
+    expect(FLAT).toMatch(/Expiry is a terminal transition, not an opinion/);
+    expect(FLAT).toMatch(/as an \*instant\* difference — never calendar arithmetic|as an \*instant\* difference/);
+    expect(FLAT).toMatch(/no key is returned/);
+    // The exact failure mode it prevents.
+    expect(FLAT).toMatch(/merely reads\s*as expired while a usable `dk\.bin` sits beside it with no durable terminal\s*authority/);
+  });
+
+  it("COMPLETE is derived from two durable facts, never written", () => {
+    expect(FLAT).toMatch(/`COMPLETE` has no record of its own/);
+    expect(FLAT).toMatch(/every terminal\s*rewrite is another chance for a torn write to resurrect `PENDING`/);
+    expect(FLAT).toMatch(/derived\*\* from two facts|derived from two facts/);
+    expect(FLAT).toMatch(/still not a reason to reopen the request/);
+  });
+
+  it("requestId alone never authorizes private-key use", () => {
+    expect(FLAT).toMatch(/`requestId` alone NEVER authorizes touching `dk`/);
+    expect(FLAT).toMatch(/refuse \*\*before decapsulating\*\*|refuse before decapsulating/);
+    expect(FLAT).toMatch(/only then use `dk`/);
+  });
+
+  it("consume comes BEFORE import, and the reverse is explained", () => {
+    expect(FLAT).toMatch(/Consume before import/);
+    expect(FLAT).toMatch(/\*\*before\*\* the pair import commits|before the pair import commits/);
+    expect(FLAT).toMatch(/The reverse order would let\s*an interrupted import be retried against a request whose key had already\s*decapsulated a package/);
+  });
+
+  it("the four authorities are named and kept apart", () => {
+    expect(FLAT).toMatch(/Four authorities, none of them the same thing/);
+    expect(FLAT).toMatch(/Neither can see the other, and neither substitutes for\s*the other/);
+  });
+});
+
+describe("the receiver state module matches what the document says", () => {
+  const codeOf = (rel: string) =>
+    readFileSync(join(ROOT, rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const receiver = codeOf("src/browser/engine/spt-receiver-state.ts");
+
+  it("writes request.json after dk.bin, and re-reads both", () => {
+    const fn = receiver.slice(receiver.indexOf("export async function commitPendingReceiveRequest"));
+    expect(fn.indexOf("dkPath(requestIdHex), dk")).toBeLessThan(fn.indexOf("requestPath(requestIdHex), record"));
+    expect(fn).toMatch(/readFile\(dkPath\(requestIdHex\)\)/);
+    expect(fn).toMatch(/readFile\(requestPath\(requestIdHex\)\)/);
+    expect(fn).toMatch(/parseStoredRequest\(readBack, requestIdHex\)/);
+  });
+
+  it("never deletes a terminal marker, and never rewrites one", () => {
+    for (const m of receiver.matchAll(/vfs\.remove\(([^)]*)\)/g)) {
+      expect(m[1], `must not remove ${m[1]}`).not.toMatch(/cancelledPath|consumedPath|requestPath/);
+    }
+    // The only thing dropped is the key, and only best-effort.
+    expect(receiver).toMatch(/export async function bestEffortDropKey/);
+  });
+
+  it("only a valid unexpired PENDING carries a dk, and it is a copy", () => {
+    expect(receiver).toMatch(/dk: dk\.slice\(\)/);
+    // Every other state literal is dk-free.
+    const states = receiver.match(/kind: "(expired-pending|cancelled|consumed|unusable|absent)"/g) ?? [];
+    expect(states.length).toBeGreaterThan(4);
+    // The expired-pending RETURN — the one that must not carry a key. Bounded
+    // to that return statement so the pending branch below it is not swept in.
+    const from = receiver.indexOf('kind: "expired-pending"', receiver.indexOf("const expired ="));
+    const expired = receiver.slice(from, receiver.indexOf("};", from));
+    expect(expired).toMatch(/expiresAt: stored\.expiresAt/);
+    expect(expired).not.toMatch(/\bdk\b/);
+  });
+
+  it("terminal markers are read before the request or the key", () => {
+    const fn = receiver.slice(receiver.indexOf("export async function readReceiverState"));
+    expect(fn.indexOf("cancelledPath")).toBeLessThan(fn.indexOf("requestPath"));
+    expect(fn.indexOf("consumedPath")).toBeLessThan(fn.indexOf("requestPath"));
+    expect(fn.indexOf("requestPath")).toBeLessThan(fn.indexOf("dkPath"));
+  });
+
+  it("no SPT operation reached protocol.ts or the UI", () => {
+    const protocol = readFileSync(join(ROOT, "src/browser/engine/protocol.ts"), "utf8");
+    for (const name of [
+      "commitPendingReceiveRequest",
+      "cancelPendingReceiveRequest",
+      "consumePendingReceiveRequest",
+      "readReceiverState",
+      "deriveReceiveCompletion"
+    ]) {
+      expect(protocol, `${name} must not be an engine op`).not.toContain(name);
+    }
+    for (const file of readdirSync(join(ROOT, "src/browser/ui"))) {
+      if (!file.endsWith(".ts")) continue;
+      // Word-bounded: `receiveDirection` in role.ts is an unrelated, older
+      // helper about pad direction and must not trip this.
+      expect(codeOf(join("src/browser/ui", file)), file).not.toMatch(
+        /spt-receiver-state|\breadReceiverState\b|\breceiveDir\b|\bcommitPendingReceiveRequest\b/
+      );
+    }
+  });
+
+  it("the TTL is instant arithmetic, not calendar arithmetic", () => {
+    expect(receiver).toMatch(/REQUEST_TTL_MS = 7 \* 24 \* 60 \* 60 \* 1000/);
+    expect(receiver).not.toMatch(/setDate|getDate\(\) \+|setMonth/);
   });
 });
