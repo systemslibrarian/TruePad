@@ -18,10 +18,17 @@ const SPEC = readFileSync(join(ROOT, "docs", "SEALED-PAD-TRANSFER.md"), "utf8");
 const FLAT = SPEC.replace(/^\s*>\s?/gm, "").replace(/\*\*/g, "").replace(/\s+/g, " ");
 
 describe("the document says exactly what is and is not implemented", () => {
-  it("carries the Phase 1B.3 status", () => {
+  it("carries the Phase 1C status", () => {
     expect(SPEC).toContain(
-      "STATUS: PHASE 1B.3 — RECEIVER REQUEST DURABILITY FOUNDATION IMPLEMENTED;\nSEALED TRANSFER PRODUCT FLOW NOT YET REACHABLE."
+      "STATUS: PHASE 1C — SEALED PAD TRANSFER ENGINE FLOW IMPLEMENTED;\nBEGINNER PRODUCT UI NOT YET OFFERED."
     );
+  });
+
+  it("says the engine exists and the product still does not offer it", () => {
+    expect(FLAT).toMatch(/TruePad does not offer online sealed pad transfer/);
+    expect(FLAT).toMatch(/The engine exists; no\s*product surface reaches it/);
+    expect(FLAT).toMatch(/it cannot know who\s*spoke first/);
+    expect(FLAT).toMatch(/Indices are not a mnemonic/);
   });
 
   it("refuses the promotion the status line invites", () => {
@@ -34,11 +41,11 @@ describe("the document says exactly what is and is not implemented", () => {
 
   it("lists the product machinery that does NOT exist", () => {
     for (const absent of [
-      "receive-request RPC",
-      "TPR2 operator ceremony",
-      "sender verification state",
-      "transient receive session",
-      "any Browser UI, QR, or CLI verb"
+      "any Browser screen, button, route or file picker",
+      "QR encoding or scanning",
+      "word rendering",
+      "beginner ceremony UX",
+      "any CLI sealed-transfer command"
     ]) {
       expect(FLAT, `${absent} must be listed as not implemented`).toContain(absent);
     }
@@ -54,33 +61,14 @@ describe("the document says exactly what is and is not implemented", () => {
     }
   });
 
-  it("no product surface reaches the transfer CRYPTO", () => {
-    // Phase 1B gave the browser engine a storage substrate, so a blanket "the
-    // engine never mentions src/spt" is no longer the right guard — it would
-    // now be false for a reason that is fine. The precise claim is that the
-    // engine may use the PURE byte modules (base64url, the frozen sizes, and
-    // the one packageIdentity definition) and may NOT reach the KEM, the key
-    // schedule, or the request codec. Those are Phase 1C.
-    // The engine may parse and hash PUBLIC request material — that is exactly
-    // what §21's "validate body and hash on every read" requires of the
-    // receiver state module. It may NOT reach the KEM (`xwing-v1`), the key
-    // schedule or seal/open (`crypto-v1`), or the barrel that re-exports them
-    // (`index`). Those are Phase 1C.
-    const ENGINE_ALLOWED = new Set([
-      "bytes.ts",
-      "constants.ts",
-      "sealed-package.ts",
-      "fingerprint.ts",
-      "receive-request.ts"
-    ]);
-    for (const file of readdirSync(join(ROOT, "src/browser/engine"), { withFileTypes: true })) {
-      if (!file.isFile() || !file.name.endsWith(".ts")) continue;
-      const source = readFileSync(join(ROOT, "src/browser/engine", file.name), "utf8");
-      for (const m of source.matchAll(/from "[^"]*spt\/([^"]+)"/g)) {
-        expect(ENGINE_ALLOWED.has(m[1]), `engine/${file.name} may not import spt/${m[1]}`).toBe(true);
-      }
-    }
-    // The UI and the CLI reach NONE of it. There is no user-facing surface.
+  it("the ENGINE may use the transfer crypto; the UI and CLI may not", () => {
+    // Phase 1C composes the engine flow, so the WORKER now genuinely performs
+    // X-Wing key generation, encapsulation, decapsulation and the SPT AEAD. A
+    // guard forbidding the engine to touch the KEM would now be false for the
+    // right reason, and is retired deliberately (§47 of the 1C brief).
+    //
+    // What still holds — and is the whole "no reachable feature" claim — is
+    // that no UI or CLI file reaches ANY of it.
     for (const dir of ["src/browser/ui", "src/cli", "src/cli/v2"]) {
       for (const file of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
         if (!file.isFile() || !file.name.endsWith(".ts")) continue;
@@ -90,15 +78,33 @@ describe("the document says exactly what is and is not implemented", () => {
     }
   });
 
-  it("the KEM is still absent from the shipped browser bundle", () => {
-    // The engine imports only pure byte modules, so no X-Wing, ML-KEM, SHA-3 or
-    // X25519 code should reach dist. If this fails, an import crept sideways.
+  it("the KEM is in the WORKER bundle and NOT in the main/UI bundle", () => {
+    // Changed deliberately in Phase 1C. The worker executes the KEM, so it must
+    // be bundled there — locally, with no network fetch. The main bundle must
+    // NOT gain it: the SPT protocol additions are TYPES, and if a value import
+    // ever crept across, this fails.
     const dist = join(ROOT, "dist", "assets");
     if (!existsSync(dist)) return; // no build in this run
-    for (const file of readdirSync(dist)) {
-      if (!file.endsWith(".js")) continue;
-      const source = readFileSync(join(dist, file), "utf8");
-      expect(source, `${file} must not contain KEM code`).not.toMatch(/ml_kem768|x25519|shake256|sha3_256/);
+    const files = readdirSync(dist).filter((f) => f.endsWith(".js"));
+    // Minification renames identifiers, so `ml_kem768` does not survive. These
+    // two do: `x25519` as a string literal in the curve code, and 3329 — the
+    // ML-KEM modulus q — as a numeric constant. Both are absent from `main`.
+    const kem = /x25519|\b3329\b/;
+    const workers = files.filter((f) => f.startsWith("worker"));
+    const mains = files.filter((f) => f.startsWith("main") || f.startsWith("learn"));
+    expect(workers.length, "the worker chunk must exist").toBeGreaterThan(0);
+    expect(
+      workers.some((f) => kem.test(readFileSync(join(dist, f), "utf8"))),
+      "the worker bundle must contain the KEM now"
+    ).toBe(true);
+    for (const f of mains) {
+      expect(readFileSync(join(dist, f), "utf8"), `${f} must not gain the KEM`).not.toMatch(kem);
+    }
+    // Bundled locally in every chunk: no eval, no external wasm.
+    for (const f of files) {
+      const source = readFileSync(join(dist, f), "utf8");
+      expect(source, `${f} must not eval`).not.toMatch(/\beval\(|new Function\(/);
+      expect(source, `${f} must not fetch wasm`).not.toMatch(/WebAssembly/);
     }
   });
 
@@ -1329,5 +1335,154 @@ describe("the receiver state module matches what the document says", () => {
   it("the TTL is instant arithmetic, not calendar arithmetic", () => {
     expect(receiver).toMatch(/REQUEST_TTL_MS = 7 \* 24 \* 60 \* 60 \* 1000/);
     expect(receiver).not.toMatch(/setDate|getDate\(\) \+|setMonth/);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Phase 1C — the composed engine flow
+ * ------------------------------------------------------------------------ */
+
+describe("the engine RPCs carry no security material the caller could substitute", () => {
+  const protocol = readFileSync(join(ROOT, "src/browser/engine/protocol.ts"), "utf8");
+  const codeOf = (rel: string) =>
+    readFileSync(join(ROOT, rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const sptVerbs = codeOf("src/browser/engine/spt-verbs.ts");
+
+  it("confirm takes a reviewId — never a body, key or hash", () => {
+    const line = protocol.match(/op: "spt-confirm-request"[^}]*\}/)?.[0] ?? "";
+    expect(line).toContain("reviewId: string");
+    expect(line).not.toMatch(/body|text|encapsulationKey|requestHash/);
+  });
+
+  it("seal names a request and a pad — never their contents", () => {
+    const line = protocol.match(/op: "spt-seal"[^}]*\}/)?.[0] ?? "";
+    expect(line).toContain("requestHash: string");
+    expect(line).toContain("pairId: string");
+    expect(line).not.toMatch(/body|padFileBytes|container|package|encapsulationKey/);
+  });
+
+  it("commitReceive takes a sessionId and nothing else", () => {
+    const line = protocol.match(/op: "spt-commit-receive"[^}]*\}/)?.[0] ?? "";
+    expect(line).toContain("sessionId: string");
+    expect(line).not.toMatch(/padFileBytes|container|pairId|packageIdentity|requestHash|witnessClass/);
+    // ...and the implementation reads the session, never the request.
+    const fn = sptVerbs.slice(sptVerbs.indexOf("export async function commitReceiveImpl"));
+    expect(fn).toMatch(/runtime\.getSession\(sessionId\)/);
+    expect(fn).toMatch(/live\.padFileBytes/);
+  });
+
+  it("no internal storage helper is exposed as an RPC", () => {
+    for (const name of [
+      "commitSealedHandoff",
+      "claimRequestForPair",
+      "consumePendingReceiveRequest",
+      "readReceiverState",
+      "commitPendingReceiveRequest",
+      "commitConfirmation"
+    ]) {
+      expect(protocol, `${name} must not be an engine op`).not.toContain(name);
+    }
+  });
+});
+
+describe("the engine's write order is structural", () => {
+  const codeOf = (rel: string) =>
+    readFileSync(join(ROOT, rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const sptVerbs = codeOf("src/browser/engine/spt-verbs.ts");
+
+  it("seal: claim → encapsulate → handoff → release", () => {
+    // The NEW-handoff branch only: the re-share branch above it legitimately
+    // loads a committed package and returns before any of this runs.
+    const whole = sptVerbs.slice(sptVerbs.indexOf("export async function sealImpl"));
+    const fn = whole.slice(whole.indexOf("claimRequestForPair("));
+    expect(whole.indexOf("claimRequestForPair(")).toBeGreaterThan(-1);
+    const seal = fn.indexOf("sealPayloadV1(");
+    const commit = fn.indexOf("commitSealedHandoff(");
+    const release = fn.indexOf("return {");
+    expect(seal).toBeGreaterThan(-1);
+    expect(seal).toBeLessThan(commit);
+    expect(commit).toBeLessThan(release);
+  });
+
+  it("seal takes the pad lock OUTSIDE the request lock", () => {
+    const fn = sptVerbs.slice(sptVerbs.indexOf("export async function sealImpl"));
+    expect(fn.indexOf("vfs.withLock(pairId")).toBeLessThan(fn.indexOf('vfs.withLock(`spt-send:'));
+  });
+
+  it("open: structural parse → session lock → request authority → decapsulate", () => {
+    const fn = sptVerbs.slice(sptVerbs.indexOf("export async function openSealedImpl"));
+    const parse = fn.indexOf("parseSealedPackage(packageBytes)");
+    const lock = fn.indexOf("runtime.locks.tryAcquire(");
+    const state = fn.indexOf("readReceiverState(");
+    const open = fn.indexOf("openPayloadV1(");
+    expect(parse).toBeLessThan(lock);
+    expect(lock).toBeLessThan(state);
+    expect(state).toBeLessThan(open);
+    // requestHash is checked before the key is used.
+    expect(fn.indexOf("header.requestHash, state.requestHash")).toBeLessThan(open);
+  });
+
+  it("the session lock is ifAvailable and never queues", () => {
+    const runtime = codeOf("src/browser/engine/spt-runtime.ts");
+    expect(runtime).toMatch(/ifAvailable: true/);
+    expect(runtime).not.toMatch(/steal|signal:/);
+    expect(sptVerbs).toMatch(/tryAcquire/);
+  });
+
+  it("commit: consume BEFORE import, and the pair lock is not re-entered", () => {
+    const fn = sptVerbs.slice(sptVerbs.indexOf("export async function commitReceiveImpl"));
+    expect(fn.indexOf("consumePendingReceiveRequest(")).toBeLessThan(fn.indexOf("importUnderPairLock("));
+    // Session lease → request lock → pair lock.
+    expect(fn.indexOf('vfs.withLock(`spt-req:')).toBeLessThan(fn.indexOf("vfs.withLock(live.pairId"));
+  });
+
+  it("failure after consume is LOSS, and never reopens the request", () => {
+    const fn = sptVerbs.slice(sptVerbs.indexOf("export async function commitReceiveImpl"));
+    expect(fn).toMatch(/R_RECEIVE_LOSS/);
+    expect(fn).not.toMatch(/cancelPendingReceiveRequest[\s\S]{0,200}consumed/);
+  });
+
+  it("reject terminalizes BEFORE acknowledging, and keeps the session if it did not", () => {
+    const fn = sptVerbs.slice(sptVerbs.indexOf("export async function rejectImpl"), sptVerbs.indexOf("export type CommitReceiveDeps"));
+    expect(fn.indexOf("cancelPendingReceiveRequest(")).toBeLessThan(fn.indexOf("runtime.endSession("));
+    // The "did not land" branch throws without ending the session.
+    const guard = fn.slice(fn.indexOf('if (after.kind !== "cancelled"'), fn.indexOf("const requestId"));
+    expect(guard).toMatch(/throw new EngineRefused/);
+    expect(guard).not.toMatch(/endSession/);
+  });
+
+  it("abandon writes no terminal marker", () => {
+    const fn = sptVerbs.slice(sptVerbs.indexOf("export async function abandonImpl"), sptVerbs.indexOf("export type RejectResult"));
+    expect(fn).not.toMatch(/cancelPendingReceiveRequest|consumePendingReceiveRequest/);
+    expect(fn).toMatch(/runtime\.endSession\(sessionId\)/);
+  });
+
+  it("the decrypted container is preflighted in memory, never in OPFS", () => {
+    const fn = sptVerbs.slice(sptVerbs.indexOf("async function preflightContainer"));
+    expect(fn).toMatch(/new MemoryVfs\(\)/);
+    expect(fn).not.toMatch(/vfs\.writeFileAtomic|stagingDir/);
+  });
+
+  it("there is ONE importer, and sealed transfer calls it", () => {
+    const verbs = codeOf("src/browser/engine/verbs.ts");
+    expect(verbs).toMatch(/export async function importContainerUnderPairLock/);
+    // import-pair is now a thin lock-taking wrapper around the same body.
+    expect(verbs).toMatch(/vfs\.withLock\(pairId, \(\) => importContainerUnderPairLock/);
+    expect(verbs).toMatch(/importUnderPairLock: \(vfs: Vfs[\s\S]{0,200}importContainerUnderPairLock/);
+    // ...and exactly one place READS the six courier files to build a
+    // container. (`removeStoreFiles` also walks BUNDLE_FILES, to delete them.)
+    expect(verbs.match(/readFile\(`\$\{pairId\}\/\$\{rel\}`\)/g)?.length).toBe(1);
+  });
+
+  it("no SPT screen exists", () => {
+    for (const file of readdirSync(join(ROOT, "src/browser/ui"))) {
+      if (!file.endsWith(".ts")) continue;
+      const ui = readFileSync(join(ROOT, "src/browser/ui", file), "utf8");
+      expect(ui, `${file} must not offer sealed transfer`).not.toMatch(
+        /spt-create-request|spt-seal|spt-open-sealed|Send securely online|Receive a pad/
+      );
+    }
+    const main = readFileSync(join(ROOT, "src/browser/main.ts"), "utf8");
+    expect(main).not.toMatch(/spt-|sealed-transfer/);
   });
 });

@@ -1,7 +1,7 @@
 # Sealed Pad Transfer v1
 
-**STATUS: PHASE 1B.3 — RECEIVER REQUEST DURABILITY FOUNDATION IMPLEMENTED;
-SEALED TRANSFER PRODUCT FLOW NOT YET REACHABLE.**
+**STATUS: PHASE 1C — SEALED PAD TRANSFER ENGINE FLOW IMPLEMENTED;
+BEGINNER PRODUCT UI NOT YET OFFERED.**
 
 **Nothing in the shipped product offers sealed transfer.** There is no UI, no
 verb, no menu item, no QR, and no way for an operator to reach any of it.
@@ -37,17 +37,38 @@ decision is closed; suite `0x0001`'s wire bytes are unchanged.
   terminal transition rather than an opinion, and `COMPLETE` derived rather than
   written.
 
-Still **not** implemented, and therefore not reachable:
+**Phase 1C** composed those pieces into a complete worker engine flow: the
+sender's durable `CONFIRMED` record and its two-step review/confirm boundary,
+receive-request creation and cancellation, sealing a live generated-here genesis
+pad, exact same-package re-share, opening a sealed package into a transient
+worker-only session held by a cross-tab Web Lock, rejection, abandonment, and
+consume-before-import through the **existing, unmodified** importer.
 
-* the receive-request RPC, and the TPR2 operator ceremony and §6 words;
-* the inspect/confirm sender RPC and sender verification state (§10.5);
-* the product `seal(body, pairId)` operation, `openSealed`, `commitReceive`,
-  `reject`, `abandon`;
-* the transient receive session and its cross-tab Web Locks (§10.10);
-* any Browser UI, QR, or CLI verb.
+The end-to-end test does not stop at "the ceremony completed": Alice and Bob
+then exchange ordinary TP2 messages over the delivered pad, in both directions,
+through the unchanged message path. Sealed transfer delivers the existing pad;
+it is not a parallel cryptosystem beside it.
 
-The storage foundations exist **underneath** a feature that has not been built.
-Nothing in `protocol.ts` names any of them, and no UI file reaches them.
+Still **not offered**, and therefore not reachable by an operator:
+
+* any Browser screen, button, route or file picker for sealed transfer;
+* QR encoding or scanning;
+* word rendering — the engine returns 12 and 8 **indices**, and the wordlist's
+  provenance and display are Phase 1D's job. Indices are not a mnemonic;
+* the beginner ceremony UX, including the receiver-first masking of §8.2 that
+  the engine cannot enforce;
+* any CLI sealed-transfer command.
+
+**TruePad does not offer online sealed pad transfer.** The engine exists; no
+product surface reaches it. `src/browser/ui/**`, `src/cli/**` and `bin/**`
+contain no reference to any of it, and guards check that against the tree.
+
+> **What the engine can and cannot claim about the ceremony.** It returns
+> Alice's eight confirmation indices when she seals, and it cannot know who
+> spoke first. Receiver-first (§8.2) remains an **OPERATOR** assumption that
+> Phase 1D supports by masking Alice's words until she indicates Bob has read
+> his. A page holding worker-RPC authority can call any of these RPCs itself;
+> that is endpoint compromise (§15), and no ordering in the engine changes it.
 
 The low-level `sealPayloadV1` / `openPayloadV1` take **bytes**. They are for
 cryptographic composition and reference vectors. The product operation remains

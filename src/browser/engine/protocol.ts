@@ -92,7 +92,25 @@ export type EngineRequest =
   // Import a couriered pad. The UI reads the operator-selected file and TRANSFERS
   // its bytes into the worker (detaching the UI's ArrayBuffer); the worker parses
   // and validates the whole container before any pair becomes active (§6).
-  | { id: number; op: "import-pair"; label: string; container: Uint8Array; witnessClass?: BrowserWitnessClass };
+  | { id: number; op: "import-pair"; label: string; container: Uint8Array; witnessClass?: BrowserWitnessClass }
+  /* ---- Sealed Pad Transfer (engine only; no UI offers these yet) ----------
+   * Note what these do NOT carry. `spt-confirm-request` takes a review handle
+   * and not the request body, so the page cannot display one request and have
+   * another sealed. `spt-commit-receive` takes a session handle and not pad
+   * bytes, so the bytes that produced the confirmation words are the bytes that
+   * get imported. `spt-seal` names a request and a pad, never their contents.
+   * These absences are the security boundary, not an API convenience.
+   * --------------------------------------------------------------------- */
+  | { id: number; op: "spt-create-request" }
+  | { id: number; op: "spt-cancel-request"; requestId: string }
+  | { id: number; op: "spt-inspect-request"; text: string }
+  | { id: number; op: "spt-confirm-request"; reviewId: string }
+  | { id: number; op: "spt-seal"; requestHash: string; pairId: string }
+  // The UI transfers the package buffer in; the worker takes ownership.
+  | { id: number; op: "spt-open-sealed"; package: Uint8Array }
+  | { id: number; op: "spt-commit-receive"; sessionId: string }
+  | { id: number; op: "spt-reject"; sessionId: string }
+  | { id: number; op: "spt-abandon"; sessionId: string };
 
 /* ---- responses (worker → UI) ----------------------------------------------- */
 
@@ -108,7 +126,48 @@ export type EngineOk =
   // The packed courier container, as one transferred byte buffer (§4). This IS
   // pad material; the UI hands it straight to a file the operator names.
   | { id: number; ok: true; op: "export-pair"; container: Uint8Array; fileCount: number }
-  | { id: number; ok: true; op: "import-pair"; pair: PairSummary };
+  | { id: number; ok: true; op: "import-pair"; pair: PairSummary }
+  /* ---- Sealed Pad Transfer responses --------------------------------------
+   * PUBLIC material only. No decapsulation key, no shared secret, no PRK, no
+   * AEAD key, no decrypted pad container, no raw store files. The word INDICES
+   * cross the boundary; rendering them is a later phase's job, and they are not
+   * a mnemonic.
+   * --------------------------------------------------------------------- */
+  | {
+      id: number;
+      ok: true;
+      op: "spt-create-request";
+      requestId: string;
+      requestHash: string;
+      tpr2: string;
+      requestIndices: number[];
+      expiresAt: string;
+    }
+  | {
+      id: number;
+      ok: true;
+      op: "spt-cancel-request";
+      requestId: string;
+      state: "cancelled" | "terminal-unreadable";
+      reason: "operator" | "expired";
+    }
+  | { id: number; ok: true; op: "spt-inspect-request"; reviewId: string; requestHash: string; requestIndices: number[] }
+  | { id: number; ok: true; op: "spt-confirm-request"; requestHash: string; expiresAt: string }
+  | {
+      id: number;
+      ok: true;
+      op: "spt-seal";
+      requestHash: string;
+      packageIdentity: string;
+      // Public encrypted transport material, transferred out as one buffer.
+      package: Uint8Array;
+      confirmationIndices: number[];
+      reshared: boolean;
+    }
+  | { id: number; ok: true; op: "spt-open-sealed"; sessionId: string; requestId: string; confirmationIndices: number[] }
+  | { id: number; ok: true; op: "spt-commit-receive"; requestId: string; pair: PairSummary; complete: boolean }
+  | { id: number; ok: true; op: "spt-reject"; requestId: string; state: "cancelled" | "terminal-unreadable" }
+  | { id: number; ok: true; op: "spt-abandon"; requestId: string };
 
 export type EngineResponse = EngineOk | ((EngineRefusal | EngineError) & { id: number; op: EngineRequest["op"] });
 

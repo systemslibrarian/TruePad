@@ -70,6 +70,18 @@ import {
   REFUSE_UNREADABLE
 } from "./handoff.ts";
 import { readReceiverState, type ReceiverState } from "./spt-receiver-state.ts";
+import type { SptRuntime } from "./spt-runtime.ts";
+import {
+  abandonImpl,
+  cancelRequestImpl,
+  commitReceiveImpl,
+  confirmRequestImpl,
+  createRequestImpl,
+  inspectRequestImpl,
+  openSealedImpl,
+  rejectImpl,
+  sealImpl
+} from "./spt-verbs.ts";
 import type { Vfs } from "./vfs.ts";
 
 const enc = new TextEncoder();
@@ -1220,6 +1232,28 @@ const BUNDLE_FILE_SET = new Set(BUNDLE_FILES);
  * sealed marker refuses; a torn marker refuses; a physical marker permits
  * re-export under the frozen legacy policy and does NOT rewrite the marker.
  */
+/** The EXACT six-file courier container, read from the LIVE store.
+ *
+ *  One reader for two callers with different consequences: `export-pair`
+ *  commits a physical handoff around it, and Phase 1C's sealed transfer
+ *  encrypts it. Two copies of this loop would be two chances for the sealed
+ *  path and the physical path to disagree about what a pad IS.
+ *
+ *  It mutates NO handoff state, and it carries exactly the six FORMAT-V2 files
+ *  — never `pair.json`, never the handoff record, never provenance, never
+ *  Browser witness metadata. */
+export async function buildLiveCourierContainer(vfs: Vfs, pairId: string): Promise<Uint8Array> {
+  const files: CourierFile[] = [];
+  for (const rel of BUNDLE_FILES) {
+    const bytes = await vfs.readFile(`${pairId}/${rel}`);
+    if (bytes === null) {
+      throw new EngineRefused("corrupt-store", `${rel} is missing; the pair is not whole. Nothing was exported.`);
+    }
+    files.push({ path: rel, bytes });
+  }
+  return packContainer(pairId, files);
+}
+
 async function exportImpl(vfs: Vfs, req: Req<"export-pair">): Promise<ExportResult> {
   const pairId = req.pairId;
   return vfs.withLock(pairId, async (): Promise<ExportResult> => {
@@ -1249,19 +1283,9 @@ async function exportImpl(vfs: Vfs, req: Req<"export-pair">): Promise<ExportResu
       );
     }
 
-    const files: CourierFile[] = [];
-    for (const rel of BUNDLE_FILES) {
-      const bytes = await vfs.readFile(`${pairId}/${rel}`);
-      if (bytes === null) {
-        throw new EngineRefused("corrupt-store", `${rel} is missing; the pair is not whole. Nothing was exported.`);
-      }
-      files.push({ path: rel, bytes });
-    }
     // §4: the container is packed IN THE WORKER and returned as one transferred
-    // buffer. No pad material is base64-stringified on the UI thread. The
-    // container carries EXACTLY the six FORMAT-V2 files — never pair.json,
-    // never the handoff record, never provenance.
-    const container = packContainer(pairId, files);
+    // buffer. No pad material is base64-stringified on the UI thread.
+    const container = await buildLiveCourierContainer(vfs, pairId);
 
     // MARKER LAST, and before the container is released. A first export records
     // the handoff; a re-export under an existing physical marker leaves it
@@ -1269,7 +1293,7 @@ async function exportImpl(vfs: Vfs, req: Req<"export-pair">): Promise<ExportResu
     if (handoff.kind === "absent") {
       await commitPhysicalHandoff(vfs, pairId, new Date().toISOString());
     }
-    return { ok: true, op: "export-pair", container, fileCount: files.length };
+    return { ok: true, op: "export-pair", container, fileCount: BUNDLE_FILES.length };
   });
 }
 
@@ -1345,7 +1369,26 @@ async function importImpl(vfs: Vfs, req: Req<"import-pair">): Promise<ImportResu
   }
   const witnessKind: BrowserWitnessKind = req.witnessClass ?? "browser-local-witness";
 
-  return vfs.withLock(pairId, async (): Promise<ImportResult> => {
+  return vfs.withLock(pairId, () => importContainerUnderPairLock(vfs, unpacked, req.label, witnessKind));
+}
+
+/** The whole existing import transaction, with the pair lock ALREADY HELD.
+ *
+ *  Split out so sealed transfer can commit through the identical code path
+ *  while holding that lock for its own consume-before-import ordering. There is
+ *  no second importer: same staging, same file-set and `loadStore` validation,
+ *  same witness bootstrap, same `pair.json` including `origin: "imported"`,
+ *  same `importing.json` commit gate, same cleanup. `import-pair` is now a thin
+ *  lock-taking wrapper, and its bytes and behaviour are unchanged. */
+export async function importContainerUnderPairLock(
+  vfs: Vfs,
+  unpacked: { pairId: string; files: CourierFile[] },
+  label: string,
+  witnessKind: BrowserWitnessKind
+): Promise<ImportResult> {
+  const pairId = unpacked.pairId;
+  const req = { label } as Req<"import-pair">;
+  {
     await requireNotDestroyed(vfs, pairId);
     if (await committedPairExists(vfs, pairId)) {
       throw new EngineRefused(
@@ -1437,7 +1480,84 @@ async function importImpl(vfs: Vfs, req: Req<"import-pair">): Promise<ImportResu
 
     const pair = await buildSummary(vfs, pairId);
     return { ok: true, op: "import-pair", pair };
-  });
+  }
+}
+
+/* ---- helpers the Sealed Pad Transfer engine composes ----------------------
+ * These exist so spt-verbs.ts never reimplements a gate that already lives
+ * here. It receives them as injected dependencies, so the import arrow runs
+ * one way — verbs.ts → spt-verbs.ts — and nothing circular is needed.
+ * ------------------------------------------------------------------------- */
+
+/** May this pad be sealed at all? Exists, whole, not destroyed, not mid-import,
+ *  generated HERE, and BOTH directions at genesis read from the LIVE store —
+ *  never from bytes a caller supplied. */
+export async function requirePadSealable(vfs: Vfs, pairId: string): Promise<void> {
+  await requireNotDestroyed(vfs, pairId);
+  await requireImportComplete(vfs, pairId);
+  await requirePair(vfs, pairId);
+  const meta = await readPairMeta(vfs, pairId);
+  if (meta.origin !== "generated-here") {
+    throw new EngineRefused(
+      meta.origin === "imported" ? "imported-pair-cannot-export" : "pad-provenance-unknown",
+      meta.origin === "imported"
+        ? "This pad arrived from someone else, so TruePad will not pass it on again. Generate a new pad to share."
+        : "TruePad cannot tell where this pad came from, so it will not send it onward. Generate a new pad to share."
+    );
+  }
+  const pair = await loadPair(vfs, pairId);
+  for (const direction of ["A->B", "B->A"] as const) {
+    const half = pair[direction];
+    const used =
+      half.effective.nextOffset !== 0 || half.effective.nextSequence !== 0 || half.effective.attemptsReserved !== 0;
+    if (used) {
+      throw new EngineRefused(
+        "pad-not-at-genesis",
+        "This pad has already been used, so it cannot be sent by sealed transfer. A pad is delivered before it " +
+          "carries anything. Generate a new pad to share."
+      );
+    }
+  }
+}
+
+/** Non-mutating: is this pairId importable into THIS store right now? Pure
+ *  lookups — no staging, no writes, nothing consumed. Re-run at commit because
+ *  a tombstone or a pair can appear in between. */
+export async function requireImportable(vfs: Vfs, pairId: string): Promise<void> {
+  await requireNotDestroyed(vfs, pairId);
+  if (await committedPairExists(vfs, pairId)) {
+    throw new EngineRefused(
+      "pair-exists",
+      `a pair with id ${pairId} already exists in this browser; importing would overwrite it. Nothing was imported.`
+    );
+  }
+}
+
+/** The importer's own bundle validation, run against a caller-supplied scratch
+ *  Vfs so a decrypted container can be checked WITHOUT touching real state and
+ *  without the plaintext reaching OPFS. Returns a message, or null when the
+ *  bundle would be accepted. */
+export async function validateBundleForImport(
+  scratch: Vfs,
+  pairId: string,
+  files: CourierFile[]
+): Promise<string | null> {
+  const setError = validateBundleFileSet(files);
+  if (setError) return setError;
+  for (const f of files) {
+    await scratch.writeFileAtomic(`${stagingDir(pairId)}/${f.path}`, f.bytes);
+  }
+  const loadedAB = await loadStore(scratch, `${stagingDir(pairId)}/${SUBDIR["A->B"]}`);
+  if (!loadedAB.ok) return `imported A->B store: ${loadedAB.message}`;
+  const loadedBA = await loadStore(scratch, `${stagingDir(pairId)}/${SUBDIR["B->A"]}`);
+  if (!loadedBA.ok) return `imported B->A store: ${loadedBA.message}`;
+  if (loadedAB.head.pairId !== pairId || loadedBA.head.pairId !== pairId) {
+    return `the bundle's head.json pairId disagrees with the container pairId ${pairId}.`;
+  }
+  if (loadedAB.head.direction !== "A->B" || loadedBA.head.direction !== "B->A") {
+    return `the bundle's two halves are not a matched A->B / B->A pair.`;
+  }
+  return null;
 }
 
 /* ---- derived receive completion ------------------------------------------
@@ -1523,7 +1643,59 @@ async function listImpl(vfs: Vfs): Promise<ListResult> {
 // throw becomes `error` with only its message — never a stack with secret
 // context. Secrets never appear in a response other than the plaintext an open
 // releases and the pad material an explicit export bundles.
-export async function handle(vfs: Vfs, req: EngineRequest): Promise<EngineResponse> {
+/** The Sealed Pad Transfer engine, composed from the helpers above.
+ *
+ *  `handle` takes an optional runtime so existing callers and tests are
+ *  untouched; the worker creates exactly one. An SPT request without a runtime
+ *  is refused rather than silently given a fresh one, because a per-call
+ *  runtime would give every RPC its own session map and quietly break the
+ *  one-live-session rule. */
+function requireRuntime(runtime: SptRuntime | undefined): SptRuntime {
+  if (!runtime) {
+    throw new EngineRefused("spt-unavailable", "sealed transfer is not available in this context.");
+  }
+  return runtime;
+}
+
+const SEAL_DEPS = { requirePadSealable, buildContainer: buildLiveCourierContainer };
+const OPEN_DEPS = { validateBundle: validateBundleForImport, requireImportable };
+const COMMIT_DEPS = {
+  importUnderPairLock: (vfs: Vfs, unpacked: { pairId: string; files: CourierFile[] }, label: string) =>
+    importContainerUnderPairLock(vfs, unpacked, label, "browser-local-witness"),
+  requireImportable
+};
+
+async function handleSpt(vfs: Vfs, req: EngineRequest, runtime: SptRuntime | undefined): Promise<EngineResponse> {
+  const rt = requireRuntime(runtime);
+  switch (req.op) {
+    case "spt-create-request":
+      return { id: req.id, ...(await createRequestImpl(vfs, rt)) };
+    case "spt-cancel-request":
+      return { id: req.id, ...(await cancelRequestImpl(vfs, req.requestId)) };
+    case "spt-inspect-request":
+      return { id: req.id, ...(await inspectRequestImpl(rt, req.text)) };
+    case "spt-confirm-request":
+      return { id: req.id, ...(await confirmRequestImpl(vfs, rt, req.reviewId)) };
+    case "spt-seal":
+      return { id: req.id, ...(await sealImpl(vfs, req.requestHash, req.pairId, SEAL_DEPS)) };
+    case "spt-open-sealed":
+      return { id: req.id, ...(await openSealedImpl(vfs, rt, req.package, OPEN_DEPS)) };
+    case "spt-commit-receive": {
+      const result = await commitReceiveImpl(vfs, rt, req.sessionId, COMMIT_DEPS);
+      return { id: req.id, ...result, pair: result.pair as PairSummary };
+    }
+    case "spt-reject":
+      return { id: req.id, ...(await rejectImpl(vfs, rt, req.sessionId)) };
+    case "spt-abandon":
+      return { id: req.id, ...(await abandonImpl(rt, req.sessionId)) };
+    default: {
+      const never: never = req as never;
+      throw new Error(`unknown op ${JSON.stringify((never as { op?: unknown }).op)}`);
+    }
+  }
+}
+
+export async function handle(vfs: Vfs, req: EngineRequest, runtime?: SptRuntime): Promise<EngineResponse> {
   try {
     switch (req.op) {
       case "list-pairs":
@@ -1546,6 +1718,18 @@ export async function handle(vfs: Vfs, req: EngineRequest): Promise<EngineRespon
         return { id: req.id, ...(await exportImpl(vfs, req)) };
       case "import-pair":
         return { id: req.id, ...(await importImpl(vfs, req)) };
+      case "spt-create-request":
+      case "spt-cancel-request":
+      case "spt-inspect-request":
+      case "spt-confirm-request":
+      case "spt-seal":
+      case "spt-open-sealed":
+      case "spt-commit-receive":
+      case "spt-reject":
+      case "spt-abandon":
+        // AWAITED: returning the promise from inside this try would let a
+        // refusal escape as a rejection instead of becoming a typed response.
+        return await handleSpt(vfs, req, runtime);
       default: {
         const never: never = req;
         throw new Error(`unknown op ${JSON.stringify((never as { op?: unknown }).op)}`);

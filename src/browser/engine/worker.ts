@@ -27,10 +27,18 @@
 
 import type { EngineRequest, EngineResponse } from "./protocol.ts";
 import { OpfsVfs } from "./opfs-vfs.ts";
+import { SptRuntime } from "./spt-runtime.ts";
 import { handle } from "./verbs.ts";
 
 // One store per worker, rooted at the OPFS root.
 const vfs = new OpfsVfs();
+
+// ONE Sealed Pad Transfer runtime per worker. It owns the transient review
+// handles and receive sessions, and the Web Lock leases that keep a receive
+// session exclusive across tabs. A per-request runtime would give every RPC its
+// own session map and quietly break one-live-session-per-request, so there is
+// exactly one and it is created here.
+const spt = new SptRuntime();
 
 // The plaintext an open releases and the packed courier container an export
 // returns are large buffers we are done with; transfer them so the UI takes
@@ -43,6 +51,13 @@ function collectTransfers(response: EngineResponse): Transferable[] {
   if (response.ok && response.op === "export-pair") {
     return [response.container.buffer as ArrayBuffer];
   }
+  // The sealed package is public encrypted transport material, and the buffer
+  // returned is a FRESH copy — the bytes retained on disk for an exact re-share
+  // are a different allocation, so transferring this one detaches nothing the
+  // engine still needs.
+  if (response.ok && response.op === "spt-seal") {
+    return [response.package.buffer as ArrayBuffer];
+  }
   return [];
 }
 
@@ -54,6 +69,10 @@ function secretRequestBuffers(request: EngineRequest): Uint8Array[] {
   if (request.op === "gen") return request.sources.map((s) => s.bytes);
   if (request.op === "import-pair") return [request.container];
   if (request.op === "burn") return [request.plaintext];
+  // The sealed file the operator chose. It is public ciphertext rather than pad
+  // material, but the UI transfers it in, so the worker's copy is the only one
+  // left and there is no reason to keep it afterwards.
+  if (request.op === "spt-open-sealed") return [request.package];
   return [];
 }
 
@@ -72,7 +91,7 @@ self.onmessage = async (event: MessageEvent<EngineRequest>): Promise<void> => {
   const secrets = secretRequestBuffers(request);
   let response: EngineResponse;
   try {
-    response = await handle(vfs, request);
+    response = await handle(vfs, request, spt);
   } catch (error) {
     // handle() already catches everything, but never let a throw escape the
     // worker: reply with a message-only error carrying the request's id.
