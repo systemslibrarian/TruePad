@@ -181,7 +181,7 @@ export async function renderSendOnline(ctx: Ctx, root: HTMLElement, pairId: stri
     });
 
     return card(
-      h("h3", { class: "sub", text: "Read these words to the other person" }),
+      h("h2", { class: "sub", text: "Read these words to the other person" }),
       h("p", { text: "Check that all 12 match what they see, in the same order." }),
       comparisonWords(indices, { label: "Receive code words, twelve in order" }),
       checkAllNote(12),
@@ -225,7 +225,7 @@ export async function renderSendOnline(ctx: Ctx, root: HTMLElement, pairId: stri
     });
 
     return card(
-      h("h3", { class: "sub", text: "Ready to send" }),
+      h("h2", { class: "sub", text: "Ready to send" }),
       h("p", { text: ONLINE_CLAIM_SHORT }),
       h("p", { class: "faint small", text: "TruePad does not send it for you — it makes the file, and you choose how to deliver it." }),
       h("div", { class: "actions" }, seal),
@@ -262,7 +262,7 @@ export async function renderSendOnline(ctx: Ctx, root: HTMLElement, pairId: stri
     heard.addEventListener("click", () => {
       heard.remove();
       wordSlot.replaceChildren(
-        h("h3", { class: "sub", text: "Compare what you heard with these words" }),
+        h("h2", { class: "sub", text: "Compare what you heard with these words" }),
         comparisonWords(indices, { label: "Your confirmation words, eight in order" }),
         checkAllNote(8),
         h("p", { text: "If they match, read these words back to the other person." }),
@@ -322,12 +322,12 @@ export async function renderSendOnline(ctx: Ctx, root: HTMLElement, pairId: stri
             body: h("p", { text: "Nothing new was created. Save or share the same file." })
           })
         : null,
-      h("h3", { class: "sub", text: "Send the sealed pad" }),
+      h("h2", { class: "sub", text: "Send the sealed pad" }),
       h("p", { text: "Send this file through chat, email, or however you normally share a file." }),
       actions,
       h("p", { class: "faint small", text: "If the download did not start, the pad was still sealed — you can save or share the same sealed file again." }),
       h("hr", { class: "rule" }),
-      h("h3", { class: "sub", text: "Confirm with the other person" }),
+      h("h2", { class: "sub", text: "Confirm with the other person" }),
       h("p", { text: "Ask them to read THEIR confirmation words to you first." }),
       heard,
       wordSlot,

@@ -164,7 +164,7 @@ export async function renderReceiveOnline(ctx: Ctx, root: HTMLElement): Promise<
       h("div", { class: "actions" }, copy),
       h("p", { class: "faint small", text: `Send this to the other person. ${expiryWords(req.expiresAt)}` }),
       persistWarning,
-      h("h3", { class: "sub", text: "Compare these words with the other person before they send the pad" }),
+      h("h2", { class: "sub", text: "Compare these words with the other person before they send the pad" }),
       comparisonWords(req.requestIndices, { label: "Receive code words, twelve in order" }),
       checkAllNote(12),
       h("div", { class: "actions quiet" }, cancel)
@@ -197,7 +197,16 @@ export async function renderReceiveOnline(ctx: Ctx, root: HTMLElement): Promise<
  *  with the sealed file. The durable request is identified from the package
  *  itself, so nothing about receiving depends on transient page state. */
 function chooseSealedCard(ctx: Ctx): HTMLElement {
-  const input = h("input", { type: "file", class: "sr-only", id: "sealed-file", attrs: { accept: ".tps2,application/octet-stream" } }) as HTMLInputElement;
+  // sr-only is CLIPPED, not removed: it stays focusable and reachable by a
+  // screen reader, so it needs its own name rather than borrowing the
+  // button's. An unnamed file input announces as just "file upload button".
+  const input = h("input", {
+    type: "file",
+    class: "sr-only",
+    id: "sealed-file",
+    aria: { label: "Choose the sealed pad file the other person sent you" },
+    attrs: { accept: ".tps2,application/octet-stream" }
+  }) as HTMLInputElement;
   const pick = h("button", { class: "btn", type: "button" }, icon("upload"), h("span", { text: "Choose sealed pad" })) as HTMLButtonElement;
   const errorSlot = h("div");
   pick.addEventListener("click", () => input.click());
@@ -232,7 +241,7 @@ function chooseSealedCard(ctx: Ctx): HTMLElement {
   });
 
   return card(
-    h("h3", { class: "sub", text: "Already have the sealed pad?" }),
+    h("h2", { class: "sub", text: "Already have the sealed pad?" }),
     h("p", { class: "faint small", text: "Choose the file the other person sent you." }),
     h("div", { class: "actions" }, pick, input),
     errorSlot

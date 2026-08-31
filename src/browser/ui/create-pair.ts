@@ -514,7 +514,7 @@ function renderCreated(ctx: Ctx, root: HTMLElement, pairId: string, claim: Sourc
       h("p", { class: "muted", text: "One thing left: give the other person their copy. Until they have it, neither of you can read anything the other sends." }),
       callout({ tone: "warn", title: "The pad file is the secret", body: DELIVERY_ESSENTIAL }),
       delivery,
-      h("h2", { class: "sub", text: "Give the other person their copy" }),
+      h("h2", { text: "Give the other person their copy" }),
       h("p", { class: "muted", text: "Choose one way. Use one delivery method for each pad." }),
       h("div", { class: "btn-row" }, onlineBtn, saveBtn),
       claim.kind === "external"

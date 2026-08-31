@@ -1779,4 +1779,45 @@ describe("the online-transfer UI keeps its promises", () => {
     expect(main).toMatch(/case "receive-confirm":\s*\n\s*return "#\/receive-confirm";/);
     expect(receive).not.toMatch(/location\.hash|history\.pushState/);
   });
+
+  /* ---- the ceremony has to work when you cannot see the screen ---------- */
+
+  it("every comparison list announces what it is, and its numbers are not read twice", () => {
+    // `<ol>` is the semantics: a screen reader announces the position from the
+    // list, so the visible number is decoration and must be hidden — otherwise
+    // item 1 is read as "1, 1, cake".
+    expect(shared).toMatch(/h\("ol", \{ class: "words", aria: \{ label: opts\.label \} \}\)/);
+    expect(shared).toMatch(/class: "word-n"[\s\S]{0,60}aria: \{ hidden: "true" \}/);
+    for (const [file, label] of [
+      [receive, /Receive code words, twelve in order/],
+      [receive, /Confirmation words, eight in order/],
+      [send, /Receive code words, twelve in order/],
+      // The sender's own eight say "Your", because on her screen the ones she
+      // has just heard belong to someone else.
+      [send, /Your confirmation words, eight in order/]
+    ] as const) {
+      expect(file, `a words list is missing the label ${String(label)}`).toMatch(label);
+    }
+  });
+
+  it("the visually hidden file input still has a name", () => {
+    // `.sr-only` clips; it does not remove. The input keeps focus and keeps
+    // being announced, so it needs its own name rather than the button's.
+    const decl = receive.slice(receive.indexOf('id: "sealed-file"') - 200, receive.indexOf('id: "sealed-file"') + 300);
+    expect(decl).toMatch(/aria: \{ label: "[^"]{10,}" \}/);
+  });
+
+  it("no sealed-transfer screen skips a heading level under its h1", () => {
+    // Each screen renders one h1 (its title) and cards below it. A card
+    // heading is therefore h2; an h3 there is a level skip with nothing at
+    // level 2 to justify it.
+    for (const [name, src] of [["receive-online.ts", receive], ["send-online.ts", send]] as const) {
+      expect(src, `${name} must not put an h3 directly under the screen h1`).not.toMatch(/h\("h3", \{ class: "sub"/);
+      expect(src, `${name} must carry its card headings at h2`).toMatch(/h\("h2", \{ class: "sub"/);
+    }
+    // ...and h2.sub must actually be styled, or promoting the level would
+    // silently resize seven headings.
+    const css = readFileSync(join(ROOT, "src/browser/style.css"), "utf8");
+    expect(css).toMatch(/h2\.sub,\s*\n\s*h3\.sub \{/);
+  });
 });

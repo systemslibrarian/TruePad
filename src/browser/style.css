@@ -2289,6 +2289,7 @@ table.matrix td small {
   color: var(--danger, #f7768e);
 }
 
+h2.sub,
 h3.sub {
   margin: 1.25rem 0 0.35rem;
   font-size: 1.05rem;
