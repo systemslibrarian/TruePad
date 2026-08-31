@@ -1,8 +1,17 @@
 # Sealed Pad Transfer — Release Audit
 
-**Audited commit:** `40827e0c8d388a57856fcae2e75ea7d629970f70` (branch `master`, clean tree)
+**Initial audit target:** `40827e0c8d388a57856fcae2e75ea7d629970f70`
+**Final repaired and revalidated candidate:** `098b28302bb665e4c6ed790bb45e7f2fa0edcf36`
 **Audit date:** 2026-08-31
 **Verdict:** **B — RELEASE READY WITH DOCUMENTED NON-BLOCKING LIMITATIONS**
+
+**The verdict applies to `098b283`.** The two SHAs are one audit, not two
+releases. Phase 1E opened against `40827e0`; the findings it reproduced were
+repaired in a single commit, `098b283`, which was then rebuilt and re-tested from
+clean, passed both CI workflows, and was deployed to GitHub Pages. The deployed
+artifacts for `098b283` were inspected directly — not inferred from the local
+`dist/` — and the complete Browser ceremony was re-run against the live
+deployment. `40827e0` appears in this document only as where the audit started.
 
 This is an audit record, not a specification. `docs/SEALED-PAD-TRANSFER.md` remains
 normative; where this document and that one disagree, the spec wins.
@@ -88,6 +97,13 @@ A saved raw `.pad` may appear in a downloads folder or a backup.
 **Web Locks required.** With no `navigator.locks`, `WebLocksProvider` returns no
 lease and sealed receive refuses. There is no weak mutex fallback. The refusal the
 operator sees is the busy-session wording.
+
+**The app page does not register the service worker.** A service worker and a web
+app manifest ship, but only the teaching Lab entry point registers it, so the
+offline shell and installability reach a visitor who has opened the Lab and not
+one who has only ever opened the app. This is a functionality limitation, not a
+security one — the service worker precaches eighteen static build artifacts and
+can see neither blob downloads, nor OPFS, nor worker RPC.
 
 **QR deferred; CLI out of scope.** Copy/paste is the normative channel. No CLI
 sealed-transfer verb exists.
@@ -198,7 +214,7 @@ is documented in `send-online.ts`, and a spec-conformance test pins both branche
 
 ---
 
-## Gate at the audited commit
+## Gate at the final candidate `098b283`
 
 Node v26.5.0, npm 11.17.0, darwin arm64. Clean `npm ci`.
 
@@ -211,6 +227,31 @@ Node v26.5.0, npm 11.17.0, darwin arm64. Clean `npm ci`.
 - Falsification: 5 rounds, 23 injections, 23 caught; tree verified clean after each
 - Static audit: 40 agents; every reported defect independently re-verified, 21 refuted, 9 upheld
 
+### CI on `098b283`
+
+- TPM emulator interoperability — **success**
+- Deploy demo to GitHub Pages — **success**
+
+Both with `head_sha == 098b28302bb665e4c6ed790bb45e7f2fa0edcf36`.
+
+### The deployed artifacts for `098b283`
+
+Checked against the live Pages deployment rather than the local build, because
+"it built correctly here" is not evidence about what users receive:
+
+- all 9 audited assets returned HTTP 200 — no 404 chunk
+- deployed `main-BbQ4muye.js` **byte-identical** to the audited local main (109,835 B)
+- the deployed document's CSP matched the source policy exactly
+- KEM markers: **0 in deployed main, 3 in deployed worker** — the boundary holds
+  in the artifact users actually receive, not only in the one built here
+- the wordlist is compiled in, and both shipped claim repairs are live
+- the only absolute URLs are an SVG XML namespace and the Source hyperlink
+- the complete Browser ceremony re-run against the live deployment: **13/13 passed**,
+  including receiver-first masking with zero leaks across twelve surfaces, zero
+  plaintext persisted before commit, cross-tab busy refusal, all five deep-link
+  routes safe, and double-clicked create/seal producing exactly one request
+  directory, one handoff marker and one claim
+
 ## Why B and not A
 
 Before repair this was **C**: `docs/PRODUCT-CLAIMS.md` — the authoritative
@@ -220,6 +261,6 @@ claim the product had outgrown, and no unresolved issue can violate a frozen
 invariant. Every repaired defect that can carry a regression test has one that
 fails without the fix. But the limitations above are real and
 operator-visible: profile rollback, non-atomic OPFS fallback, receiver-first as a
-human assumption, HNDL exposure of archived sealed files, and the impossibility of
-proving erasure. They are documented rather than solved, which is what B describes.
+human assumption, HNDL exposure of archived sealed files, the impossibility of
+proving erasure, and the app page's missing service-worker registration. They are documented rather than solved, which is what B describes.
 A would require claiming there is nothing left to disclose.
