@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
+import { TPS2_FIXED_OVERHEAD_BYTES, TPS2_MAGIC_BYTES } from "../src/spt/constants.ts";
+import { decodeReceiveRequest, parseRequestBody } from "../src/spt/receive-request.ts";
+
 /* ============================================================================
  * Sealed Pad Transfer — the whole human ceremony, in two real browsers
  * ----------------------------------------------------------------------------
@@ -83,6 +86,14 @@ test.describe("sealed pad transfer, end to end", () => {
     // MASKED. Alice's eight words are not in the document yet — not hidden,
     // ABSENT. Bob has not spoken.
     const maskedText = (await a.locator("body").textContent()) ?? "";
+    const maskedHtml = (await a.locator("body").innerHTML()) ?? "";
+    // The spec typechecks under the Node lib (no DOM), so the document is
+    // reached through a local structural type rather than lib.dom's globals.
+    const maskedAttrs = await a.evaluate(() => {
+      type El = { attributes: ArrayLike<{ value: string }> };
+      const doc = (globalThis as unknown as { document: { querySelectorAll(s: string): Iterable<El> } }).document;
+      return [...doc.querySelectorAll("*")].flatMap((el) => Array.from(el.attributes, (at) => at.value));
+    });
     expect(await a.locator(".words .word-w").count()).toBe(0);
 
     await a.getByRole("button", { name: "Save sealed pad" }).click();
@@ -102,6 +113,20 @@ test.describe("sealed pad transfer, end to end", () => {
     // meaningful checks are the absent list and the absent sequence.)
     expect(maskedText).not.toContain(bobConfirmWords.join(" "));
     expect(maskedText).not.toContain(bobConfirmWords.slice(0, 3).join(" "));
+
+    // ...and not in an ATTRIBUTE either. `textContent` cannot see a `data-`
+    // value, a `title`, or an `aria-label`, and "rendered but stashed in a
+    // property" is precisely the leak this ordering exists to prevent. The
+    // markup is the stronger surface: it carries text and attributes both.
+    expect(maskedHtml).not.toContain(bobConfirmWords.join(" "));
+    expect(maskedHtml).not.toContain(bobConfirmWords.slice(0, 3).join(" "));
+    // No single attribute value may carry a cluster of them. One ordinary word
+    // in a class name is a coincidence; three of these eight is the list.
+    const clustered = maskedAttrs.filter((value) => {
+      const tokens = new Set(value.toLowerCase().split(/[^a-z]+/));
+      return bobConfirmWords.filter((w) => tokens.has(w)).length >= 3;
+    });
+    expect(clustered, `attributes leaked the confirmation words: ${clustered.join(" | ")}`).toEqual([]);
 
     // NOW Alice reveals hers, and they match.
     await a.getByRole("button", { name: "I heard their words" }).click();
@@ -285,6 +310,112 @@ test.describe("sealed pad transfer, end to end", () => {
 
     await carol.close();
     await alice.close();
+    await bob.close();
+  });
+
+  test("the saved file IS the blob the page made, with nothing added to it", async ({ browser }) => {
+    // §59. The download path must be a pipe, not a formatter. So intercept the
+    // Blob the page actually constructs and compare it with the bytes that
+    // reached disk — a text conversion, a BOM, a trailing newline or a MIME
+    // wrapper would all show up as a difference here rather than having to be
+    // inferred from "well, the recipient opened it".
+    const alice = await browser.newContext();
+    const bob = await browser.newContext();
+    const a = await alice.newPage();
+    const b = await bob.newPage();
+
+    // Same reason as above: `URL.createObjectURL` and `Blob` are DOM globals
+    // this config does not declare, so the wrapper is written structurally.
+    await a.addInitScript(() => {
+      type BlobLike = { arrayBuffer(): Promise<ArrayBuffer> };
+      const g = globalThis as unknown as {
+        __blobs: number[][];
+        URL: { createObjectURL(obj: unknown): string };
+      };
+      g.__blobs = [];
+      const real = g.URL.createObjectURL.bind(g.URL);
+      g.URL.createObjectURL = (obj: unknown): string => {
+        const maybe = obj as Partial<BlobLike>;
+        if (typeof maybe?.arrayBuffer === "function") {
+          void (obj as BlobLike).arrayBuffer().then((buf) => {
+            g.__blobs.push([...new Uint8Array(buf)]);
+          });
+        }
+        return real(obj);
+      };
+    });
+
+    const { code } = await createReceiveCode(b);
+    await createPad(a, "Chat with Bob");
+    await a.getByRole("button", { name: "Send securely online" }).first().click();
+    await a.locator("#paste-code").fill(code);
+    await a.getByRole("button", { name: "Continue" }).click();
+    await a.getByRole("button", { name: "The words matched" }).click();
+    const downloadPromise = a.waitForEvent("download");
+    await a.getByRole("button", { name: "Seal pad" }).click();
+    await a.getByRole("button", { name: "Save sealed pad" }).click();
+    const path = (await downloadPromise).path();
+    const onDisk = readFileSync((await path) ?? "");
+
+    await a.waitForFunction(() => (globalThis as unknown as { __blobs: number[][] }).__blobs.length > 0);
+    const blobs = await a.evaluate(() => (globalThis as unknown as { __blobs: number[][] }).__blobs);
+    expect(blobs, "the page made exactly one blob for one save").toHaveLength(1);
+    const inPage = Buffer.from(blobs[0]);
+
+    expect(onDisk.length).toBe(inPage.length);
+    expect(onDisk.equals(inPage), "the saved file differs from the blob the page built").toBe(true);
+
+    // And the bytes are a bare TPS2 package: the magic is the FIRST byte, so
+    // nothing was prepended, and the length is the protocol's, so nothing was
+    // appended.
+    expect([...onDisk.subarray(0, 4)]).toEqual([...TPS2_MAGIC_BYTES]);
+    expect(onDisk.length).toBeGreaterThan(TPS2_FIXED_OVERHEAD_BYTES);
+    expect(onDisk[0], "no UTF-8 BOM").not.toBe(0xef);
+    expect(onDisk[onDisk.length - 1], "no trailing newline").not.toBe(0x0a);
+    expect(onDisk.subarray(0, 64).toString("latin1")).not.toMatch(/Content-Type|base64|application\//);
+
+    await alice.close();
+    await bob.close();
+  });
+
+  test("the copied receive code decodes to the same request the screen shows", async ({ browser }) => {
+    // §60. The clipboard is the only place this string is handled by a human,
+    // so what the button puts there must be the code and nothing else — no
+    // label, no code fence, no stray newline — and must still parse as the
+    // canonical request body on the other side.
+    const bob = await browser.newContext({ permissions: ["clipboard-read", "clipboard-write"] });
+    const b = await bob.newPage();
+    const { code } = await createReceiveCode(b);
+
+    await b.getByRole("button", { name: "Copy receive code" }).click();
+    const copied = await b.evaluate(() =>
+      (globalThis.navigator as unknown as { clipboard: { readText(): Promise<string> } }).clipboard.readText()
+    );
+
+    expect(copied).toBe(code);
+    expect(copied).toBe(copied.trim());
+    expect(copied).not.toContain("\n");
+    expect(copied).not.toContain("`");
+    expect(copied).toMatch(/^TPR2:[A-Za-z0-9_-]+$/);
+    expect(copied).toHaveLength(1652);
+
+    // The real decoder, not a regex that looks like one.
+    const decoded = decodeReceiveRequest(copied);
+    expect(decoded.ok, `decodeReceiveRequest refused the copied text: ${JSON.stringify(decoded)}`).toBe(true);
+    if (!decoded.ok) throw new Error("unreachable");
+    // The canonical 1235-byte body, re-parsed by the single binary authority.
+    const parsed = parseRequestBody(decoded.canonicalBody);
+    expect(parsed.ok, `parseRequestBody refused the copied body: ${JSON.stringify(parsed)}`).toBe(true);
+    expect(decoded.canonicalBody).toHaveLength(1235);
+
+    // Re-decoding what the SCREEN shows gives the identical canonical body, so
+    // the clipboard round trip changed nothing the protocol can see.
+    const fromScreen = decodeReceiveRequest(code);
+    expect(fromScreen.ok).toBe(true);
+    if (!fromScreen.ok) throw new Error("unreachable");
+    expect(Buffer.from(decoded.canonicalBody).equals(Buffer.from(fromScreen.canonicalBody))).toBe(true);
+    expect(Buffer.from(decoded.request.requestId).equals(Buffer.from(fromScreen.request.requestId))).toBe(true);
+
     await bob.close();
   });
 
