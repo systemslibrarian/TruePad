@@ -141,6 +141,17 @@ export async function renderHome(ctx: Ctx, root: HTMLElement): Promise<void> {
             h("span", { text: "Add a shared pad" })
           )
         ),
+        // ONE quiet line, below the two actions and above the disclosure. It
+        // exists because the choice a newcomer is about to make — hand the pad
+        // over, or send it — is the choice that decides which guarantee they
+        // get, and nothing else on this screen hints at that. It stays at
+        // hero-alt weight, names no cryptography, and is not a third action.
+        h(
+          "p",
+          { class: "hero-alt faint share-note" },
+          h("span", { text: "How you share the pad matters: handing it over and sending it online have different guarantees. " }),
+          h("a", { href: "online-delivery.html" }, h("span", { text: "Learn why" }))
+        ),
         howItWorks()
       )
     );

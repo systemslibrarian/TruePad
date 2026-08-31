@@ -1,20 +1,120 @@
-# TruePad
+# TruePad 2
 
-**A true one-time pad exhibit — the honest sibling of [DeckBook](https://github.com/systemslibrarian/DeckBook) — and a reuse-safe pad CLI.**
+**A working educational cryptographic system about the hard part of one-time
+pads: keeping pad material single-use, and keeping the security claims honest,
+across crashes, stale copies, restores, two-party state, browsers, and the
+delivery of the pad itself.**
 
-Two things live in this repository, separated by directory and by import
-direction (`src/core/` is pure; `src/exhibit/` and `src/cli/` may import it
-and never each other; a test enforces this):
+![The TruePad 2 Browser Edition showing a pad named "Example pad" with four actions — Send message, Open message, Send file, Open file — above an expanded Pad details panel listing remaining capacity and the two ways to give the other person their copy.](docs/assets/truepad-browser.png)
 
-- **The exhibit** (`src/exhibit/`, deployed to GitHub Pages) teaches Shannon's
-  three conditions by letting you watch a pad burn, run out, and shrug off
-  crib-dragging.
-- **The pad CLI** (`src/cli/`, `truepad-pad`) handles pad material on disk so
-  that a crash, a stale copy of the pad file, or two peers sharing one pad
-  cannot make a symbol serve twice — with the one limitation its section states.
+## The XOR is the easy part
 
-Neither is a recommendation to use one-time pads for real traffic. Both say,
-on the page and on every start, what they do not do.
+Anyone can write `plaintext ^ pad`. What is hard — and what this repository is
+actually about — is keeping the one-time pad's assumptions intact once real
+software is involved: crashes mid-write, a stale copy of a pad file, two peers
+who each think they hold the only copy, a restored backup, a delivery that
+failed halfway, browser storage the operating system may evict, and a handoff
+that may or may not have completed.
+
+Every one of those is a chance to use a pad symbol twice, and reuse is the one
+failure a one-time pad cannot survive. So the project has a single governing
+rule, and the code follows it even where it costs something:
+
+> **LOSS IS ACCEPTABLE. REUSE IS NOT.**
+
+Forced to choose between losing pad material and risking that a symbol serves
+twice, TruePad loses the material. A lost transfer is fixed by making a new pad.
+A reused pad cannot be fixed at all.
+
+**This is not a recommendation to use one-time pads for real traffic.** It is a
+working, audited implementation that states on every screen what it does not do.
+
+## Three guarantees, deliberately not merged
+
+The most common mistake about one-time pads is treating "the cipher is
+information-theoretic" as though it described the whole system. It does not.
+TruePad 2 keeps three claims apart, because they rest on different assumptions:
+
+| | What it covers | What it rests on |
+| --- | --- | --- |
+| **1. Private pad handoff** | delivering the raw pad by a secret route — in person, or a channel only the two of you control | If the OTP premises hold — source quality, secrecy, non-reuse, authentication — this is the route relevant to the **conditional information-theoretic** deployment path. TruePad **cannot prove physical randomness**, and says so. |
+| **2. Sealed online pad delivery** | delivering the pad as a `.tps2` file through an ordinary channel | **Computational.** X-Wing draft-10 (ML-KEM-768 with X25519), HKDF-SHA-256, AES-256-GCM. This is **not** an information-theoretic Internet-delivery claim. |
+| **3. Messages, once both sides hold the pad** | ordinary TruePad 2 messaging | One-time pad encryption plus one-time **Wegman–Carter** authentication. The theorem is information-theoretic under its premises; material from a software CSPRNG inherits that generator's assumptions. |
+
+A short form worth remembering, as long as you keep hold of what it refers to:
+
+> **PQC delivers the pad. OTP encrypts the messages.**
+
+That describes **sealed online delivery only**. Ordinary TruePad 2 messages do
+not use X-Wing, ML-KEM or AES-GCM — once the pad is in place the delivery
+cryptography has finished its job and never runs again.
+
+Nothing here should be read as claiming that messages crossing the Internet
+inherit the one-time pad's unconditional guarantee. They do not. That guarantee
+is about the cipher, under its premises, once both people already hold the pad —
+it says nothing about how the pad got there.
+
+## TruePad 2 — the current system
+
+**[Browser Edition](https://systemslibrarian.github.io/TruePad/) — the main
+experience.** A working two-party app: create a pad, share it once, then send
+and open messages and files. Give the pad over by **private handoff** *or* by
+**sealed online delivery**. No backend, no account, no telemetry, nothing
+uploaded — it runs entirely on your device.
+
+**Format v2 — the current authenticated system.** Underneath the Browser
+Edition: OTP encryption with one-time Wegman–Carter authentication, durable
+single-use state, rollback and witness protections, and sealed pad delivery. The
+`truepad2` CLI works the same store from a terminal, and adds the TPM/native
+distinctions.
+
+**[Learn — the OTP exhibit](https://systemslibrarian.github.io/TruePad/learn.html).**
+The teaching page: Shannon's three conditions, watching a pad burn and run out,
+why reuse fails, secrecy versus integrity, and the DeckBook comparison.
+
+## Where to go next
+
+- **[How online pad delivery works](docs/HOW-ONLINE-PAD-DELIVERY-WORKS.md)** — plain English, no cryptography required
+- **[Security Policy](SECURITY.md)** — what is in scope, and how to report
+- **[Product claims](docs/PRODUCT-CLAIMS.md)** — every claim, and what proves it
+- **[Browser security](docs/BROWSER-SECURITY.md)** — the Browser Edition's model and limits
+- **[Store Format v2](docs/FORMAT-V2.md)** — the normative message format
+- **[Sealed Pad Transfer](docs/SEALED-PAD-TRANSFER.md)** — the normative transfer specification
+- **[Release audit](docs/SEALED-PAD-TRANSFER-RELEASE-AUDIT.md)** — how the shipped product was verified against it
+- **[Changelog](CHANGELOG.md)**
+
+## Release status
+
+TruePad 2 is an **audited release candidate**. The release audit records a
+verdict of **B — release ready with documented non-blocking limitations**, and
+those limitations are real and written down rather than solved: a browser
+profile restore can rewind local state, the OPFS write fallback is not truly
+atomic, the word ceremonies depend on humans actually performing them, an
+archived sealed file carries harvest-now-decrypt-later exposure, and no software
+can prove that anything was physically erased.
+
+**No formal version or tag exists yet.** `package.json` reads `0.1.0`, a
+development placeholder rather than a released version. The planned first formal
+release is **v2.0.0** — the number reflects the current Format v2 / Browser
+generation, and there was never a formal TruePad 1.0. Tagging is a separate,
+explicit decision.
+
+## Earlier teaching CLI: `truepad-pad` (v1)
+
+`truepad-pad` predates Format v2 and is kept because it teaches something the
+authenticated path cannot show you: what it feels like when secrecy is not
+integrity. It is **not** the current system, and not a co-equal product.
+
+> [!WARNING]
+> **v1 envelopes are unauthenticated, on purpose.** An attacker who knows the
+> plaintext format can flip chosen bits and change what the receiver reads,
+> undetectably; a forged `startOffset` makes the receiver burn pad material it
+> should have kept. That hazard is the lesson. **Format v2 — the Browser Edition
+> and `truepad2` — is the authenticated path.** Do not mistake v1 for the secure
+> one.
+
+Its full documentation is in [the `truepad-pad` section](#the-pad-cli-truepad-pad--reuse-safe-pad-handling-not-secure-messaging)
+below.
 
 ## The exhibit
 

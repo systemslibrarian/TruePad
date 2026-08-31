@@ -247,6 +247,11 @@ const LANDING_PARTS = [
   ".screen.landing .hero-sub",
   ".screen.landing .hero-cta .btn",
   ".screen.landing .hero-alt",
+  // The one quiet line about how the pad is shared. It is measured like every
+  // other part rather than merely counted: a clarification that drifts off the
+  // centre line, or out of the column, is the kind of clutter this whole check
+  // exists to prevent.
+  ".screen.landing .share-note",
   ".screen.landing .quiet-details.how > summary"
 ];
 
@@ -268,8 +273,8 @@ async function expectCenteredLanding(page: Page): Promise<void> {
   });
 
   // The empty home carries nothing else: the landing screen holds exactly the
-  // five things above, so nothing can be floating underneath them.
-  await expect(page.locator(".screen.landing > *")).toHaveCount(4); // hero, cta, alt, how
+  // parts above, so nothing can be floating underneath them.
+  await expect(page.locator(".screen.landing > *")).toHaveCount(5); // hero, cta, alt, share-note, how
 
   // The page itself must not scroll sideways at any of these widths.
   // The spec typechecks under the Node lib (no DOM), so the document is read

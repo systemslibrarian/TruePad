@@ -365,7 +365,12 @@ describe("the explainer is reachable, and only from the right places", () => {
   it("the home screen gains nothing", () => {
     // Discoverability belongs inside the transfer screens. The hero stays as it
     // is: two actions and one question.
-    expect(HOME).not.toMatch(/online-delivery|How online delivery works/);
+    // The home now carries exactly ONE quiet pointer, by explicit request: the
+    // choice a newcomer is about to make decides which guarantee they get. The
+    // guard's job changed from "none" to "one, and secondary" — it did not go
+    // away, because the risk it protects against is clutter, not the link.
+    expect((HOME.match(/online-delivery\.html/g) ?? []).length, "exactly one pointer").toBe(1);
+    expect(HOME, "and it must be secondary, not a primary action").toMatch(/class: "hero-alt faint share-note"/);
     expect(HOME).not.toMatch(/X-Wing|ML-KEM|PQC|post-quantum/i);
   });
 
