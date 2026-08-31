@@ -31,7 +31,11 @@ export type FaultMode =
   /** Target holds the first `bytes` bytes of the new content, then throw. */
   | "partial-then-throw"
   /** Target holds the complete new content, but the caller is told it failed. */
-  | "complete-then-throw";
+  | "complete-then-throw"
+  /** The write REPORTS SUCCESS while the target holds only `bytes` bytes — a
+   *  flush that silently lost its tail. Nothing throws, so this is caught only
+   *  by reading the file back and checking it, which is why that step exists. */
+  | "silently-truncate";
 
 export type Fault = {
   path: string;
@@ -96,6 +100,11 @@ export class FaultVfs implements Vfs {
     if (fault === null) {
       this.writes.push(path);
       return this.#inner.writeFileAtomic(path, data);
+    }
+    if (fault.mode === "silently-truncate") {
+      const n = Math.min(fault.bytes ?? Math.floor(data.length / 2), data.length);
+      this.writes.push(path);
+      return this.#inner.writeFileAtomic(path, data.slice(0, n));
     }
     if (fault.mode === "throw-before") {
       // move()-path or pre-truncate failure: the target keeps its old contents.

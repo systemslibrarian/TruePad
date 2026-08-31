@@ -352,7 +352,7 @@ describe("state machines are atomic where they must be", () => {
   it("one request -> one package has a persisted sender transaction", () => {
     expect(SPEC).toContain("SEALING");
     expect(SPEC).toContain("SEALED");
-    expect(FLAT).toMatch(/only after that persistence succeeds/i);
+    expect(FLAT).toMatch(/only after that commit succeeds/i);
     expect(FLAT).toMatch(/no package leaves the worker/i);
   });
 
@@ -377,7 +377,7 @@ describe("the pairing rule closes the two-time-pad routes", () => {
     // genesis, unmarked, and can be re-sealed to a third party.
     expect(FLAT).toMatch(/An imported pad can never be sealed onward/);
     expect(FLAT).toMatch(/origin: "generated-here"/);
-    expect(FLAT).toMatch(/marker is also written on IMPORT/i);
+    expect(FLAT).toMatch(/Provenance, NOT a marker, is what an import records/i);
   });
 
   it("seal() names the pad, never its bytes", () => {
@@ -915,5 +915,138 @@ describe("Phase 1B implemented what it says it implemented", () => {
     const bundle = verbsCode.slice(verbsCode.indexOf("const BUNDLE_FILES"), verbsCode.indexOf("const BUNDLE_FILE_SET"));
     expect(bundle).not.toMatch(/pair\.json|handoff|origin|PAIR_META_FILE/);
     expect((bundle.match(/SUBDIR/g) ?? []).length).toBe(6);
+  });
+});
+
+/* ---------------------------------------------------------------------------
+ * Phase 1B.1 — the withdrawn Phase-0.6 storage model must not come back
+ * ------------------------------------------------------------------------ */
+
+describe("no live normative text describes the withdrawn atomic-single-file model", () => {
+  /** The document quotes what it withdrew, so a guard on raw text would fire on
+   *  the retraction itself. These check that each stale phrase survives ONLY
+   *  inside a passage that says it is withdrawn. */
+  function onlyInRetraction(haystack: string, phrase: string): void {
+    let at = haystack.indexOf(phrase);
+    while (at !== -1) {
+      const window = haystack.slice(Math.max(0, at - 320), at + 320);
+      expect(window, `"${phrase}" must appear only where it is withdrawn`).toMatch(
+        /withdrawn|earlier draft|An earlier version|no longer|obsolete|is now wrong|could not be honoured|not atomic/i
+      );
+      at = haystack.indexOf(phrase, at + 1);
+    }
+  }
+
+  it("the package and the confirmation value are not fields of handoff.json", () => {
+    // The marker carries HASHES. The bytes live in their own files.
+    expect(SPEC).not.toMatch(/handoff\.json with\s*\{[^}]*package\s*=/);
+    expect(SPEC).not.toMatch(/confirmValue\s*=\s*confirm\s*\}/);
+    expect(FLAT).toMatch(/The marker holds \*\*hashes\*\*, not the package and not the confirmation value|marker holds hashes, not the package and not the confirmation value/);
+    for (const phrase of ["one atomic replace", "atomically replace"]) onlyInRetraction(FLAT, phrase);
+  });
+
+  it("§20's seal pseudocode uses the marker-last storage API", () => {
+    const seal = SPEC.slice(SPEC.indexOf("seal(body, pairId):"), SPEC.indexOf("exportPad(pairId):"));
+    expect(seal).toContain("readHandoffState(vfs, pairId)");
+    expect(seal).toContain("commitSealedHandoff(vfs, pairId,");
+    expect(seal).toContain("loadCommittedSealedHandoff(vfs, pairId)");
+    // The withdrawn algorithm is gone from it entirely.
+    expect(seal).not.toMatch(/atomically replace/);
+    expect(seal).not.toMatch(/package\s*=\s*header/);
+    // A committed marker permits re-share only.
+    expect(seal).toMatch(/RE-SHARE ONLY\. Never a second encapsulation/);
+  });
+
+  it("§20's export pseudocode builds the container BEFORE committing the marker", () => {
+    const exp = SPEC.slice(SPEC.indexOf("exportPad(pairId):"), SPEC.indexOf("openSealed(pkg)"));
+    expect(exp.indexOf("packContainer(")).toBeLessThan(exp.indexOf("commitPhysicalHandoff("));
+    expect(exp).toMatch(/MARKER LAST/);
+    expect(exp).toMatch(/ONLY now, after the marker commit succeeded/);
+    // Provenance is checked before a single store byte is read.
+    expect(exp.indexOf("imported-pair-cannot-export")).toBeLessThan(exp.indexOf("packContainer("));
+    expect(exp).not.toMatch(/atomically replace/);
+  });
+
+  it("dismissal never removes SEALED/handoff-spent state", () => {
+    expect(FLAT).toMatch(/Handoff-spent state\s*is permanent/i);
+    expect(FLAT).toMatch(/it may \*\*never\*\* delete `handoff\.json`|may never delete `handoff\.json`/);
+    expect(FLAT).toMatch(/Dismissal is \*\*not\*\* a return to `ABSENT` or to\s*`CONFIRMED`|Dismissal is not a return to `ABSENT` or to `CONFIRMED`/);
+    // The old sentence must not survive as a live claim.
+    onlyInRetraction(FLAT, "Cleanup removes CONFIRMED and SEALED state");
+  });
+
+  it("an import records provenance and creates no sender handoff marker", () => {
+    expect(FLAT).toMatch(/an installation that imported a pad is not that pad's sender/i);
+    expect(FLAT).toMatch(/Writing one\s*there would claim a handoff this installation never performed/);
+    expect(FLAT).toMatch(/is never created\s*merely because a pad was imported/);
+    // And the pseudocode says it too.
+    expect(SPEC).toMatch(/It creates NO handoff[\s\S]{0,12}marker/);
+  });
+
+  it("same-request means RE-SHARE, never a second encapsulation", () => {
+    expect(FLAT).toMatch(/\*\*Re-share, not re-seal\.\*\*|Re-share, not re-seal\./);
+    expect(FLAT).toMatch(/re-share only, never a new encapsulation/i);
+    expect(FLAT).toMatch(/No new X-Wing encapsulation/);
+    // ...and the two are distinguished, not treated as degrees of one thing.
+    expect(FLAT).toMatch(/one hands over bytes that already exist, the other\s*runs `XWing\.Encaps` again/);
+  });
+
+  it("§10.5 separates ceremony state, transient state, and durable handoff state", () => {
+    expect(FLAT).toMatch(/Three kinds of state, deliberately kept apart/);
+    expect(FLAT).toMatch(/It is not the durable handoff authority/);
+    expect(FLAT).toMatch(/Once `handoff\.json` exists, the pad's handoff is SPENT/);
+  });
+
+  it("the marker grammar is owned by one section", () => {
+    // §10.6 must not restate a competing schema; the old
+    // `{ pairId, requestHash, at }` shape is gone.
+    expect(SPEC).not.toMatch(/marker\*?\*? `\{ pairId, requestHash, at \}`/);
+    expect(FLAT).toMatch(/§10\.9 owns its grammar\s*and this section does not restate it/);
+  });
+
+  it("status language recognises what is built without claiming the feature", () => {
+    const claims = readFileSync(join(ROOT, "docs", "PRODUCT-CLAIMS.md"), "utf8");
+    expect(claims).not.toMatch(/Sealed Pad Transfer — SPECIFIED, NOT IMPLEMENTED/);
+    expect(claims).toMatch(/PARTLY BUILT, NOT OFFERED/);
+    expect(claims).toMatch(/No product screen offers it and no operator can reach it/);
+    expect(claims).toMatch(/TruePad does not\s*support online sealed pad transfer today/);
+    // The three layers are stated separately, so "implemented" cannot be read
+    // as "available".
+    expect(claims).toMatch(/Cryptographic \/ transport core.*implemented/);
+    expect(claims).toMatch(/Storage \/ provenance foundation.*implemented/);
+    expect(claims).toMatch(/product transfer flow.*NOT implemented/);
+    for (const doc of [claims, SPEC]) expect(doc).not.toMatch(/specified, not implemented/i);
+  });
+});
+
+describe("the marker readback failure is typed, and only when a record exists", () => {
+  const handoffCode = readFileSync(join(ROOT, "src/browser/engine/handoff.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "");
+
+  /** Just this function: slicing to end of file would sweep in the
+   *  `storage-failed` refusals that belong to commitSealedHandoff's staging
+   *  steps, where retry IS correct. */
+  const writeAndVerify = (() => {
+    const from = handoffCode.indexOf("async function writeAndVerifyMarker");
+    const next = handoffCode.indexOf("export async function", from);
+    return handoffCode.slice(from, next === -1 ? undefined : next);
+  })();
+
+  it("a parse failure after a write becomes handoff-state-unreadable", () => {
+    const fn = writeAndVerify;
+    expect(fn).toMatch(/parseMarker\(readBack, pairId\)/);
+    expect(fn).toMatch(/REFUSE_UNREADABLE/);
+    // ...and never re-typed as something retryable.
+    expect(fn).not.toMatch(/storage-failed/);
+    // The marker is never removed or rewritten to recover.
+    expect(fn).not.toMatch(/vfs\.remove/);
+  });
+
+  it("which case occurred is decided by LOOKING, not by the exception's shape", () => {
+    const fn = writeAndVerify;
+    // On a write throw it re-reads the target before deciding.
+    expect(fn).toMatch(/catch[\s\S]{0,200}readFile\(markerPath\(pairId\)\)/);
+    expect(fn).toMatch(/if \(!landed\) throw error/);
   });
 });

@@ -210,13 +210,22 @@ cloud storage and encrypted messengers **do not preserve that claim**; they may
 be computationally secure ways to move a file, which is a *different*
 guarantee, not a weaker form of the same one.
 
-#### Sealed Pad Transfer — SPECIFIED, NOT IMPLEMENTED
+#### Sealed Pad Transfer — PARTLY BUILT, NOT OFFERED
 
-`docs/SEALED-PAD-TRANSFER.md` specifies a future **Sealed Pad Transfer v1**:
-online pad delivery under a hybrid post-quantum/traditional KEM, with two human
-verification ceremonies. **No code implements it, and no product screen offers
-it.** It is recorded here only to reserve the distinction before it can be
-blurred:
+`docs/SEALED-PAD-TRANSFER.md` specifies **Sealed Pad Transfer v1**: online pad
+delivery under a hybrid post-quantum/traditional KEM, with two human
+verification ceremonies. Where it stands, precisely:
+
+| Layer | Status |
+| --- | --- |
+| Cryptographic / transport core — suite `0x0001`, TPR2 and TPS2 codecs, key schedule, reference vectors | **implemented** (`src/spt/**`) |
+| Storage / provenance foundation — pad origin, the one-handoff record, its crash behaviour | **implemented** (`src/browser/engine/**`) |
+| The product transfer flow — receive requests, the word ceremonies, sealing, opening, any screen at all | **NOT implemented** |
+
+**No product screen offers it and no operator can reach it.** TruePad does not
+support online sealed pad transfer today. What exists is machinery underneath a
+feature that has not been built, and the distinction below is recorded before it
+can be blurred:
 
 | | Physical exchange | Sealed Pad Transfer |
 | --- | --- | --- |
@@ -224,7 +233,7 @@ blurred:
 | Recipient authentication | you are looking at them | a **12-word, 132-bit** fingerprint compared over an authenticated side channel — an OPERATOR declaration, never a verification result |
 | Against a compromised endpoint | the pad is exposed anyway | **no protection**, and specifically: an active script with transfer-worker authority is classified as endpoint compromise, not as an attacker the ceremonies stop |
 | Harvest-now-decrypt-later | no exposure from delivery | an archived package is attackable later; breaking it yields the pad, and the pad yields every archived message it protected |
-| Status | **shipped** | **specified, not implemented** |
+| Status | **shipped** | **core and storage built; no reachable flow** |
 
 The point of the row is the middle one. Sealing an information-theoretic cipher's
 key material inside a computational envelope produces a **computational**

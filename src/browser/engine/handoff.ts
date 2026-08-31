@@ -289,11 +289,47 @@ export async function cleanPreCommitStaging(vfs: Vfs, pairId: string): Promise<v
 
 /* ---- committing ----------------------------------------------------------- */
 
-/** Write the marker, read it back, and strict-parse what came back. A marker
- *  that cannot be re-read is not a commit — but by then the file EXISTS, so the
- *  pad is spent either way and the caller must not retry with new material. */
+/** Write the marker, read it back, and strict-parse what came back.
+ *
+ *  The two failures here are NOT the same failure, and the difference decides
+ *  whether the pad may ever be handed off again:
+ *
+ *    · the write throws and NO marker file exists — nothing committed, the pad
+ *      is still free, and a retry is legitimate. This propagates as the
+ *      underlying error; the caller's next `readHandoffState` will say `absent`.
+ *
+ *    · a marker file EXISTS and cannot be validated — truncated by the
+ *      non-atomic fallback, or otherwise unverifiable. The pad is SPENT, and
+ *      the immediate call must say so in the same typed terms a later read
+ *      would, rather than letting a generic parse error escape and read like a
+ *      retryable storage hiccup.
+ *
+ *  The durable state was always safe — a later `readHandoffState` sees
+ *  `unreadable-spent` either way — so this is a reporting fix, not a reuse fix.
+ *  It matters because the immediate caller is the one deciding whether to hand
+ *  bytes to an operator.
+ *
+ *  Which case occurred is decided by LOOKING, never by assuming from the shape
+ *  of an exception. And the marker is never deleted and never rewritten to
+ *  "recover": that is the action that turns a lost handoff into a reused pad. */
 async function writeAndVerifyMarker(vfs: Vfs, pairId: string, marker: HandoffMarker): Promise<HandoffMarker> {
-  await vfs.writeFileAtomic(markerPath(pairId), serializeMarker(marker));
+  try {
+    await vfs.writeFileAtomic(markerPath(pairId), serializeMarker(marker));
+  } catch (error) {
+    // Ask the disk which case this is rather than guessing from the throw.
+    let landed = false;
+    try {
+      landed = (await vfs.readFile(markerPath(pairId))) !== null;
+    } catch {
+      // Cannot even tell. A record may exist; refuse as spent.
+      landed = true;
+    }
+    if (!landed) throw error; // nothing committed — the pad is still free
+    throw new EngineRefused(
+      REFUSE_UNREADABLE,
+      `${UNREADABLE_ADVICE} (writing the handoff record failed after it had begun: ${(error as Error).message})`
+    );
+  }
   const readBack = await vfs.readFile(markerPath(pairId));
   if (readBack === null) {
     throw new EngineRefused(
@@ -301,7 +337,15 @@ async function writeAndVerifyMarker(vfs: Vfs, pairId: string, marker: HandoffMar
       `${UNREADABLE_ADVICE} (the handoff record did not survive being written)`
     );
   }
-  return parseMarker(readBack, pairId);
+  try {
+    return parseMarker(readBack, pairId);
+  } catch (error) {
+    // A record EXISTS and is not valid. Typed, and never retryable.
+    throw new EngineRefused(
+      REFUSE_UNREADABLE,
+      `${UNREADABLE_ADVICE} (the handoff record read back invalid: ${(error as Error).message})`
+    );
+  }
 }
 
 /** Record a PHYSICAL handoff. The caller must already hold the pad lock, have

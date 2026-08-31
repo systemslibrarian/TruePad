@@ -1095,27 +1095,51 @@ so two tabs could both observe CONFIRMED, both run the **randomized**
 values — leaving Bob a choice he has no basis to make, and Mallory a plausible
 reason to send a third.
 
-**Sender state, keyed by the complete canonical request body** (or equivalently
-its full `requestHash` — never by `requestId`, which the requester chooses and
-which §5.1 gives no uniqueness guarantee):
+**Three kinds of state, deliberately kept apart.** An earlier draft ran them
+together into one `CONFIRMED → SEALING → SEALED { package bytes, confirmValue }`
+machine persisted as a single atomic object. Phase 1B withdrew that persistence
+model (§10.9), and the states it conflated are not the same kind of thing.
+
+**A. Sender ceremony state — `CONFIRMED`.** Keyed by the complete canonical
+request body, or equivalently its full `requestHash` — never by `requestId`,
+which the requester chooses and which §5.1 gives no uniqueness guarantee. It
+means one thing only: *the operator declared that all twelve of Bob's request
+words matched over the side channel.*
+
+**B. Transient operation state — `SEALING`.** In-memory, for the duration of one
+attempt. **It is not the durable handoff authority.** A crash here, before
+`handoff.json` exists, means no package escaped; the pre-commit staging may be
+cleaned and the attempt retried (§10.9.1).
+
+**C. Durable handoff state — the presence or absence of `handoff.json`.** This,
+and nothing else, is what says whether the pad's one handoff is spent. For a
+sealed handoff the durable data is three files (§10.9):
 
 ```
-ABSENT ──confirm──► CONFIRMED ──seal──► SEALING ──persist──► SEALED
-                                                             { package bytes,
-                                                               confirmValue }
+<pairId>/handoff.json          permanent commit marker — hashes and metadata
+<pairId>/handoff/package.tps2  the exact package bytes
+<pairId>/handoff/confirm.bin   the exact 11-byte confirmation value
 ```
 
-Ordering, under an exclusive lock (a Web Lock scoped to the `requestHash`):
+The marker holds **hashes**, not the package and not the confirmation value.
 
-1. **acquire the lock**;
-2. **re-check state** inside it;
-3. if **SEALED** → return the **exact stored package**; do **NOT** re-encapsulate;
-4. if **CONFIRMED** → encapsulate **once**, build the package, and **persist the
-   exact package bytes and `confirmValue` durably** — as the single
-   `<pairId>/handoff.json` object of §10.9, in one atomic replace;
-5. **only after that persistence succeeds** may any package byte be released to
-   the UI;
-6. a concurrent caller waits on the lock and receives the **same stored package**.
+> **Once `handoff.json` exists, the pad's handoff is SPENT** — independently of
+> whether the payload is later dismissed, and independently of whether the
+> marker can still be read.
+
+Ordering, under the pad lock (§10.10.1) and the request-scoped sender lock:
+
+1. **acquire the locks**;
+2. **read the durable handoff state** inside them;
+3. if a **valid sealed marker** exists → this request may only be **re-shared**:
+   if `marker.requestHash` matches, return the **exact committed package and
+   confirmation**; if it differs, refuse. **Never encapsulate again.**
+4. if a **physical marker** or an **unreadable marker** exists → refuse;
+5. if **absent** and the request is `CONFIRMED` → encapsulate **once**, build the
+   package, and commit it by the marker-last transaction of §10.9.1;
+6. **only after that commit succeeds** may any package byte be released to the
+   UI;
+7. a concurrent caller waits on the lock and receives the **same stored package**.
 
 **If persistence fails before release, no package leaves the worker.** The
 alternative — releasing bytes that were never recorded — is how Alice ends up
@@ -1127,13 +1151,24 @@ and never a cryptographic proof that the comparison happened. It is bound to the
 canonical body byte-for-byte; it is **one-shot**; it is **invalidated by any
 edit** of the pasted code; it carries the same **7-day TTL** as a pending
 request; and confirmation of body *B* can never authorize sealing body *B′*.
-Cleanup removes CONFIRMED and SEALED state when the operator dismisses the
-transfer, and a crash in `SEALING` leaves CONFIRMED intact — the seal is simply
-retried, which is safe because nothing was released.
+**What cleanup may and may not remove.** `CONFIRMED` is ceremony state and may
+be discarded when appropriate *before* a handoff commits. **Handoff-spent state
+is permanent.** Dismissing a transfer may delete `handoff/package.tps2` and
+`handoff/confirm.bin`; it may **never** delete `handoff.json` (§10.9.4). After a
+dismissal the package can no longer be re-shared and the confirmation value is
+no longer recoverable — and the pad remains handed off forever, with a new
+encapsulation forbidden. Dismissal is **not** a return to `ABSENT` or to
+`CONFIRMED`; there is no path back.
 
-Re-sharing is free and expected: the **exact same package** may be saved and
-sent as often as transport requires. What is refused is a *second independent
-encapsulation* for the same request.
+A crash in `SEALING` leaves `CONFIRMED` intact and no marker, so the attempt is
+simply retried — safe because nothing was released.
+
+**Re-share, not re-seal.** The **exact same package** may be saved and sent as
+often as transport requires, for as long as it is still stored. What is refused
+is a *second independent encapsulation* for the same request. Those two are not
+degrees of the same thing: one hands over bytes that already exist, the other
+runs `XWing.Encaps` again and produces a package with a different confirmation
+value.
 
 **Rollback limitation, same as everywhere.** A full profile restore can rewind
 sender state too, returning SEALED to CONFIRMED and permitting a second
@@ -1166,18 +1201,22 @@ distribution channel:
    read from the **live store**, never from bytes a caller supplied. `loadStore`
    already returns all three as a pure non-mutating read, so this is checkable.
 2. **One pad → one sealed handoff, ever.** A durable per-`pairId` **handoff
-   marker** `{ pairId, requestHash, at }` is written when a package is first
-   sealed. A seal is refused when a marker exists whose `requestHash` **differs**
-   from the body being sealed. (Equality is permitted, so retrying an
-   interrupted seal of the *same* request is not bricked by its own marker.)
-3. **The marker is also written on IMPORT.** This is the rule that Phase 0.5's
-   first draft missed, and it is the largest hole the falsification rounds
-   found. The marker lives in the *sealer's* origin; it is **not** in the sealed
-   plaintext — `packContainer()` carries exactly the six `BUNDLE_FILES`, and
-   `pair.json` (`{ pairId, label, createdAt, witness }`) is neither in the bundle
-   nor carries an origin field. So without this rule, a pad that *arrives* by
-   sealed transfer lands at genesis with no marker and passes (1) and (2)
-   unchanged:
+   marker** is written when a package is first sealed; §10.9 owns its grammar
+   and this section does not restate it. A seal is refused when any marker
+   exists. If a valid **sealed** marker's `requestHash` matches the body being
+   sealed, the committed package may be **re-shared** exactly as stored — but
+   never encapsulated again (§10.5, §10.8).
+3. **Provenance, NOT a marker, is what an import records.** Phase 0.5's first
+   draft said "the marker is also written on import", and that is now wrong:
+   the handoff marker is the *sender's* record of having handed a pad off, and
+   **an installation that imported a pad is not that pad's sender**. Writing one
+   there would claim a handoff this installation never performed.
+
+   The hole is real and the repair is provenance. The marker lives in the
+   sealer's origin; it is **not** in the sealed plaintext — `packContainer()`
+   carries exactly the six `BUNDLE_FILES`, and `pair.json` is not among them. So
+   without a rule, a pad that *arrives* lands at genesis with no marker and
+   passes (1) and (2) unchanged:
 
    > Alice seals pad P to Bob → Bob imports it at genesis → **Bob seals the same
    > pairId to Charlie.** Alice and Charlie now hold the same directional
@@ -1185,10 +1224,19 @@ distribution channel:
    > same Wegman–Carter keys. No operator error, no rollback, no physical path
    > — just the protocol working as specified.
 
-   Phase 1 therefore records provenance on import. **The representation is
-   frozen in §10.7 — one field, `origin` on `pair.json` — and Phase 1 has no
-   choice left to make.** An imported pad can never be sealed onward, whether it
-   arrived sealed or by ordinary courier.
+   Both import paths — ordinary courier and, later, sealed — therefore write
+   `origin: "imported"` on `pair.json` (§10.7), and **no handoff marker**. The
+   division of labour is exact:
+
+   * the **sender's one-handoff state** is local to the installation that hands
+     a pad off, and only that installation writes it;
+   * **receiver provenance** records that the pad arrived from elsewhere;
+   * `imported` provenance makes **both** future physical export and future
+     sealed transfer ineligible (§10.7.1).
+
+   **An imported pad can never be sealed onward, nor exported onward**, whether
+   it arrived sealed or by ordinary courier. `handoff.json` is never placed in
+   the courier bundle, and is never created merely because a pad was imported.
 
 **Recovery when a transfer is lost is a NEW PAD, not a re-seal.** §10.2's
 accepted loss, a TTL expiry, and a cleared recipient all produce the same
@@ -1349,7 +1397,16 @@ installation generated.
 | --- | --- | --- |
 | none yet | allowed — records `mode: "physical"` | allowed (subject to §10.6, §10.7) |
 | `mode: "physical"` | **allowed, unchanged** — this is the re-delivery affordance | **refused** — `pad-already-handed-off` |
-| `mode: "sealed"` | **refused** — `pad-already-sealed` | refused unless the same `requestHash` (§10.6(2)) |
+| `mode: "sealed"` | **refused** — `pad-already-sealed` | **re-share only, never a new encapsulation** — see below |
+
+**What "then seal" means once a sealed marker exists.** Spelled out, because
+"refused unless the same `requestHash`" read like permission to seal again:
+
+| Situation | Outcome |
+| --- | --- |
+| same `requestHash`, committed package still stored | return the **exact stored package and confirmation**. **No new X-Wing encapsulation.** |
+| same `requestHash`, payload dismissed, missing, or corrupt | refuse — **spent and unrecoverable**. Still no reseal. |
+| different `requestHash` | refuse |
 
 Three deliberate asymmetries, each with its reason:
 
@@ -1973,7 +2030,7 @@ securely online* — and never presents the second as an upgrade of the first.
 | Delivery claim | can support the conditional **information-theoretic** path | **computational** |
 | Requires | meeting; removable media | an authenticated side channel for two word comparisons |
 | HNDL exposure | none from delivery | archived package is attackable later |
-| Status | **shipped** | **specified, not implemented** |
+| Status | **shipped** | **core and storage built; no reachable flow** |
 
 ---
 
@@ -2132,16 +2189,22 @@ seal(body, pairId):                                 # WORKER
       (ab, ba) ← loadStore(<pairId>/a-to-b), loadStore(<pairId>/b-to-a)
       require both directions at GENESIS from the LIVE store:               # §10.6(1)
           nextOffset == 0 and nextSequence == 0 and attemptsReserved == 0
-      h ← read <pairId>/handoff.json                                # §10.9
-      require h is absent
-           or (h.mode == "sealed" and h.requestHash == requestHash)   # §10.6(2)
-           # h.mode == "physical" => REFUSE pad-already-handed-off    # §10.8
+      # DURABLE handoff state decides, not sender ceremony state (§10.5).
+      state ← readHandoffState(vfs, pairId)                         # §10.9
+      if state.kind == "sealed":
+          # RE-SHARE ONLY. Never a second encapsulation.
+          require state.marker.requestHash == requestHash  # else REFUSE
+          committed ← loadCommittedSealedHandoff(vfs, pairId)
+              # throws handoff-unrecoverable if the payload was dismissed,
+              # is missing, or no longer matches the marker — still no reseal
+          return committed.package, confirmationWords88(committed.confirmValue)
+      if state.kind == "physical":         REFUSE pad-already-handed-off  # §10.8
+      if state.kind == "unreadable-spent": REFUSE handoff-state-unreadable # §10.9.2
+      # state.kind == "absent" — and only here may anything be encapsulated.
 
       acquire lock "spt-send:" ‖ requestHash        # §10.10.1
-        state ← sender state for requestHash
-        if state == SEALED:  return state.package, state.confirmWords  # no re-encapsulation
-        require state == CONFIRMED
-        state ← SEALING
+        require sender state for requestHash == CONFIRMED
+        mark SEALING                                # transient; not the authority
 
         padFileBytes ← packContainer(pairId, the six BUNDLE_FILES read here)
         require |padFileBytes| ≤ 16 777 216
@@ -2156,15 +2219,18 @@ seal(body, pairId):                                 # WORKER
     (ct, tag) ← AES-256-GCM-Encrypt(key, nonce, AAD, padFileBytes)
         confirm ← HKDF-Expand(PRK, u8(len(DS_CONFIRM)) ‖ DS_CONFIRM ‖ AAD, 11)
 
-        # ONE file, ONE atomic replace (§10.9). Not two writes: a marker
-        # without a package bricks the pad, a package without a marker
-        # releases words Alice cannot reproduce. Nothing is released before
-        # this succeeds.
-        atomically replace <pairId>/handoff.json with
-            { pairId, mode: "sealed", at,
-              requestHash,
-              package = header ‖ ct ‖ tag,
-              confirmValue = confirm }
+        # MARKER-LAST (§10.9.1): stage the package, read it back, stage the
+        # confirmation, read it back, and write handoff.json LAST. The marker
+        # carries HASHES; the bytes live in their own files. Nothing is
+        # released before this returns.
+        commitSealedHandoff(vfs, pairId,
+            { packageBytes    = header ‖ ct ‖ tag,
+              requestHash     = requestHash,
+              confirmValue    = confirm,
+              packageIdentity = SHA-256(header ‖ ct ‖ tag) },
+            at)
+        # A failure here that leaves handoff.json EXISTING but unverifiable is
+        # handoff-state-unreadable: spent, never retried with a new package.
         zeroize padFileBytes
       release locks
 
@@ -2174,13 +2240,32 @@ seal(body, pairId):                                 # WORKER
 exportPad(pairId):                                  # WORKER — §10.8
     acquire vfs.withLock(pairId)               # same lock as seal(); one writer
       require pair exists, NOT destroyed, NOT mid-import   # unchanged from today
-      h ← read <pairId>/handoff.json
-      require h is absent or h.mode == "physical"   # sealed => pad-already-sealed
-      if h is absent:
-          atomically replace <pairId>/handoff.json with
-              { pairId, mode: "physical", at }
-      container ← packContainer(...)           # unchanged from today
+
+      # 1 — PROVENANCE first (§10.7.1). An imported pad may not leave again by
+      #     ANY route, so this precedes reading a single store byte.
+      origin ← pair.json origin                # absent field / no pair.json => unknown
+      if origin == "imported":  REFUSE imported-pair-cannot-export
+
+      # 2 — durable handoff state (§10.9).
+      state ← readHandoffState(vfs, pairId)
+      if state.kind == "sealed":            REFUSE pad-already-sealed
+      if state.kind == "unreadable-spent":  REFUSE handoff-state-unreadable
+      # "physical" permits re-export under the §10.8 operator assumption, and
+      # does NOT rewrite the marker: the recorded time stays the FIRST handoff.
+
+      # 3 — build the exact six-file container IN MEMORY. Not released yet.
+      container ← packContainer(pairId, the six BUNDLE_FILES)
+
+      # 4 — MARKER LAST, and only on a first handoff.
+      if state.kind == "absent":
+          commitPhysicalHandoff(vfs, pairId, at)
+          # A throw BEFORE the marker exists leaves the pad absent and
+          # retryable. A marker that exists but cannot be verified is
+          # handoff-state-unreadable — spent. Either way the container below is
+          # NOT returned.
+
     release lock
+    # 5 — ONLY now, after the marker commit succeeded.
     return container
 
 openSealed(pkg) -> sessionId:                       # WORKER
@@ -2248,6 +2333,10 @@ commitReceive(sessionId):                          # after the operator confirms
     # from here on, any failure is LOSS (§11: REQUEST-LOST and HANDOFF-SPENT)
     # and MUST be reported as such — never as "nothing changed"
     commit the EXISTING import with session.padFileBytes   # first import-pair call
+    # The import writes pair.json with origin: "imported" (§10.7.2) and then
+    # removes importing.json as the active-state commit. It creates NO handoff
+    # marker: this installation did not hand this pad off, and claiming a
+    # handoff it never performed would be a lie in the pad's own record.
     logically destroy dk
     forget the session; release "spt-req:" then "spt-recv:"   # session lock last
     advise deleting the .tps2 file (§10.4)

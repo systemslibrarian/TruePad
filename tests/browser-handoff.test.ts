@@ -480,3 +480,87 @@ describe("staging without a marker is pre-commit", () => {
     }
   });
 });
+
+/* ---------------------------------------------------------------------------
+ * The IMMEDIATE call reports the same typed outcome a later read would
+ * ------------------------------------------------------------------------ */
+
+describe("a marker that exists but cannot be validated is typed, immediately", () => {
+  it("the fallback tears the marker: the commit itself refuses handoff-state-unreadable", async () => {
+    const vfs = new FaultVfs(new MemoryVfs(), { nonAtomic: true });
+    vfs.failWrite({ path: markerPath(PAIR), mode: "partial-then-throw", bytes: 12 });
+    const refusal = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+    // Not a bare Error, and not "storage-failed" — which would read as retryable.
+    expect(refusal.reason).toBe("handoff-state-unreadable");
+    expect(refusal.message).toMatch(/refuses to create another copy/);
+    expect(refusal.message).not.toMatch(/delete|remove/i);
+    // The later read agrees with the immediate one.
+    expect((await readHandoffState(vfs, PAIR)).kind).toBe("unreadable-spent");
+    // A second attempt refuses the same way, and no second handoff is possible.
+    const again = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+    expect(again.reason).toBe("handoff-state-unreadable");
+    // The marker was never removed.
+    expect(await vfs.exists(markerPath(PAIR))).toBe(true);
+  });
+
+  it("a marker truncated to zero length is typed the same way", async () => {
+    const vfs = new FaultVfs(new MemoryVfs(), { nonAtomic: true });
+    vfs.failWrite({ path: markerPath(PAIR), mode: "truncate-then-throw" });
+    const refusal = await refusalOf(() => commitPhysicalHandoff(vfs, PAIR, AT));
+    expect(refusal.reason).toBe("handoff-state-unreadable");
+    expect(await vfs.exists(markerPath(PAIR))).toBe(true);
+  });
+
+  it("a write that REPORTS SUCCESS but stores a truncated marker is caught by the readback", async () => {
+    // Nothing throws here. The only thing standing between this and a pad that
+    // silently believes it has a valid handoff record is the read-back-and-
+    // parse step — so this is the test that proves that step is not ceremony.
+    const vfs = new FaultVfs(new MemoryVfs(), { nonAtomic: true });
+    vfs.failWrite({ path: markerPath(PAIR), mode: "silently-truncate", bytes: 15 });
+    const refusal = await refusalOf(() => commitPhysicalHandoff(vfs, PAIR, AT));
+    expect(refusal.reason).toBe("handoff-state-unreadable");
+    expect(refusal.message).toMatch(/read back invalid/);
+    // The record exists and is bad: SPENT, and never removed.
+    expect(await vfs.exists(markerPath(PAIR))).toBe(true);
+    expect((await readHandoffState(vfs, PAIR)).kind).toBe("unreadable-spent");
+    const again = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+    expect(again.reason).toBe("handoff-state-unreadable");
+  });
+
+  it("the same silent truncation on the SEALED path is typed and spent", async () => {
+    const vfs = new FaultVfs(new MemoryVfs(), { nonAtomic: true });
+    vfs.failWrite({ path: markerPath(PAIR), mode: "silently-truncate", bytes: 20 });
+    const refusal = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+    expect(refusal.reason).toBe("handoff-state-unreadable");
+    expect((await readHandoffState(vfs, PAIR)).kind).toBe("unreadable-spent");
+    // ...and no package was released: loading refuses too.
+    await refusalOf(() => loadCommittedSealedHandoff(vfs, PAIR));
+  });
+
+  it("but a write that fails BEFORE the marker exists stays retryable", async () => {
+    // The distinction the fix turns on: which case occurred is decided by
+    // looking at the durable state, never by the shape of the exception.
+    const vfs = new FaultVfs(new MemoryVfs(), { nonAtomic: true });
+    vfs.failWrite({ path: markerPath(PAIR), mode: "throw-before" });
+    await expect(commitPhysicalHandoff(vfs, PAIR, AT)).rejects.toThrow();
+    expect(await vfs.exists(markerPath(PAIR))).toBe(false);
+    expect((await readHandoffState(vfs, PAIR)).kind).toBe("absent");
+    // ...and the retry genuinely works.
+    const marker = await commitPhysicalHandoff(vfs, PAIR, AT);
+    expect(marker.mode).toBe("physical");
+  });
+
+  it("a complete-but-unacknowledged marker write is a commit, not a failure to retry", async () => {
+    const vfs = new FaultVfs(new MemoryVfs(), { nonAtomic: true });
+    vfs.failWrite({ path: markerPath(PAIR), mode: "complete-then-throw" });
+    const refusal = await refusalOf(async () => commitSealedHandoff(vfs, PAIR, await sealedInput(), AT));
+    expect(refusal.reason).toBe("handoff-state-unreadable");
+    // The record landed and is VALID, so the later read sees a real handoff and
+    // the exact package is still recoverable — the caller was simply told the
+    // operation failed.
+    const state = await readHandoffState(vfs, PAIR);
+    expect(state.kind).toBe("sealed");
+    const loaded = await loadCommittedSealedHandoff(vfs, PAIR);
+    expect(bytesToHex(loaded.packageBytes)).toBe(bytesToHex(packageBytes()));
+  });
+});
