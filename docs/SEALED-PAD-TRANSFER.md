@@ -33,8 +33,15 @@ cryptographic composition and reference vectors. The product operation remains
 be an RPC named `seal(body, padFileBytes)` (§18, §20).
 
 `docs/SEALED-PAD-TRANSFER-VALIDATION.md` records the dependency audit, the
-vector results, the cross-implementation run, and **one divergence** found
-between the pinned library and the frozen construction.
+vector results, the cross-implementation run, and **one accepted divergence**
+between the pinned library and §2.2. In short: `@noble/post-quantum` 0.7.1
+aborts when X25519 yields all-zero — a policy RFC 7748 §6.1 permits and which
+the library inherits rather than TruePad adding — where draft-10 specifies no
+abort. **The decision is closed: the stricter rejection is accepted, the
+dependency is kept, and suite `0x0001`'s wire bytes are unchanged.** Honest
+encapsulations and every reference vector stay byte-identical; only adversarial
+low-order `ct_X` **decapsulation** differs, and that difference does not
+authenticate anyone — §8's confirmation ceremony still owns sender identity.
 
 > **Carried forward — PHASE 1B STORAGE-INTEGRATION PREREQUISITE.** §10.9 requires
 > `handoff.json` to be written by one atomic replace. `OpfsVfs.writeFileAtomic()`

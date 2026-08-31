@@ -64,9 +64,16 @@ export type { XWingEncapsulation, XWingKeyPair } from "./xwing-v1.ts";
 export {
   decodeReceiveRequest,
   encodeReceiveRequest,
-  encodeRequestBody
+  encodeRequestBody,
+  parseRequestBody
 } from "./receive-request.ts";
-export type { ReceiveRequest, RequestDecode, RequestDecodeError } from "./receive-request.ts";
+export type {
+  ReceiveRequest,
+  RequestBodyError,
+  RequestBodyParse,
+  RequestDecode,
+  RequestDecodeError
+} from "./receive-request.ts";
 
 export { buildHeader, packageIdentity, parseSealedPackage } from "./sealed-package.ts";
 export type { PackageParse, PackageParseError, ParsedPackage, SealedHeader } from "./sealed-package.ts";

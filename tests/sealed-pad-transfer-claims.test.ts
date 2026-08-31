@@ -114,12 +114,63 @@ describe("the validation record backs the implementation claims", () => {
     expect(VFLAT).toMatch(/draft-06/);
   });
 
-  it("records the divergence rather than hiding it", () => {
-    expect(VFLAT).toMatch(/rejects an all-zero X25519 shared secret\. The frozen construction does not/);
-    expect(VFLAT).toMatch(/an open decision, not a resolved one/);
-    // ...and records what was deliberately NOT done about it.
+  it("records the divergence, and records that it was ACCEPTED", () => {
+    expect(VFLAT).toMatch(/DECISION: ACCEPT `@noble\/post-quantum` 0\.7\.1's stricter low-order rejection/);
+    expect(VFLAT).toMatch(/The dependency is kept\. The suite is unchanged/);
+    // The exception is preserved permanently, not resolved away.
+    expect(VFLAT).toMatch(/adversarial low-order `ct_X` inputs are a documented decapsulation-behaviour divergence/i);
+    // ...and what was deliberately NOT done about it.
     expect(VFLAT).toMatch(/suite was not modified to match the library/);
     expect(VFLAT).toMatch(/No shim reimplements/);
+  });
+
+  it("gives the RFC 7748 basis, so the rejection is not called a TruePad invention", () => {
+    expect(VFLAT).toMatch(/RFC 7748.{0,40}§6\.1 explicitly says an implementation MAY check/);
+    expect(VFLAT).toMatch(/conforming RFC 7748 implementation exercising a permitted policy/);
+    // draft-10's own side of it, stated separately.
+    expect(VFLAT).toMatch(/specifies no all-zero abort/);
+  });
+
+  it("withdraws the false 'both refuse' argument instead of quietly deleting it", () => {
+    expect(VFLAT).toMatch(/The "both refuse" argument was wrong, and is withdrawn/);
+    expect(VFLAT).toMatch(/That is not true in general/);
+    // The malicious-sender case that makes it false is spelled out.
+    expect(VFLAT).toMatch(/keep `ss_M`/);
+    expect(VFLAT).toMatch(/a package Noble refuses here is one a\s*non-aborting draft-10 implementation may accept/);
+    // The old claim must not survive anywhere as a live statement.
+    const live = VFLAT.replace(/An earlier version of this section said[\s\S]*?repair the AEAD\./, "");
+    expect(live).not.toMatch(/Under both behaviours the package is refused/);
+    expect(live).not.toMatch(/the attacker cannot predict/);
+  });
+
+  it("does not promote stricter input acceptance into sender authentication", () => {
+    expect(VFLAT).toMatch(/X-Wing does not authenticate the sender, and never claimed to/);
+    expect(VFLAT).toMatch(/not created by the low-order case/);
+    expect(VFLAT).toMatch(/stricter input acceptance/i);
+    expect(VFLAT).toMatch(/must not be promoted into an identity\s*claim/);
+  });
+
+  it("claims only reason/message equality, never timing", () => {
+    expect(VFLAT).toMatch(/the same `reason` and the same `message`/);
+    expect(VFLAT).toMatch(/That is too\s*strong and is withdrawn/);
+    expect(VFLAT).toMatch(/Not claimed: constant-time equality of the two paths, timing\s*indistinguishability, or unobservability/);
+    // The retracted phrase survives only inside its own retraction.
+    const idx = VFLAT.indexOf("not observable at all");
+    if (idx !== -1) {
+      expect(VFLAT.slice(idx, idx + 160)).toMatch(/too\s*strong and is withdrawn/);
+    }
+  });
+
+  it("states the interoperability claim at its true boundary", () => {
+    expect(VFLAT).toMatch(/byte-identical to draft-10 for\s*`GenerateKeyPair`, `Encapsulate`, and all honestly generated ciphertexts/);
+    expect(VFLAT).toMatch(/does not claim\s*arbitrary-malformed-ciphertext decapsulation equivalence/);
+    // The unqualified phrasing is forbidden in terms.
+    expect(VFLAT).toMatch(/may be written without that qualification attached/);
+  });
+
+  it("the accepted exception is pinned by a test that forces a re-audit", () => {
+    expect(VFLAT).toMatch(/If a future Noble version begins\s*returning a combined secret instead, that test fails/);
+    expect(existsSync(join(ROOT, "tests/spt-lowzero-divergence.test.ts"))).toBe(true);
   });
 
   it("keeps the draft's own vector caveat attached", () => {

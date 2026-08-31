@@ -18,6 +18,7 @@ divergence. It makes no claim beyond what was executed.
 | Draft status | Internet-Draft, revision **10**, 2 March 2026, expires 3 September 2026. Independent Submission stream. **Not CFRG-adopted. Not an RFC.** |
 | Implemented in this phase | X-Wing wrapper, TPR2 codec, TPS2 codec, HKDF schedule, AES-256-GCM, fingerprints, reference vectors |
 | **Not** implemented in this phase | persisted receive requests, sender handoff enforcement, provenance enforcement, receive state machine, cross-tab session, Browser UI, courier integration, CLI verbs |
+| Validation status | valid/honest X-Wing interop **validated**; adversarial low-order decapsulation **intentionally not byte-identical** (§6); product transfer flow **still not implemented** |
 
 This is **not** a NIST CAVP validation, not a FIPS validation, and not an audit.
 It is a conformance and cross-implementation check that was run and whose
@@ -73,7 +74,7 @@ draft-10. That sentence was not taken on trust: `package/src/hybrid.ts` from the
 | **No** extra HKDF inside X-Wing | the preset is `combineKEMS(…, sha3_256 combiner, …)`; the HKDF-bearing `createKitchenSink` preset is a **different** export and is not used | ✅ |
 | Deterministic keygen sufficient for vectors | `keygen(seed32)` | ✅ |
 | Deterministic encapsulation sufficient for vectors | `encapsulate(pk, eseed64)` | ✅ |
-| **No** ad-hoc X25519 all-zero rejection changing draft-10 | **NOT met — see §6** | ❌ |
+| **No** ad-hoc X25519 all-zero rejection changing draft-10 | **Not met.** Noble aborts on an all-zero X25519 result — a policy RFC 7748 §6.1 permits, inherited rather than added by TruePad. **Accepted; see §6** | ⚠️ |
 
 ---
 
@@ -150,20 +151,54 @@ Cross-implementation validation is therefore **claimed, and executed**.
 
 ---
 
-## 6. The one divergence found
+## 6. The one divergence — accepted, and described precisely
 
-**`@noble/post-quantum` 0.7.1 rejects an all-zero X25519 shared secret. The
-frozen construction does not.**
+**DECISION: ACCEPT `@noble/post-quantum` 0.7.1's stricter low-order rejection.**
+The dependency is kept. The suite is unchanged. This section is the permanent
+record of what was accepted and why, and it corrects two things an earlier draft
+of it got wrong.
 
-§2.2 of the specification is explicit:
+### 6.1 Three facts, none of which cancels the others
 
-> *"On the all-zero X25519 result: draft-10 explicitly declines to mandate a
-> check, and TruePad does not add one."*
+**A — draft-10.** `draft-connolly-cfrg-xwing-kem-10` defines decapsulation as
 
-The draft's `Decapsulate` is `ss_X = X25519(sk_X, ct_X)` with no check, and the
-draft text contains **no** discussion of all-zero, low-order, or contributory
-behaviour anywhere. `@noble/curves` raises `invalid private or public key
-received` when X25519 yields zero, and `_ecdhKem` does not suppress it.
+```
+ss_X = X25519(sk_X, ct_X)
+```
+
+and specifies **no** all-zero abort. Its machine-readable specification's X25519
+returns the resulting u-coordinate. The draft text contains no discussion of
+all-zero, low-order, or contributory behaviour anywhere.
+
+**B — RFC 7748.** §6.1 explicitly says an implementation **MAY** check whether
+the X25519 shared secret is all-zero and abort. `@noble/curves`' X25519 is
+therefore a **conforming RFC 7748 implementation exercising a permitted
+policy** — not a broken one, and not a TruePad invention.
+
+**C — TruePad.** The selected production dependency inherits that stricter
+rejection. Consequently:
+
+* honestly generated draft-10 X-Wing encapsulations remain byte-compatible;
+* every official and reference vector remains byte-identical;
+* ordinary cross-implementation `pk` / `ct` / `ss` results remain byte-identical;
+* **adversarial low-order `ct_X` inputs are a documented decapsulation-behaviour
+  divergence.**
+
+Suite `0x0001`'s wire bytes are unchanged and no suite-ID change is required.
+
+### 6.2 The interoperability claim, stated at its true boundary
+
+> TruePad's production X-Wing implementation is byte-identical to draft-10 for
+> `GenerateKeyPair`, `Encapsulate`, and all honestly generated ciphertexts
+> tested — including all three Appendix C vectors and the independent draft-10
+> corpus. Its `Decapsulate` behaviour is deliberately **stricter** for the
+> RFC 7748 all-zero X25519 case, because the selected Noble implementation
+> aborts on that result. TruePad therefore does **not** claim
+> arbitrary-malformed-ciphertext decapsulation equivalence with every draft-10
+> implementation.
+
+Neither "a fully byte-exact implementation of draft-10" nor "byte-exact with
+draft-10" may be written without that qualification attached.
 
 Demonstrated, on a ciphertext whose `ct_X` is the all-zero u-coordinate:
 
@@ -172,38 +207,85 @@ Demonstrated, on a ciphertext whose `ct_X` is the all-zero u-coordinate:
 | `@noble/post-quantum` 0.7.1 | **throws** `invalid private or public key received` |
 | `rxwing` 0.1.0-draft10 | **returns** `ss = b5783bcb…a457` |
 
-So the divergence is real and observable **between implementations**.
+### 6.3 The "both refuse" argument was wrong, and is withdrawn
 
-**Scope, stated precisely.**
+An earlier version of this section said the package is refused under both
+behaviours because "the frozen construction would return a shared secret the
+attacker cannot predict, so the AEAD tag fails". **That is not true in
+general.** It held only for the narrow case actually tested: take an honest
+package, replace `ct_X` with low-order bytes, change nothing else. There the
+tamperer does not know the honest package's `ss_M` and cannot repair the AEAD.
 
-* Reachable only on an attacker-supplied `ct_X` that is a low-order point. An
-  honest sender's `ct_X = X25519(ek_X, base)` never is.
-* Under **both** behaviours the package is refused. The frozen construction
-  would return a shared secret the attacker cannot predict, so the AEAD tag
-  fails; noble refuses one step earlier.
-* At TruePad's own boundary the difference is **not observable at all**:
-  `openPayloadV1` maps a decapsulation throw and an AEAD failure to the single
-  outcome `cryptographic-open-failed` with an identical message, which is
-  required anyway so the protocol offers no decapsulation oracle (§11).
-  `tests/spt-vectors.test.ts` asserts that a low-order `ct_X` and a flipped tag
-  are indistinguishable through the API.
-* No honest package is affected, and no package is accepted that should not be.
+A **malicious sender** is not so limited. An encapsulation key is public, so
+Mallory can:
 
-**What was NOT done, deliberately.** The suite was not modified to match the
-library. No shim reimplements the X25519 step to restore the frozen behaviour —
-that would mean hand-writing part of the KEM and still calling it suite
-`0x0001`. No combiner of our own was written.
+1. run a valid `ML-KEM-768.Encaps(Bob.pk_M)` himself and **keep `ss_M`**;
+2. choose `ct_X` = a low-order point, for which draft-10's X25519 yields
+   all-zero for every scalar — so `ss_X` is known too;
+3. compute `ss = Combiner(ss_M, 0³², ct_X, pk_X)` — every input known;
+4. build a **genuinely valid** TPS2 package under that `ss`.
 
-**Status: an open decision, not a resolved one.** The divergence is recorded
-here, pinned by a test (`tests/spt-xwing.test.ts`, "the one behavioural
-divergence from the frozen construction") so a library change is noticed, and
-carried forward for an explicit accept-or-replace decision. The options are:
-accept it and record the exception in §2.2; replace the dependency; or add the
-check to §2.2 as a deliberate TruePad-specific deviation, which §2.2 currently
-argues against on interoperability grounds — and which the rxwing result above
-shows would indeed be an interoperability difference, not a theoretical one.
+A draft-10 implementation that does not abort derives the same `ss` and the AEAD
+verifies. `tests/spt-lowzero-divergence.test.ts` constructs exactly this
+fixture and proves all three legs: the reference combiner reproduces **the byte
+value `rxwing` actually returns** for that ciphertext; the resulting tag is
+genuinely valid (the test decrypts it, and the derived-nonce check passes too);
+and TruePad rejects it because Noble's X25519 aborts first.
 
----
+So the honest statement is: **a package Noble refuses here is one a
+non-aborting draft-10 implementation may accept.** That is the difference being
+accepted.
+
+### 6.4 Why that is not a protocol break
+
+Because **X-Wing does not authenticate the sender, and never claimed to.**
+
+Any sender can already run an *honest* `XWing.Encaps(Bob.pk)` — the key is
+public — and know the resulting shared secret. Mallory's ability to manufacture
+a package Bob can open is therefore **not created by the low-order case**; he
+has it anyway. "Bob can decrypt it" has never meant "Alice sent it".
+
+That is precisely why §8 exists. A malicious package — ordinary X-Wing or
+low-order draft-10 — must still fail the Alice → Bob human confirmation
+ceremony, unless Mallory also defeats that ceremony's stated assumptions.
+
+Noble's low-order rejection is therefore **stricter input acceptance**, not the
+mechanism that authenticates Alice, and it must not be promoted into an identity
+claim.
+
+### 6.5 What the API equality does and does not claim
+
+`openPayloadV1` maps Noble's low-order decapsulation throw and an AES-GCM
+authentication failure to the **same `reason` and the same `message`**. That is
+kept, and asserted by test: the typed API exposes no decapsulation oracle, and
+SPT has no remote TruePad backend to interrogate.
+
+An earlier draft said the difference was "not observable at all". **That is too
+strong and is withdrawn.** The two paths execute different code and can differ
+in timing. What is claimed is exactly this and nothing more:
+
+> The public API returns the same `reason` and the same `message` for both.
+
+Not claimed: constant-time equality of the two paths, timing
+indistinguishability, or unobservability. Endpoint-local timing observation is
+not a property this code establishes.
+
+### 6.6 What was deliberately NOT done
+
+The suite was not modified to match the library. No shim reimplements the X25519
+step to restore the frozen behaviour — that would mean hand-writing part of the
+KEM and still calling it suite `0x0001`. No combiner of our own was written into
+production code, and a test asserts `src/spt` contains none.
+
+### 6.7 Pinned
+
+`tests/spt-lowzero-divergence.test.ts` fixes the accepted behaviour in place:
+the three draft vectors still match, Noble still rejects the low-order case, and
+the divergence is confined to `Decapsulate`. **If a future Noble version begins
+returning a combined secret instead, that test fails** — which is the intent. It
+would move TruePad onto the draft-10 behaviour without anyone deciding to, and
+would make the forged package of §6.3 openable. Re-audit this section before
+changing it.
 
 ## 7. TruePad-layer vectors
 

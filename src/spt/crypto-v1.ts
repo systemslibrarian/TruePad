@@ -62,6 +62,7 @@ import {
 import { confirmationIndices88, domainPrefix, hashDomain, requestFingerprint } from "./fingerprint.ts";
 import { hkdfExpand, hkdfExtract } from "./hkdf.ts";
 import { buildHeader, packageIdentity, parseSealedPackage, type PackageParseError } from "./sealed-package.ts";
+import { parseRequestBody } from "./receive-request.ts";
 import { decapsulate, encapsulate, encapsulateDerand } from "./xwing-v1.ts";
 
 /* ---- the derivations of §7.3 / §7.4 -------------------------------------- */
@@ -140,6 +141,9 @@ export type OpenResult = {
 
 export type OpenError =
   | PackageParseError
+  /** The supplied request body is not a canonical §5.1 body at all. Refused
+   *  before it is hashed, sliced, or used to name a request domain. */
+  | "malformed-request-body"
   /** The package is for a different request than the one supplied. */
   | "request-mismatch"
   /** ONE outcome for decapsulation failure AND AEAD verification failure. §11:
@@ -168,17 +172,31 @@ export type SealOptions = {
 /** LOW-LEVEL. See the banner: this takes bytes, the product operation takes a
  *  pairId. `canonicalRequestBody` is the complete 1235-byte §5.1 body, and
  *  `payload` is whatever opaque bytes are being sealed — this layer never
- *  parses, normalizes, or reserializes them. */
+ *  parses, normalizes, or reserializes them.
+ *
+ *  **There is exactly one authority for the recipient's KEM identity: the
+ *  request body.** This function used to take the encapsulation key as a second
+ *  argument, which meant the caller supplied the same fact twice and nothing
+ *  checked that the two agreed. An honest caller mixing up two open requests —
+ *  body `B` with the key from `B'` — would have produced a package whose
+ *  `requestHash` names `B` while the KEM ciphertext is for `B'`: unopenable by
+ *  `B`, and, once Phase 1B wraps this layer, a package that spends the sender's
+ *  one handoff (§10.6) on nothing. The key is now read out of the body that
+ *  names it, and the redundant parameter is gone. */
 export async function sealPayloadV1(
   canonicalRequestBody: Uint8Array,
-  encapsulationKey: Uint8Array,
   payload: Uint8Array,
   options: SealOptions = {}
 ): Promise<SealResult> {
   if (payload.length > MAX_PLAINTEXT_BYTES) {
     throw new RangeError(`payload exceeds ${MAX_PLAINTEXT_BYTES} bytes`);
   }
-  const requestHash = await requestFingerprint(canonicalRequestBody);
+  // Validate BEFORE any KEM work: no cryptographic operation over a body this
+  // build does not recognise as a request.
+  const parsed = parseRequestBody(canonicalRequestBody);
+  if (!parsed.ok) throw new RangeError(`canonicalRequestBody: ${parsed.message}`);
+  const encapsulationKey = parsed.request.encapsulationKey;
+  const requestHash = await requestFingerprint(parsed.canonicalBody);
   const { ciphertext: kemCiphertext, sharedSecret } = options.eseedForVectorsOnly
     ? encapsulateDerand(encapsulationKey, options.eseedForVectorsOnly)
     : encapsulate(encapsulationKey);
@@ -192,7 +210,7 @@ export async function sealPayloadV1(
     wipe(padHash);
 
     const header = buildHeader({
-      requestId: canonicalRequestBody.slice(3, 19),
+      requestId: parsed.request.requestId,
       requestHash,
       kemCiphertext,
       nonce,
@@ -245,8 +263,14 @@ export async function openPayloadV1(
   if (!parsed.ok) return openFail(parsed.reason, parsed.message);
   const { header, aad, ciphertext, tag } = parsed.parsed;
 
-  const requestHash = await requestFingerprint(canonicalRequestBody);
-  const requestId = canonicalRequestBody.slice(3, 19);
+  // The SAME parser the text decoder and seal() use. A caller buffer that is
+  // 1235-ish but not a canonical request must not silently become a different
+  // request domain by being hashed as though it were one.
+  const request = parseRequestBody(canonicalRequestBody);
+  if (!request.ok) return openFail("malformed-request-body", request.message);
+
+  const requestHash = await requestFingerprint(request.canonicalBody);
+  const requestId = request.request.requestId;
   if (!equalBytes(header.requestId, requestId) || !equalBytes(header.requestHash, requestHash)) {
     return openFail("request-mismatch", "this package is for a different receive request");
   }

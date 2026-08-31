@@ -70,7 +70,7 @@ const PAYLOAD = new TextEncoder().encode(VECTOR_C.payloadText);
 const derand = { eseedForVectorsOnly: hx(ESEED) };
 
 async function sealVector() {
-  return sealPayloadV1(BODY, KEYS.encapsulationKey, PAYLOAD, derand);
+  return sealPayloadV1(BODY, PAYLOAD, derand);
 }
 
 describe("VECTOR C — every intermediate is pinned, not just the output", () => {
@@ -159,8 +159,8 @@ describe("VECTOR C — every intermediate is pinned, not just the output", () =>
   });
 
   it("is randomized without the test hook — two seals differ", async () => {
-    const a = await sealPayloadV1(BODY, KEYS.encapsulationKey, PAYLOAD);
-    const b = await sealPayloadV1(BODY, KEYS.encapsulationKey, PAYLOAD);
+    const a = await sealPayloadV1(BODY, PAYLOAD);
+    const b = await sealPayloadV1(BODY, PAYLOAD);
     expect(bytesToHex(a.packageBytes)).not.toBe(bytesToHex(b.packageBytes));
     // ...and both still open.
     for (const s of [a, b]) {
@@ -187,7 +187,7 @@ describe("§19 byte identity — the payload is opaque", () => {
 
   for (const [name, payload] of cases) {
     it(`round-trips ${name} byte for byte`, async () => {
-      const sealed = await sealPayloadV1(BODY, KEYS.encapsulationKey, payload);
+      const sealed = await sealPayloadV1(BODY, payload);
       const opened = await openPayloadV1(sealed.packageBytes, BODY, KEYS.decapsulationSeed);
       expect(opened.ok).toBe(true);
       if (!opened.ok) return;
@@ -199,18 +199,19 @@ describe("§19 byte identity — the payload is opaque", () => {
   it("refuses a payload above 16 MiB rather than truncating it", async () => {
     // Allocated lazily so the suite does not carry 16 MiB around for nothing.
     const oversize = new Uint8Array(MAX_PLAINTEXT_BYTES + 1);
-    await expect(sealPayloadV1(BODY, KEYS.encapsulationKey, oversize)).rejects.toThrow(RangeError);
+    await expect(sealPayloadV1(BODY, oversize)).rejects.toThrow(RangeError);
   });
 });
 
 describe("§20 caller input ownership", () => {
-  it("seal does not mutate the request body, the public key, or the payload", async () => {
+  it("seal does not mutate the request body or the payload", async () => {
+    // The public key is no longer a parameter — it is read out of the body —
+    // so the body is now the only place a mutation could do harm.
     const body = Uint8Array.from(BODY);
-    const pk = Uint8Array.from(KEYS.encapsulationKey);
     const payload = Uint8Array.from(PAYLOAD);
-    const before = [bytesToHex(body), bytesToHex(pk), bytesToHex(payload)];
-    await sealPayloadV1(body, pk, payload, derand);
-    expect([bytesToHex(body), bytesToHex(pk), bytesToHex(payload)]).toEqual(before);
+    const before = [bytesToHex(body), bytesToHex(payload)];
+    await sealPayloadV1(body, payload, derand);
+    expect([bytesToHex(body), bytesToHex(payload)]).toEqual(before);
   });
 
   it("open does not mutate the package bytes, the request body, or the seed", async () => {
@@ -350,7 +351,7 @@ describe("cryptographic falsification", () => {
 
   it("the confirmation value changes when the authenticated package changes", async () => {
     const a = await sealVector();
-    const other = await sealPayloadV1(BODY, KEYS.encapsulationKey, Uint8Array.from([9, 9, 9]), derand);
+    const other = await sealPayloadV1(BODY, Uint8Array.from([9, 9, 9]), derand);
     expect(bytesToHex(other.confirmValue)).not.toBe(bytesToHex(a.confirmValue));
     expect(other.confirmationIndices).not.toEqual(a.confirmationIndices);
   });
@@ -447,7 +448,7 @@ describe("VECTOR D — a real packContainer bundle", () => {
     ]);
 
     const before = bytesToHex(container);
-    const sealed = await sealPayloadV1(BODY, KEYS.encapsulationKey, container);
+    const sealed = await sealPayloadV1(BODY, container);
     const opened = await openPayloadV1(sealed.packageBytes, BODY, KEYS.decapsulationSeed);
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;

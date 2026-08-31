@@ -38,19 +38,73 @@ export type ReceiveRequest = {
   encapsulationKey: Uint8Array;
 };
 
+/** What can be wrong with the 1235 BINARY bytes, independent of how they were
+ *  transported. */
+export type RequestBodyError = "wrong-body-length" | "unsupported-version" | "unsupported-suite";
+
+export type RequestBodyParse =
+  | { ok: true; request: ReceiveRequest; canonicalBody: Uint8Array }
+  | { ok: false; reason: RequestBodyError; message: string };
+
 export type RequestDecodeError =
   | "wrong-prefix"
   | "not-base64url"
   | "noncanonical-base64url"
-  | "wrong-body-length"
-  | "unsupported-version"
-  | "unsupported-suite";
+  | RequestBodyError;
 
 export type RequestDecode =
   | { ok: true; request: ReceiveRequest; canonicalBody: Uint8Array }
   | { ok: false; reason: RequestDecodeError; message: string };
 
 const fail = (reason: RequestDecodeError, message: string): RequestDecode => ({ ok: false, reason, message });
+
+/** **The single authority on what a canonical request body is.**
+ *
+ *  Every path that treats 1235 bytes as a request goes through here: the TPR2
+ *  text decoder, `sealPayloadV1`, and `openPayloadV1`. There is deliberately no
+ *  second place that reads byte 0 for a version or bytes [1,3) for a suite —
+ *  two parsers are two chances to disagree about what a request *is*, and the
+ *  first thing that would disagree is which key the sender encapsulates to.
+ *
+ *  The returned `requestId` and `encapsulationKey` are COPIES, not views: a
+ *  caller that writes through one must not be able to change what the body
+ *  said afterwards. `canonicalBody` is likewise a copy, so the hash a caller
+ *  computes over it cannot drift from the fields it was handed. */
+export function parseRequestBody(body: Uint8Array): RequestBodyParse {
+  if (body.length !== TPR2_BODY_BYTES) {
+    return {
+      ok: false,
+      reason: "wrong-body-length",
+      message: `a request body is ${TPR2_BODY_BYTES} bytes, got ${body.length}`
+    };
+  }
+  const version = body[0];
+  if (version !== TRANSFER_VERSION) {
+    return {
+      ok: false,
+      reason: "unsupported-version",
+      message: `unsupported transfer version 0x${version.toString(16)}`
+    };
+  }
+  const suite = readUint16BE(body, 1);
+  if (suite !== SUITE_ID) {
+    return {
+      ok: false,
+      reason: "unsupported-suite",
+      message: `unsupported suite 0x${suite.toString(16).padStart(4, "0")}`
+    };
+  }
+  return {
+    ok: true,
+    request: {
+      version,
+      suite,
+      requestId: body.slice(3, 19),
+      encapsulationKey: body.slice(19)
+    },
+    canonicalBody: body.slice()
+  };
+}
 
 const B64URL_CHAR = /^[A-Za-z0-9_-]*$/;
 
@@ -126,25 +180,8 @@ export function decodeReceiveRequest(text: string): RequestDecode {
   if (toBase64Url(body) !== encoded) {
     return fail("noncanonical-base64url", "the request has a non-canonical base64url spelling");
   }
-  if (body.length !== TPR2_BODY_BYTES) {
-    return fail("wrong-body-length", `a request body is ${TPR2_BODY_BYTES} bytes, got ${body.length}`);
-  }
-  const version = body[0];
-  if (version !== TRANSFER_VERSION) {
-    return fail("unsupported-version", `unsupported transfer version 0x${version.toString(16)}`);
-  }
-  const suite = readUint16BE(body, 1);
-  if (suite !== SUITE_ID) {
-    return fail("unsupported-suite", `unsupported suite 0x${suite.toString(16).padStart(4, "0")}`);
-  }
-  return {
-    ok: true,
-    request: {
-      version,
-      suite,
-      requestId: body.slice(3, 19),
-      encapsulationKey: body.slice(19)
-    },
-    canonicalBody: body
-  };
+  // Transport is done; the SEMANTIC validation belongs to the one binary
+  // parser, so a request that arrives as text and a request handed straight to
+  // seal() are judged by identical rules.
+  return parseRequestBody(body);
 }
