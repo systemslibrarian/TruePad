@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -17,18 +17,122 @@ const ROOT = resolve(__dirname, "..");
 const SPEC = readFileSync(join(ROOT, "docs", "SEALED-PAD-TRANSFER.md"), "utf8");
 const FLAT = SPEC.replace(/^\s*>\s?/gm, "").replace(/\*\*/g, "").replace(/\s+/g, " ");
 
-describe("the document does not claim the feature exists", () => {
-  it("carries the not-implemented status", () => {
-    expect(SPEC).toContain("STATUS: PHASE 0.6 — SPECIFIED, NOT IMPLEMENTED");
+describe("the document says exactly what is and is not implemented", () => {
+  it("carries the Phase 1A status", () => {
+    expect(SPEC).toContain(
+      "STATUS: PHASE 1A — CRYPTOGRAPHIC/TRANSPORT CORE IMPLEMENTED;\nPRODUCT TRANSFER FLOW NOT IMPLEMENTED."
+    );
   });
-  it("no runtime code implements it", () => {
-    // The guard that matters most: if this ever fails, the spec's status line
-    // is a lie somewhere in the tree.
-    for (const f of ["src/core", "src/browser/engine", "src/cli"]) {
-      const listing = readFileSync(join(ROOT, "package.json"), "utf8");
-      expect(listing).not.toMatch(/ml-kem|mlkem|x-wing|xwing/i);
-      void f;
+
+  it("refuses the promotion the status line invites", () => {
+    // Phase 1A ships a cryptographic core, not a feature. The sentence a
+    // reader would otherwise write for us is refused in the document itself.
+    expect(FLAT).toMatch(/Nothing in the shipped product offers sealed transfer/);
+    expect(FLAT).toMatch(/TruePad does not support online PQC pad transfer/);
+    expect(FLAT).toMatch(/There is no UI, no\s*verb, no menu item/);
+  });
+
+  it("lists the product machinery that does NOT exist", () => {
+    for (const absent of [
+      "persisted receive requests",
+      "handoff.json",
+      "origin` provenance on `pair.json",
+      "cross-tab receive session",
+      "any CLI verb"
+    ]) {
+      expect(FLAT, `${absent} must be listed as not implemented`).toContain(absent);
     }
+  });
+
+  it("the crypto core exists in an isolated module family, and core does not depend on it", () => {
+    // src/spt is real now; the arrow must still point one way only.
+    expect(existsSync(join(ROOT, "src/spt/index.ts"))).toBe(true);
+    for (const file of readdirSync(join(ROOT, "src/core"))) {
+      if (!file.endsWith(".ts")) continue;
+      const source = readFileSync(join(ROOT, "src/core", file), "utf8");
+      expect(source, `src/core/${file} must not import src/spt`).not.toMatch(/spt\//);
+    }
+  });
+
+  it("no product surface reaches the transfer code yet", () => {
+    // The claim "nothing in the shipped product offers it" is checked against
+    // the tree, not trusted to the prose.
+    for (const dir of ["src/browser/engine", "src/browser/ui", "src/cli", "src/cli/v2"]) {
+      for (const file of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
+        if (!file.isFile() || !file.name.endsWith(".ts")) continue;
+        const source = readFileSync(join(ROOT, dir, file.name), "utf8");
+        expect(source, `${dir}/${file.name} must not reach src/spt`).not.toMatch(/from "[^"]*spt\//);
+      }
+    }
+  });
+
+  it("the forbidden byte-taking RPC name exists nowhere in src", () => {
+    // §18/§20: seal() names the pad. A `seal(body, padFileBytes)` RPC would let
+    // a caller choose the snapshot the genesis check evaluates.
+    for (const dir of ["src/spt", "src/browser/engine"]) {
+      for (const file of readdirSync(join(ROOT, dir))) {
+        if (!file.endsWith(".ts")) continue;
+        const source = readFileSync(join(ROOT, dir, file), "utf8");
+        const withoutComments = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+        expect(withoutComments, `${dir}/${file}`).not.toMatch(/seal\s*\(\s*body\s*,\s*padFileBytes/);
+      }
+    }
+  });
+
+  it("the one production dependency is pinned exactly", () => {
+    const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+    expect(Object.keys(pkg.dependencies ?? {})).toEqual(["@noble/post-quantum"]);
+    // No caret, no tilde, no range: the KEM implementation is part of the suite.
+    expect(pkg.dependencies["@noble/post-quantum"]).toBe("0.7.1");
+    const lock = JSON.parse(readFileSync(join(ROOT, "package-lock.json"), "utf8"));
+    expect(lock.packages["node_modules/@noble/post-quantum"].version).toBe("0.7.1");
+    expect(lock.packages["node_modules/@noble/post-quantum"].integrity).toMatch(/^sha512-/);
+  });
+
+  it("the Phase 1B storage prerequisite is carried, not quietly dropped", () => {
+    expect(FLAT).toMatch(/PHASE 1B STORAGE-INTEGRATION PREREQUISITE/);
+    expect(FLAT).toMatch(/writeFileAtomic\(\)`?\s*is genuinely atomic only where/);
+    expect(FLAT).toMatch(/It is not papered\s*over/);
+  });
+});
+
+describe("the validation record backs the implementation claims", () => {
+  const VALIDATION = readFileSync(join(ROOT, "docs", "SEALED-PAD-TRANSFER-VALIDATION.md"), "utf8");
+  const VFLAT = VALIDATION.replace(/^\s*>\s?/gm, "").replace(/\*\*/g, "").replace(/\s+/g, " ");
+
+  it("names the exact production implementation and pins its integrity", () => {
+    expect(VALIDATION).toContain("@noble/post-quantum");
+    expect(VALIDATION).toContain("0.7.1");
+    expect(VALIDATION).toMatch(/sha512-\+P9981IiAnVh/);
+  });
+
+  it("names a genuinely independent draft-10 implementation, and why others were excluded", () => {
+    expect(VALIDATION).toContain("rxwing");
+    expect(VALIDATION).toContain("0.1.0-draft10");
+    // The exclusions are recorded, so "independent" is not asserted loosely.
+    expect(VFLAT).toMatch(/authored by this repository's own owner/);
+    expect(VFLAT).toMatch(/draft-06/);
+  });
+
+  it("records the divergence rather than hiding it", () => {
+    expect(VFLAT).toMatch(/rejects an all-zero X25519 shared secret\. The frozen construction does not/);
+    expect(VFLAT).toMatch(/an open decision, not a resolved one/);
+    // ...and records what was deliberately NOT done about it.
+    expect(VFLAT).toMatch(/suite was not modified to match the library/);
+    expect(VFLAT).toMatch(/No shim reimplements/);
+  });
+
+  it("keeps the draft's own vector caveat attached", () => {
+    expect(VALIDATION).toContain("TODO: replace with test vectors that re-use");
+    expect(VFLAT).toMatch(/not a NIST CAVP validation/);
+    expect(VFLAT).toMatch(/a vector that only agrees with itself proves nothing/);
+  });
+
+  it("states what may NOT be said", () => {
+    expect(VFLAT).toMatch(/Not \*"TruePad supports online PQC pad transfer\."\*/);
+    expect(VFLAT).toMatch(/X-Wing is a standard.*It is an Internet-Draft/);
+    expect(VFLAT).toMatch(/Not \*"the implementation is constant-time\."\*/);
+    expect(VFLAT).toMatch(/Not \*"validated"\* in the FIPS or CAVP sense/);
   });
 });
 

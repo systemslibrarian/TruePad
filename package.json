@@ -37,6 +37,9 @@
     "url": "https://github.com/systemslibrarian/TruePad/issues"
   },
   "homepage": "https://github.com/systemslibrarian/TruePad#readme",
+  "dependencies": {
+    "@noble/post-quantum": "0.7.1"
+  },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@types/node": "^24.13.3",

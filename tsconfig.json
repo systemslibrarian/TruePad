@@ -15,5 +15,5 @@
     "useDefineForClassFields": true,
     "types": []
   },
-  "include": ["src/core", "src/exhibit", "src/browser"]
+  "include": ["src/core", "src/spt", "src/exhibit", "src/browser"]
 }

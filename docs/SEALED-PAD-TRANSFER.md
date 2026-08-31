@@ -1,9 +1,50 @@
 # Sealed Pad Transfer v1
 
-**STATUS: PHASE 0.6 — SPECIFIED, NOT IMPLEMENTED.**
-No code in `src/**` implements any of this. Nothing in the shipped product
-offers it. This document exists so that a later implementation phase has no
-cryptographic design decisions left to improvise.
+**STATUS: PHASE 1A — CRYPTOGRAPHIC/TRANSPORT CORE IMPLEMENTED;
+PRODUCT TRANSFER FLOW NOT IMPLEMENTED.**
+
+**Nothing in the shipped product offers sealed transfer.** There is no UI, no
+verb, no menu item, and no way for an operator to reach any of it. TruePad does
+**not** support online PQC pad transfer, and this document must not be read as
+saying it does.
+
+What Phase 1A implemented, in `src/spt/**` — an isolated module family that owns
+no product state and that `src/core/**` does not depend on:
+
+* suite `0x0001` — the X-Wing wrapper (§2.2), validated against draft-10's own
+  Appendix C vectors **and** against an independent draft-10 implementation;
+* the TPR2 receive-request codec (§5) and the TPS2 sealed-package codec (§7.1);
+* the key schedule (§7.3), the derived nonce (§7.4), and AES-256-GCM;
+* `requestHash`, `requestWords132` indices, `confirmationWords88` indices (§6, §8.2);
+* `packageIdentity`, and committed deterministic reference vectors.
+
+What Phase 1A did **not** implement, and what therefore does not exist:
+
+* persisted receive requests, and the `PENDING`/`CANCELLED`/`CONSUMED` machine (§10.1);
+* the sender handoff record `handoff.json` and its enforcement (§10.9);
+* `origin` provenance on `pair.json` and its refusals (§10.7);
+* the cross-mode physical/sealed export gating (§10.8);
+* the cross-tab receive session and its Web Locks (§10.10);
+* courier lifecycle integration, any Browser UI, and any CLI verb.
+
+The low-level `sealPayloadV1` / `openPayloadV1` take **bytes**. They are for
+cryptographic composition and reference vectors. The product operation remains
+`seal(body, pairId)`, reading the live store inside the worker; there must never
+be an RPC named `seal(body, padFileBytes)` (§18, §20).
+
+`docs/SEALED-PAD-TRANSFER-VALIDATION.md` records the dependency audit, the
+vector results, the cross-implementation run, and **one divergence** found
+between the pinned library and the frozen construction.
+
+> **Carried forward — PHASE 1B STORAGE-INTEGRATION PREREQUISITE.** §10.9 requires
+> `handoff.json` to be written by one atomic replace. `OpfsVfs.writeFileAtomic()`
+> is genuinely atomic only where `FileSystemFileHandle.move()` exists; its
+> fallback truncates, writes and flushes, and can leave a torn file after a
+> crash. Phase 1A implements no persistent transfer state, so this blocks
+> nothing here — but before Phase 1B, §10.9 needs either a persistence design
+> that fails closed under the non-atomic fallback, another exact crash-safe
+> representation, or an explicitly narrower platform claim. It is not papered
+> over.
 
 ---
 
