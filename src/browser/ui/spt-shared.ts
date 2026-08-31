@@ -212,8 +212,29 @@ export function onlineDetailsPanel(): HTMLElement {
         "used to protect it."
     })
   );
+  box.appendChild(explainerLink());
   return box;
 }
+
+/** The way out of this panel for someone who wants the whole story.
+ *
+ *  It lives INSIDE the disclosure, not beside the buttons: a person mid-ceremony
+ *  is comparing words with someone who is waiting, and a link that pulls them
+ *  off the screen at that moment is a worse interface than no link. Both online
+ *  screens render this one panel, so the link cannot appear on one and not the
+ *  other. */
+export function explainerLink(): HTMLElement {
+  return h(
+    "p",
+    { class: "note" },
+    h("a", { href: ONLINE_EXPLAINER_HREF }, h("span", { text: "How online delivery works" }))
+  );
+}
+
+/** A page in this deployment, not a GitHub URL: the beginner flow should not
+ *  need a code host to explain itself, and it should still explain itself with
+ *  no network at all. The deeper document is linked from that page. */
+export const ONLINE_EXPLAINER_HREF = "online-delivery.html";
 
 /** The one-delivery-method rule, in the operator's language. */
 export const ONE_METHOD_NOTE = "Use one delivery method for each pad.";

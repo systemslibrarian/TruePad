@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      The same self-contained CSP as the app and the Lab (GitHub Pages sets no
+      headers). This page is static explanation: no script, no pad material, no
+      engine. It carries the policy anyway so a future edit cannot quietly
+      introduce an external load.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; child-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>How online pad delivery works — TruePad</title>
+    <meta
+      name="description"
+      content="A receive code gives the sender the public information needed to seal one pad for you. Your private key stays in TruePad. After you add the pad, normal messages use the one-time pad as usual."
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#11100c" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="apple-touch-icon" href="./pwa-192.png" />
+    <link rel="stylesheet" href="/src/browser/style.css" />
+    <style>
+      /* Page-local only. The ASCII flow must never widen the document: on a
+         narrow screen it scrolls inside its own box rather than pushing the
+         page sideways. */
+      .flow {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        font-size: 0.78rem;
+        line-height: 1.35;
+        white-space: pre;
+        padding: var(--s3, 1rem);
+        border: 1px solid var(--line, #2a2620);
+        border-radius: var(--r-sm, 6px);
+        background: var(--sunk, #14130f);
+      }
+      .odx h2 { margin: 2rem 0 0.5rem; }
+      .odx h3 { margin: 1.25rem 0 0.35rem; font-size: 1.05rem; }
+      .odx table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; }
+      .odx th, .odx td {
+        text-align: left; vertical-align: top;
+        padding: 0.45rem 0.6rem;
+        border-bottom: 1px solid var(--line, #2a2620);
+      }
+      .odx .wrap { overflow-x: auto; }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="app">
+      <header class="topbar">
+        <div class="topbar-inner">
+          <a class="brand" href="index.html"
+            ><span class="brand-word">True<span class="accent">Pad</span></span></a
+          >
+          <div class="topbar-spacer"></div>
+          <nav class="topnav" aria-label="Primary">
+            <a href="learn.html">Learn</a>
+          </nav>
+        </div>
+      </header>
+
+      <main id="main" class="main">
+        <div class="screen odx">
+          <p><a class="back-link" href="index.html">&larr; Back to TruePad</a></p>
+
+          <div class="screen-head">
+            <h1>How online pad delivery works</h1>
+          </div>
+
+          <p>
+            A receive code gives the sender the public information needed to seal one pad for you.
+            Your private key stays in TruePad. After you add the pad, normal messages use the
+            one-time pad as usual.
+          </p>
+
+          <div class="callout">
+            <div class="co-title">Online cryptography delivers the pad. The one-time pad protects the messages.</div>
+            <div class="co-body">
+              The delivery layer is <strong>computational</strong> — it depends on certain mathematical
+              problems being hard. A pad you carry by hand does not. That difference is what this page
+              is about.
+            </div>
+          </div>
+
+          <h2>A one-time locked mailbox</h2>
+          <p>
+            Creating a receive code is like putting out a one-time locked mailbox. The code is the part
+            anyone may see: it carries what a sender needs in order to lock something for that mailbox.
+            The private half needed to open it never leaves your browser.
+          </p>
+          <p class="note">
+            There is no mailbox on a server. TruePad has no backend and no account — nothing is
+            deposited anywhere, and no TruePad service ever sees your code, your sealed file, or your pad.
+          </p>
+
+          <h2>1. The recipient creates a receive code</h2>
+          <p>
+            TruePad generates a fresh one-time recipient keypair. The <strong>public</strong> half goes
+            into the receive code; the <strong>private</strong> half stays inside your TruePad and is
+            never copied into it.
+          </p>
+          <p>
+            The code is one line of text beginning with <code class="mono">TPR2:</code>.
+            <strong>It is not secret.</strong> Send it by chat, email, or text. Someone who copies it
+            cannot open anything with it — it is the lock, not the key.
+          </p>
+
+          <h2>2. They compare 12 words</h2>
+          <p>
+            If someone replaced the recipient's code with their own, the sender could seal the pad for
+            the wrong person without noticing. So TruePad turns the exact receive request into twelve
+            words. Both people see twelve words, and compare <strong>all twelve</strong>, in order.
+          </p>
+          <p>
+            Matching words are evidence of one specific thing: both people are looking at the
+            <em>same receive code</em>. They are <strong>not</strong> proof of anyone's identity —
+            that comes from the channel you compare them over, such as a voice you recognise.
+          </p>
+
+          <h2>3. The sender seals the pad</h2>
+          <p>
+            TruePad uses the public material in the receive code to make a fresh encryption key that
+            only the recipient's saved private key can recover, and encrypts the existing pad into a
+            sealed <code class="mono">.tps2</code> file. That file is a sealed copy of the pad — it is
+            not the raw pad file.
+          </p>
+
+          <h2>4. The sender sends the sealed file</h2>
+          <p>
+            The sealed file can travel through an ordinary channel because it is encrypted transport
+            rather than the pad itself. <strong>TruePad does not send it</strong> — it makes the file,
+            and you choose the channel. Nothing is uploaded.
+          </p>
+          <div class="wrap">
+            <table>
+              <thead>
+                <tr><th></th><th>What it contains</th><th>Ordinary channel?</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Raw <code class="mono">.pad</code></strong></td>
+                  <td>the secret pad itself</td>
+                  <td><strong>No.</strong> Anyone holding it can read and forge this pad's messages.</td>
+                </tr>
+                <tr>
+                  <td><strong>Sealed <code class="mono">.tps2</code></strong></td>
+                  <td>an encrypted delivery of the pad, locked to one receive request</td>
+                  <td>Yes — that is what it is for.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h2>5. The recipient opens the sealed pad</h2>
+          <p>
+            TruePad finds the private key it saved with that receive request, checks the package is
+            bound to that same request, decrypts the pad, and keeps it inside its worker while the
+            confirmation ceremony is still going on. Nothing is saved until the recipient accepts.
+          </p>
+
+          <h2>6. They compare 8 confirmation words</h2>
+          <p>
+            The twelve words checked the receive request <em>before</em> the pad was sent. The eight
+            check the sealed package <em>afterwards</em>.
+          </p>
+          <p>
+            <strong>The recipient reads his eight words first.</strong> Only after the sender says she
+            has heard them does TruePad show her own — before that they are not on her screen at all.
+            Hearing his first hands an impersonator a value they must already have matched, rather than
+            a target to repeat back.
+          </p>
+          <p class="note">
+            TruePad controls the order of its own screens. It cannot know whether two people actually
+            spoke in that order, or compared carefully. That part is up to you.
+          </p>
+
+          <h2>7. Then normal messaging begins</h2>
+          <p>
+            Once the pad is added, the delivery cryptography is finished and never runs again.
+            X-Wing, ML-KEM and the sealed file's AES-GCM are <strong>not</strong> used for messages.
+          </p>
+          <div class="callout">
+            <div class="co-body">
+              <p class="mono small">DELIVERY: X-Wing (ML-KEM-768 + X25519) → HKDF-SHA-256 → AES-256-GCM</p>
+              <p class="mono small">MESSAGES: one-time pad + Wegman–Carter authentication</p>
+            </div>
+          </div>
+
+          <h2>The whole flow</h2>
+          <div class="flow" role="img" aria-label="Flow: the recipient creates a receive code and twelve comparison words; the sender pastes it, compares all twelve, and seals the existing pad with X-Wing, HKDF-SHA-256 and AES-256-GCM into a sealed .tps2 file; the file travels through an ordinary channel; the recipient opens it with the private key saved with the request, reads eight confirmation words first, the sender then reveals hers, and once they match the pad is added and normal one-time-pad messaging begins.">
+  RECIPIENT                            SENDER
+  ─────────                            ──────
+  Create receive code
+        │
+        ▼
+  TPR2 code + 12 words
+        │   send the code
+        └──────────────────────────▶   Paste code
+                                       Compare all 12
+                                             │
+                                             ▼
+                                       Seal the existing pad
+                                       X-Wing (ML-KEM-768 + X25519)
+                                             │
+                                             ▼
+                                       HKDF-SHA-256  →  AES-256-GCM
+                                             │
+                                             ▼
+                                       .tps2 sealed pad
+        ◀────────────────────────────────────┘
+        │   chat / email / cloud / USB
+        ▼
+  Open with the saved private key
+        │
+        ▼
+  Decrypt (inside the worker)
+        │
+        ▼
+  Read 8 words FIRST  ───────────────▶  Sender reveals hers
+        │                                    │
+        ▼                                    ▼
+  Words match → add the pad             Words match
+        │
+        ▼
+  ══════════════════════════════════════════════════
+   NORMAL MESSAGES — one-time pad + Wegman–Carter
+  ══════════════════════════════════════════════════
+          </div>
+
+          <h2>Why online delivery is a different security claim</h2>
+          <p>
+            Hand the pad over privately and, if the one-time pad's assumptions hold, the delivery fits
+            the conditional information-theoretic model the OTP is known for. Nothing about it depends
+            on a computation being hard.
+          </p>
+          <p>
+            Online delivery is different: the pad is wrapped in ordinary modern cryptography first, and
+            someone watching the channel can keep the sealed file indefinitely. Today that archived copy
+            should be useless to them. It could stop being useless if the delivery cryptography is
+            broken in future, <strong>or</strong> if the recipient's saved one-time key state is restored
+            or cloned from a backup. Either would reveal the pad — and the pad decrypts the messages made
+            with it.
+          </p>
+          <p class="note">
+            Deleting your local copy of a sealed file does not erase copies already sent through chat,
+            email, cloud storage, or backups. TruePad cannot reach those, and cannot prove any copy has
+            been physically erased.
+          </p>
+
+          <h2>Common questions</h2>
+          <h3>Is the receive code secret?</h3>
+          <p>No. It carries public information only; the private key does not appear in it.</p>
+          <h3>Can I email the sealed <code class="mono">.tps2</code>?</h3>
+          <p>Yes, if that is the channel you choose. It is encrypted transport locked to one request.</p>
+          <h3>Can I email the raw <code class="mono">.pad</code>?</h3>
+          <p><strong>No.</strong> The raw pad is the secret itself. Hand it over in person, or use a channel only the two of you control.</p>
+          <h3>Does X-Wing encrypt every message?</h3>
+          <p>No. It delivers the pad once. Messages then use the one-time pad and Wegman–Carter authentication.</p>
+          <h3>Are the words passwords?</h3>
+          <p>No. They are a readable form of a cryptographic value, meant to be spoken and compared. There is nowhere to type them.</p>
+          <h3>Does matching the words prove who someone is?</h3>
+          <p>No. It proves you are both looking at the same values. Who you are talking to comes from the channel you compare them over.</p>
+
+          <details class="panel">
+            <summary>Technical details</summary>
+            <div class="panel-body">
+              <div class="wrap">
+                <table>
+                  <tbody>
+                    <tr><td>Receive request</td><td><code class="mono">TPR2:</code> + canonical unpadded base64url, 1652 characters</td></tr>
+                    <tr><td>KEM</td><td><strong>X-Wing</strong>, <code class="mono">draft-connolly-cfrg-xwing-kem-10</code>, suite <code class="mono">0x0001</code> — ML-KEM-768 with X25519</td></tr>
+                    <tr><td>Key derivation</td><td>HKDF-SHA-256</td></tr>
+                    <tr><td>Pad transport encryption</td><td>AES-256-GCM</td></tr>
+                    <tr><td>Sealed package</td><td><strong>TPS2</strong>, saved as <code class="mono">.tps2</code></td></tr>
+                    <tr><td>Request comparison</td><td>12 words / 132 bits</td></tr>
+                    <tr><td>Package confirmation</td><td>8 words / 88 bits</td></tr>
+                    <tr><td>After import</td><td>the existing TruePad one-time pad + one-time Wegman–Carter authentication</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="note">
+                <strong>ML-KEM is standardised</strong> (NIST FIPS 203). <strong>X-Wing is a draft</strong> —
+                TruePad has frozen the draft-10 construction. It is not a NIST standard, not an RFC, and not
+                IETF-approved. The delivery claim is computational.
+              </p>
+              <p class="note">
+                The words come from the BIP-39 English list, used purely as a readable mapping for fixed
+                11-bit indices. They are <strong>not</strong> wallet mnemonics and <strong>not</strong> a
+                recovery phrase — nothing is derived from them and they unlock nothing.
+              </p>
+              <p class="note">
+                A page that already holds worker authority is endpoint compromise, and no ordering in these
+                ceremonies changes that. All browser state is one rollback domain: restoring a whole profile
+                can rewind counters, markers and request state together.
+              </p>
+              <p class="faint small">
+                Full explanation, including the one-time and one-handoff rules:
+                <a href="https://github.com/systemslibrarian/TruePad/blob/master/docs/HOW-ONLINE-PAD-DELIVERY-WORKS.md" target="_blank" rel="noreferrer noopener">HOW-ONLINE-PAD-DELIVERY-WORKS.md</a>.
+                Normative specification:
+                <a href="https://github.com/systemslibrarian/TruePad/blob/master/docs/SEALED-PAD-TRANSFER.md" target="_blank" rel="noreferrer noopener">SEALED-PAD-TRANSFER.md</a>.
+              </p>
+            </div>
+          </details>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <div class="footer-inner">
+          <span>Runs entirely on your device. No account, nothing uploaded.</span>
+          <span class="topbar-spacer"></span>
+          <a href="learn.html">Learn</a>
+          <a href="https://github.com/systemslibrarian/TruePad" target="_blank" rel="noreferrer noopener">Source</a>
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>

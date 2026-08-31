@@ -11,7 +11,11 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: "index.html",
-        learn: "learn.html"
+        learn: "learn.html",
+        // A static explanation of the online delivery feature, reachable from
+        // the transfer screens and the Security page. No script: it is a
+        // document, and the engine has no business on it.
+        onlineDelivery: "online-delivery.html"
       }
     }
   },

@@ -16,7 +16,7 @@
 
 import { h, icon, mount } from "./dom.ts";
 import { backLink, callout, chip, panel } from "./components.ts";
-import { HNDL_NOTE, ONLINE_CLAIM_DETAIL } from "./spt-shared.ts";
+import { HNDL_NOTE, ONLINE_CLAIM_DETAIL, ONLINE_EXPLAINER_HREF } from "./spt-shared.ts";
 import {
   CEREMONY_CANNOT_VERIFY,
   CEREMONY_COMBINER,
@@ -39,8 +39,13 @@ const KLABEL: Record<Klass, string> = {
   native: "NATIVE-ONLY"
 };
 
-function ledgerItem(k: Klass, title: string, body: string): HTMLElement {
-  return h("li", {}, chip(k, KLABEL[k]), h("div", { class: "ll-body" }, h("strong", { text: title }), h("span", { text: body })));
+function ledgerItem(k: Klass, title: string, body: string, ...extra: HTMLElement[]): HTMLElement {
+  return h(
+    "li",
+    {},
+    chip(k, KLABEL[k]),
+    h("div", { class: "ll-body" }, h("strong", { text: title }), h("span", { text: body }), ...extra)
+  );
 }
 
 function guaranteesPanel(): HTMLElement {
@@ -97,7 +102,19 @@ function sourcePanel(): HTMLElement {
       // exists. The wording is imported from the transfer screens rather than
       // restated, so the two cannot drift apart.
       ledgerItem("protocol", "Sending a pad online is computational", ONLINE_CLAIM_DETAIL),
-      ledgerItem("operator", "An archived sealed file stays attackable", HNDL_NOTE),
+      ledgerItem(
+        "operator",
+        "An archived sealed file stays attackable",
+        HNDL_NOTE,
+        // A pointer, not a second copy of the explanation. This page states the
+        // claims and their limits precisely; it is not the place to teach the
+        // feature, and two explanations of the same thing drift apart.
+        h(
+          "p",
+          { class: "note" },
+          h("a", { href: ONLINE_EXPLAINER_HREF }, h("span", { text: "Learn how the receive code and sealed file work" }))
+        )
+      ),
       ledgerItem(
         "native",
         "The source claim and the platform claim are independent",
