@@ -10,7 +10,6 @@ import dev.systemslibrarian.truepad.core.JsonString
 import dev.systemslibrarian.truepad.core.JsonValue
 import dev.systemslibrarian.truepad.core.MAX_CIPHERTEXT_BYTES
 import dev.systemslibrarian.truepad.core.parseJson
-import java.time.Instant
 
 /*
  * One v2 direction store over the Fs — the Kotlin twin of src/browser/engine/
@@ -35,7 +34,14 @@ private val HEX_32 = Regex("^[0-9a-f]{32}$")
 private val DECIMAL_KEY = Regex("^(?:0|[1-9][0-9]*)$")
 
 private fun path(prefix: String, name: String) = "$prefix/$name"
-private fun nowIso(): String = Instant.now().toString()
+/*
+ * Every journal line carries an `at` timestamp. It is passed IN rather than read
+ * from the clock here, so the caller owns the clock: the engine stamps one
+ * instant per operation, and tests can pin it and compare a whole journal
+ * byte-for-byte against the released implementation's. The spelling is the exact
+ * `YYYY-MM-DDTHH:mm:ss.sssZ` form `new Date().toISOString()` emits — Instant's
+ * own toString() varies its fractional precision, and the wire form must not.
+ */
 
 /* ---- typed refusal shared by store, witness, verbs -------------------------- */
 
@@ -91,23 +97,80 @@ private val HEXC = "0123456789abcdef".toCharArray()
 
 internal fun jsonString(sb: StringBuilder, s: String) {
     sb.append('"')
-    for (c in s) {
+    var i = 0
+    while (i < s.length) {
+        val c = s[i]
         when (c) {
             '"' -> sb.append("\\\"")
             '\\' -> sb.append("\\\\")
             '\b' -> sb.append("\\b")
-            '' -> sb.append("\\f")
+            // Written as an escape, never as a raw U+000C byte in the source: an
+            // invisible control character in a char literal is liable to be
+            // mangled by an editor, a formatter, or a git filter, and this is the
+            // single line that decides whether head.json is byte-identical.
+            '\u000C' -> sb.append("\\f")
             '\n' -> sb.append("\\n")
             '\r' -> sb.append("\\r")
             '\t' -> sb.append("\\t")
-            else -> if (c.code < 0x20) {
-                sb.append("\\u00").append(HEXC[(c.code ushr 4) and 0xF]).append(HEXC[c.code and 0xF])
-            } else {
-                sb.append(c) // >= 0x20 and non-ASCII emitted literally, as JSON.stringify does
+            else -> when {
+                c.code < 0x20 ->
+                    sb.append("\\u00").append(HEXC[(c.code ushr 4) and 0xF]).append(HEXC[c.code and 0xF])
+                // WELL-FORMED JSON.stringify (ES2019): a surrogate that is not part
+                // of a valid pair is escaped as \udXXX rather than emitted raw.
+                // Kotlin Strings are UTF-16 and may legally hold a lone surrogate;
+                // emitting it literally would both diverge from the released bytes
+                // AND corrupt the value, because encoding a lone surrogate to UTF-8
+                // substitutes '?' (0x3F). Reachable through an operator-chosen
+                // source-declaration name.
+                c.isHighSurrogate() && i + 1 < s.length && s[i + 1].isLowSurrogate() -> {
+                    sb.append(c).append(s[i + 1])
+                    i += 1
+                }
+                c.isHighSurrogate() || c.isLowSurrogate() ->
+                    sb.append("\\u")
+                        .append(HEXC[(c.code ushr 12) and 0xF]).append(HEXC[(c.code ushr 8) and 0xF])
+                        .append(HEXC[(c.code ushr 4) and 0xF]).append(HEXC[c.code and 0xF])
+                // >= 0x20 and non-ASCII emitted literally, as JSON.stringify does.
+                else -> sb.append(c)
             }
         }
+        i += 1
     }
     sb.append('"')
+}
+
+/*
+ * JavaScript object property order is NOT insertion order for keys that look
+ * like array indices: an integer-like key in [0, 2^32-2] is emitted FIRST, in
+ * ascending NUMERIC order, before any other key. So JSON.stringify of
+ * {"12":1,"5":2,"3":1} is {"3":1,"5":2,"12":1}, whatever order the CLI or the
+ * Browser Edition happened to insert them in.
+ *
+ * perSequenceAttempts is the only map in head.json with operator-influenced
+ * keys, and its keys are sequence numbers. A Kotlin LinkedHashMap preserves
+ * INSERTION order, so any out-of-order authentication failure inside the
+ * 64-record lookahead window would produce a head.json that is NOT byte-
+ * identical to the one the CLI and Browser write - falsifying this file's own
+ * headline claim. Sorting here makes the output canonical regardless of the
+ * order the failures actually arrived in.
+ *
+ * A sequence at or above 2^32-1 is not an array index in JavaScript and keeps
+ * insertion order there. Such a store would need over four billion
+ * authentication records - 128 GiB of authentication material in one direction -
+ * so it is unreachable; those keys are emitted last, in insertion order, which
+ * is the closest faithful reading.
+ */
+private const val MAX_ARRAY_INDEX = 4_294_967_294L // 2^32 - 2
+
+internal fun jsPropertyOrder(map: Map<String, Long>): List<Map.Entry<String, Long>> {
+    val indexKeys = ArrayList<Map.Entry<String, Long>>()
+    val stringKeys = ArrayList<Map.Entry<String, Long>>()
+    for (e in map.entries) {
+        val n = if (DECIMAL_KEY.matches(e.key)) e.key.toLongOrNull() else null
+        if (n != null && n <= MAX_ARRAY_INDEX) indexKeys.add(e) else stringKeys.add(e)
+    }
+    indexKeys.sortBy { it.key.toLong() }
+    return indexKeys + stringKeys
 }
 
 /** Serialize a head to the EXACT compact JSON bytes the CLI/Browser emit (§1.1). */
@@ -143,11 +206,11 @@ fun serializeHead(h: HeadV2): ByteArray {
         .append(",\"clearedAtFailureCount\":").append(h.clearedAtFailureCount)
         .append(",\"perSequenceAttempts\":{")
     var first = true
-    for ((k, v) in h.perSequenceAttempts) {
+    for (e in jsPropertyOrder(h.perSequenceAttempts)) {
         if (!first) sb.append(',')
         first = false
-        jsonString(sb, k)
-        sb.append(':').append(v)
+        jsonString(sb, e.key)
+        sb.append(':').append(e.value)
     }
     sb.append("}}}")
     return sb.toString().toByteArray(Charsets.UTF_8)
@@ -155,10 +218,19 @@ fun serializeHead(h: HeadV2): ByteArray {
 
 /* ---- header validation (§1.1), ported from store.ts validateHead ------------ */
 
+/**
+ * A non-negative safe integer, in the ONE canonical decimal spelling. The TS
+ * twin is `Number.isSafeInteger(value) && value >= 0`, which — because JSON.parse
+ * has already folded `2.0` and `2e0` into the number 2 — accepts those spellings
+ * too. This refuses them: no shipping writer emits one (JSON.stringify never
+ * does), so the only inputs affected are hand-edited headers, and for those the
+ * strict reading fails CLOSED. Documented in docs/ANDROID-SECURITY.md.
+ */
 private fun isSafeCount(v: JsonValue?): Boolean {
     if (v !is JsonNumber) return false
+    if (!DECIMAL_KEY.matches(v.raw)) return false
     val n = v.raw.toLongOrNull() ?: return false
-    return n in 0..MAX_SAFE_INTEGER && DECIMAL_KEY.matches(v.raw.removePrefix("-").let { v.raw })
+    return n in 0..MAX_SAFE_INTEGER
 }
 
 private fun asLong(v: JsonValue?): Long = (v as JsonNumber).raw.toLong()
@@ -351,7 +423,7 @@ private fun applyJournal(a: JournalAggregates, o: JsonObject, op: String): Boole
 fun secretLength(h: HeadV2): Long = h.capacity + AUTH_RECORD_BYTES * h.capacityRecords
 
 /** Write a fresh direction store: secret.bin durable FIRST, then head.json, then init line (§12.4). */
-fun initStore(fs: Fs, prefix: String, head: HeadV2, secret: ByteArray) {
+fun initStore(fs: Fs, prefix: String, head: HeadV2, secret: ByteArray, at: String) {
     if (fs.exists(path(prefix, HEAD_FILE))) throw IllegalStateException("${path(prefix, HEAD_FILE)} already exists; a v2 store is written once")
     val expected = secretLength(head)
     require(secret.size.toLong() == expected) { "secret is ${secret.size} bytes but the header requires $expected" }
@@ -360,7 +432,7 @@ fun initStore(fs: Fs, prefix: String, head: HeadV2, secret: ByteArray) {
     val init = StringBuilder("{\"op\":\"init\",\"pairId\":")
     jsonString(init, head.pairId); init.append(",\"direction\":"); jsonString(init, head.direction.wire)
     init.append(",\"capacity\":").append(head.capacity).append(",\"capacityRecords\":").append(head.capacityRecords)
-    init.append(",\"at\":"); jsonString(init, nowIso()); init.append("}\n")
+    init.append(",\"at\":"); jsonString(init, at); init.append("}\n")
     fs.appendFile(path(prefix, JOURNAL_FILE), init.toString().toByteArray(Charsets.UTF_8))
 }
 
@@ -428,21 +500,21 @@ fun readAuthRecord(fs: Fs, prefix: String, head: HeadV2, sequence: Long): Pair<B
 /* ---- durable transitions ---------------------------------------------------- */
 
 /** OPEN O3: journal the attempt reservation, durably, and nothing else. */
-fun reserveAttempt(fs: Fs, prefix: String, sequence: Long) {
+fun reserveAttempt(fs: Fs, prefix: String, sequence: Long, at: String) {
     val sb = StringBuilder("{\"op\":\"attempt\",\"sequence\":").append(sequence).append(",\"at\":")
-    jsonString(sb, nowIso()); sb.append("}\n")
+    jsonString(sb, at); sb.append("}\n")
     fs.appendFile(path(prefix, JOURNAL_FILE), sb.toString().toByteArray(Charsets.UTF_8))
 }
 
 /** OPEN O4 failure: append auth-fail FIRST, then rewrite the header. Returns the head it wrote. */
-fun persistAuthFail(fs: Fs, prefix: String, head: HeadV2, sequence: Long): HeadV2 {
+fun persistAuthFail(fs: Fs, prefix: String, head: HeadV2, sequence: Long, at: String): HeadV2 {
     val key = sequence.toString()
     val perSeq = LinkedHashMap(head.perSequenceAttempts)
     perSeq[key] = (perSeq[key] ?: 0) + 1
     val newHead = copyHead(head, failureCount = head.failureCount + 1, perSequenceAttempts = perSeq)
     val sb = StringBuilder("{\"op\":\"auth-fail\",\"sequence\":").append(sequence)
         .append(",\"failureCount\":").append(newHead.failureCount).append(",\"at\":")
-    jsonString(sb, nowIso()); sb.append("}\n")
+    jsonString(sb, at); sb.append("}\n")
     fs.appendFile(path(prefix, JOURNAL_FILE), sb.toString().toByteArray(Charsets.UTF_8))
     fs.writeFileAtomic(path(prefix, HEAD_FILE), serializeHead(newHead))
     return newHead

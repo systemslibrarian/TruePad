@@ -7,7 +7,9 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 
 /*
@@ -54,9 +56,29 @@ interface Fs {
     /** Direct children (one level) under a prefix directory, names only. */
     fun list(prefix: String): List<String>
 
-    /** Run `fn` holding an exclusive lock named `scope` — real mutual exclusion. */
+    /**
+     * Run `fn` holding an exclusive lock named `scope` — real mutual exclusion,
+     * never a UI flag. BOUNDED: if the lock cannot be taken within
+     * [LOCK_TIMEOUT_MS] the call refuses `locked` rather than blocking forever.
+     *
+     * Unbounded blocking is wrong specifically on Android. A verb runs behind a
+     * UI action, and a wait longer than a few seconds is an ANR — the system
+     * kills the process, which is a crash at an arbitrary point in the state
+     * machine. A refusal is free and consumes nothing; a kill is not. Contention
+     * on one pair's lock is also never legitimately long here: every verb is
+     * bounded work on one small store, so a wait this long means a stuck or dead
+     * holder, not a queue.
+     */
     fun <T> withLock(scope: String, fn: () -> T): T
 }
+
+/**
+ * How long a verb waits for a pair's lock before refusing `locked`. Ten seconds
+ * is far beyond any legitimate contention (every verb is bounded work on one
+ * small store) and comfortably inside the window in which a background thread
+ * can still report a refusal to the UI.
+ */
+const val LOCK_TIMEOUT_MS: Long = 10_000
 
 /* ---- in-process lock table shared by both backings -------------------------- */
 
@@ -64,6 +86,13 @@ private object LockTable {
     private val locks = ConcurrentHashMap<String, ReentrantLock>()
     fun lockFor(scope: String): ReentrantLock = locks.computeIfAbsent(scope) { ReentrantLock() }
 }
+
+private fun refuseLocked(scope: String, what: String): Nothing = throw EngineRefused(
+    "locked",
+    "another operation on $scope still holds its $what after ${LOCK_TIMEOUT_MS / 1000} seconds. TruePad runs one " +
+        "writer per pair so two operations can never consume the same material, and it refuses rather than wait " +
+        "indefinitely. Nothing was burned.",
+)
 
 /* ---- MemoryFs: fast in-memory backing for fault-injection tests ------------- */
 
@@ -128,7 +157,7 @@ class MemoryFs : Fs {
 
     override fun <T> withLock(scope: String, fn: () -> T): T {
         val lock = LockTable.lockFor("mem:$scope")
-        lock.lock()
+        if (!lock.tryLock(LOCK_TIMEOUT_MS, TimeUnit.MILLISECONDS)) refuseLocked(scope, "in-process lock")
         try {
             return fn()
         } finally {
@@ -142,6 +171,7 @@ class MemoryFs : Fs {
 class NioFs(private val root: File) : Fs {
     init {
         root.mkdirs()
+        restrictDir(root)
     }
 
     private fun full(path: String): File {
@@ -158,9 +188,12 @@ class NioFs(private val root: File) : Fs {
     override fun writeFileAtomic(path: String, data: ByteArray) {
         val target = full(path)
         val dir = target.parentFile ?: throw IllegalStateException("no parent for $path")
-        dir.mkdirs()
+        if (!dir.isDirectory) { dir.mkdirs(); restrictDir(dir) }
         val tmp = File(dir, "${target.name}.writing")
         RandomAccessFile(tmp, "rw").use { raf ->
+            // Restricted BEFORE any bytes are written, so the secret body never
+            // exists on disk under wider permissions, not even briefly.
+            restrictFile(tmp)
             raf.setLength(0)
             raf.write(data)
             raf.fd.sync() // fsync the temp's contents before publishing
@@ -180,12 +213,24 @@ class NioFs(private val root: File) : Fs {
 
     override fun appendFile(path: String, data: ByteArray) {
         val target = full(path)
-        target.parentFile?.mkdirs()
+        val dir = target.parentFile
+        if (dir != null && !dir.isDirectory) { dir.mkdirs(); restrictDir(dir) }
+        // Whether this append CREATES the file decides what has to be made
+        // durable. fsync on a file descriptor persists the file's CONTENTS, not
+        // its directory entry, so a crash after a creating append can lose the
+        // whole file even though its bytes were flushed. The journal and the
+        // witness journal are both created by their first append, and losing one
+        // of those wholesale is exactly the state the reconciliation is meant to
+        // survive — so the parent directory is fsynced too, but only on the
+        // append that creates the entry.
+        val created = !target.exists()
         RandomAccessFile(target, "rw").use { raf ->
+            if (created) restrictFile(target)
             raf.seek(raf.length())
             raf.write(data)
             raf.fd.sync()
         }
+        if (created && dir != null) fsyncDir(dir)
     }
 
     override fun readRange(path: String, offset: Long, length: Int): ByteArray {
@@ -232,16 +277,26 @@ class NioFs(private val root: File) : Fs {
     override fun <T> withLock(scope: String, fn: () -> T): T {
         // In-process mutual exclusion for app threads, PLUS a real OS file lock
         // for the process/filesystem boundary (§single-writer). Never a UI flag.
+        // Both layers are BOUNDED: see Fs.withLock on why an Android verb must
+        // refuse rather than block.
         val inProc = LockTable.lockFor("nio:${root.absolutePath}:$scope")
-        inProc.lock()
+        if (!inProc.tryLock(LOCK_TIMEOUT_MS, TimeUnit.MILLISECONDS)) refuseLocked(scope, "in-process lock")
         try {
-            val lockDir = File(root, ".locks").apply { mkdirs() }
+            val lockDir = File(root, ".locks").apply { mkdirs(); restrictDir(this) }
             val lockFile = File(lockDir, "$scope.lock")
             FileChannel.open(
                 lockFile.toPath(),
                 StandardOpenOption.CREATE, StandardOpenOption.WRITE,
             ).use { ch ->
-                val fileLock = ch.lock() // blocks until the exclusive OS lock is held
+                // tryLock() polls instead of blocking: FileLock has no timed
+                // acquire, and lock() would reintroduce the unbounded wait.
+                val deadline = System.nanoTime() + LOCK_TIMEOUT_MS * 1_000_000
+                var fileLock = ch.tryLock()
+                while (fileLock == null) {
+                    if (System.nanoTime() >= deadline) refuseLocked(scope, "file lock")
+                    Thread.sleep(25)
+                    fileLock = ch.tryLock()
+                }
                 try {
                     return fn()
                 } finally {
@@ -250,6 +305,33 @@ class NioFs(private val root: File) : Fs {
             }
         } finally {
             inProc.unlock()
+        }
+    }
+
+    /*
+     * 0600 files and 0700 directories, matching the released CLI's FILE_MODE and
+     * DIR_MODE. On Android this is BELT AND BRACES, not the protection itself:
+     * an app's private data directory is already isolated per-UID, and that
+     * isolation — not the mode bits — is what keeps other apps out. Setting the
+     * modes anyway means the same store copied to shared storage, an SD card, or
+     * a developer's desktop does not silently widen. Best-effort: a backing that
+     * does not implement POSIX permissions (some FAT/exFAT volumes) throws, and
+     * the operation continues rather than failing a burn over a mode bit.
+     * docs/ANDROID-SECURITY.md states this limitation instead of hiding it.
+     */
+    private fun restrictFile(f: File) {
+        try {
+            Files.setPosixFilePermissions(f.toPath(), PosixFilePermissions.fromString("rw-------"))
+        } catch (_: Exception) {
+            /* best-effort */
+        }
+    }
+
+    private fun restrictDir(d: File) {
+        try {
+            Files.setPosixFilePermissions(d.toPath(), PosixFilePermissions.fromString("rwx------"))
+        } catch (_: Exception) {
+            /* best-effort */
         }
     }
 
