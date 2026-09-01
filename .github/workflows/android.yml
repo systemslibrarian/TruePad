@@ -217,11 +217,32 @@ jobs:
       # Linux runners expose /dev/kvm; this makes it usable by the runner user.
       - name: Enable KVM
         run: |
+          set -x
+          # Diagnostics first: if this ever fails again, the log should say why
+          # rather than leaving the next person to guess.
+          uname -m
+          grep -c -E '(vmx|svm)' /proc/cpuinfo || echo "no hardware virtualisation flags"
+          ls -l /dev/kvm || echo "/dev/kvm does not exist"
+
+          # The udev rule is the documented approach and is what persists.
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          test -w /dev/kvm || { echo "/dev/kvm is not writable; the emulator would be unusably slow" >&2; exit 1; }
+
+          # It does not always re-apply to a node that already exists, so fix the
+          # existing one directly as well. Both are harmless if the other worked.
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm || true
+            sudo chown root:kvm /dev/kvm || true
+          fi
+          ls -l /dev/kvm || true
+
+          if [ ! -w /dev/kvm ]; then
+            echo "::error::/dev/kvm is not writable on this runner. Without KVM the emulator falls back to software emulation and this suite cannot finish in any sensible time. Not silently downgrading — see docs/ANDROID-SECURITY.md." >&2
+            exit 1
+          fi
+          echo "KVM available"
 
       # Built before the emulator starts: a compile error should not cost an
       # emulator boot, and the gate script asserts both APKs exist.
