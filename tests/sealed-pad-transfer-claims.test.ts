@@ -48,12 +48,15 @@ describe("the document says exactly what is and is not implemented", () => {
 
   it("lists the product machinery that STILL does not exist", () => {
     for (const absent of [
-      "QR encoding or scanning",
       "any CLI sealed-transfer command",
       "any upload, backend, account, analytics or sync"
     ]) {
       expect(FLAT, `${absent} must be listed as not implemented`).toContain(absent);
     }
+    // QR was deferred and is now implemented: it must be recorded as built, and
+    // must NOT still be listed among the machinery that does not exist.
+    expect(FLAT, "QR must be named as implemented").toMatch(/QR transport/);
+    expect(FLAT, "QR must no longer be listed as not offered").not.toMatch(/QR encoding or scanning/);
     // ...and the machinery Phase 1D DID build is named, so "still not offered"
     // can never quietly re-absorb it.
     for (const built of ["the method chooser", "receiver-first masking", "the comparison wordlist"]) {
@@ -137,14 +140,28 @@ describe("the document says exactly what is and is not implemented", () => {
     }
   });
 
-  it("the one production dependency is pinned exactly", () => {
+  it("the production dependencies are pinned exactly", () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
-    expect(Object.keys(pkg.dependencies ?? {})).toEqual(["@noble/post-quantum"]);
-    // No caret, no tilde, no range: the KEM implementation is part of the suite.
+    // The KEM suite, plus the two QR-transport libraries (see
+    // docs/THIRD-PARTY-NOTICES.md). Nothing else.
+    expect(Object.keys(pkg.dependencies ?? {}).sort()).toEqual([
+      "@noble/post-quantum",
+      "jsqr",
+      "qrcode-generator"
+    ]);
+    // No caret, no tilde, no range on any of them: exact pins only.
+    for (const [name, spec] of Object.entries(pkg.dependencies as Record<string, string>)) {
+      expect(spec, `${name} must be an exact pin`).not.toMatch(/[\^~><=*]/);
+    }
     expect(pkg.dependencies["@noble/post-quantum"]).toBe("0.7.1");
+    expect(pkg.dependencies["qrcode-generator"]).toBe("2.0.4");
+    expect(pkg.dependencies["jsqr"]).toBe("1.4.0");
     const lock = JSON.parse(readFileSync(join(ROOT, "package-lock.json"), "utf8"));
     expect(lock.packages["node_modules/@noble/post-quantum"].version).toBe("0.7.1");
     expect(lock.packages["node_modules/@noble/post-quantum"].integrity).toMatch(/^sha512-/);
+    // The QR libraries pull in nothing of their own — zero transitive deps.
+    expect(lock.packages["node_modules/qrcode-generator"].dependencies ?? {}).toEqual({});
+    expect(lock.packages["node_modules/jsqr"].dependencies ?? {}).toEqual({});
   });
 
   it("says what became of the storage prerequisite, and does not claim the platform got safer", () => {
@@ -1055,7 +1072,9 @@ describe("no live normative text describes the withdrawn atomic-single-file mode
     expect(claims).toMatch(/Cryptographic \/ transport core.*implemented/);
     expect(claims).toMatch(/Storage \/ provenance foundation.*implemented/);
     expect(claims).toMatch(/product transfer flow.*implemented/);
-    expect(claims).toMatch(/QR encoding or scanning.*not implemented/);
+    // QR is implemented now (post-2.0.0), and must not regress to "deferred".
+    expect(claims).toMatch(/QR transport for the receive code.*implemented/);
+    expect(claims).not.toMatch(/QR encoding or scanning.*not implemented/);
     expect(claims).toMatch(/CLI sealed-transfer command.*not implemented/);
     for (const doc of [claims, SPEC]) expect(doc).not.toMatch(/specified, not implemented/i);
   });

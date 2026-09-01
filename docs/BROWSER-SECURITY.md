@@ -471,6 +471,26 @@ claim that. Two precise limits:
 A CDN outage or a TruePad-service outage cannot make a local pair unusable,
 because there is no such service.
 
+**The camera, when QR scanning is used.** The Sealed-Pad-Transfer sender may
+scan a receive code instead of pasting it. The camera is a **borrowed
+capability**: `getUserMedia` is called **only after the operator clicks "Scan QR
+code"** — never on page load, never merely because scanning exists — with
+`facingMode: environment` preferred, and it is **released on the first of** a
+successful decode, Cancel, an error, or leaving the screen (`src/browser/ui/qr/`
+stops every `MediaStreamTrack` on each of those paths, proven by
+`tests/qr-camera.test.ts` against the real controller). **No frame is recorded,
+saved, uploaded, or logged.** A camera stream is not a network path, and the QR
+libraries make no request; the decoded output is only candidate **text**, which
+goes to the **same** worker receive-code parser that pasted text does — a scan
+authenticates nothing, and the twelve-word comparison still follows. A QR
+carries only the **public** TPR2 receive code: the encoder refuses anything the
+receive-code codec would reject, so no pad byte, key, sealed package, or
+confirmation word can be turned into a symbol. **No CSP change was needed** —
+`img-src 'self' data:` already covers a rendered symbol, `connect-src 'self'` is
+untouched, and the decoder is a bundled pure-JS library (no `eval`, no
+WebAssembly, no fetch; loaded on demand and precached), so nothing here reaches
+the network.
+
 ---
 
 ## 8. What the Browser Edition does NOT claim

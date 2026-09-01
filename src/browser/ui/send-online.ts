@@ -51,6 +51,7 @@
 
 import { backLink, callout, card, panel, screenHead } from "./components.ts";
 import { h, icon, mount } from "./dom.ts";
+import { scanReceiveCodeControl } from "./qr/scan.ts";
 import {
   busyButton,
   canShareSealed,
@@ -110,10 +111,16 @@ export async function renderSendOnline(ctx: Ctx, root: HTMLElement, pairId: stri
     const errorSlot = h("div");
     const go = h("button", { class: "btn primary", type: "button" }, h("span", { text: "Continue" })) as HTMLButtonElement;
 
-    go.addEventListener("click", async () => {
+    // The ONE place a receive code — pasted or scanned — enters the engine. Both
+    // paths hand raw text to the same worker parser (`sptInspectRequest`), which
+    // is the single authority on whether it is a real request. QR gets no
+    // special leniency: a scan just supplies the same text a paste would.
+    let advancing = false;
+    const submitReceiveCode = async (text: string): Promise<void> => {
+      if (advancing) return;
       errorSlot.replaceChildren();
       go.disabled = true;
-      const reply = await ctx.engine.sptInspectRequest({ text: area.value });
+      const reply = await ctx.engine.sptInspectRequest({ text });
       go.disabled = false;
       if (!reply.ok) {
         const reason = reply.kind === "refused" ? reply.reason : "";
@@ -129,6 +136,8 @@ export async function renderSendOnline(ctx: Ctx, root: HTMLElement, pairId: stri
       // From here the WORKER holds the request it decoded. Editing the textarea
       // afterwards cannot change what gets sealed: confirm carries the review
       // handle, never the text.
+      advancing = true;
+      scan.dispose();
       stage = {
         at: "compare",
         reviewId: reply.reviewId,
@@ -136,13 +145,28 @@ export async function renderSendOnline(ctx: Ctx, root: HTMLElement, pairId: stri
         requestIndices: reply.requestIndices
       };
       rerender();
+    };
+
+    go.addEventListener("click", () => void submitReceiveCode(area.value));
+
+    // Optional QR scan: an alternative to paste, never a replacement. A decoded
+    // code is shown in the box (so the operator sees what was read) and then run
+    // through the identical path above — it advances nothing on its own, and the
+    // twelve-word comparison still follows.
+    const scan = scanReceiveCodeControl({
+      onText: (text) => {
+        area.value = text;
+        void submitReceiveCode(text);
+      }
     });
+    ctx.onLeave(scan.dispose);
 
     return card(
       h("p", { text: "Ask the other person to create a receive code, then paste it here." }),
       h("label", { class: "field-label", attrs: { for: "paste-code" }, text: "Receive code" }),
       area,
       h("div", { class: "actions" }, go),
+      scan.el,
       errorSlot
     );
   }

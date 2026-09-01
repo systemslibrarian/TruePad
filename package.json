@@ -1,7 +1,7 @@
 {
   "name": "truepad",
   "version": "2.0.0",
-  "description": "TruePad \u2014 a true one-time pad exhibit, the honest sibling of DeckBook",
+  "description": "TruePad — a true one-time pad exhibit, the honest sibling of DeckBook",
   "bin": {
     "truepad-pad": "bin/truepad-pad.mjs",
     "truepad2": "bin/truepad2.mjs"
@@ -38,7 +38,9 @@
   },
   "homepage": "https://github.com/systemslibrarian/TruePad#readme",
   "dependencies": {
-    "@noble/post-quantum": "0.7.1"
+    "@noble/post-quantum": "0.7.1",
+    "jsqr": "1.4.0",
+    "qrcode-generator": "2.0.4"
   },
   "devDependencies": {
     "@noble/hashes": "2.4.0",

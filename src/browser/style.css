@@ -2299,3 +2299,90 @@ p.note {
   color: var(--muted, #9aa4b2);
   font-size: 0.95rem;
 }
+
+/* ---- QR transport (Sealed Pad Transfer convenience) ---------------------- */
+/* The symbol is always dark-on-white regardless of the dark UI: a QR code is
+   read by a camera, and inverted or tinted modules are a scan failure. */
+.qr-show {
+  margin-top: var(--s3);
+}
+.qr-figure-slot[hidden] {
+  display: none;
+}
+.qr-figure {
+  margin: var(--s3) 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s3);
+}
+.qr-frame {
+  background: #ffffff;
+  padding: var(--s3);
+  border-radius: var(--r-sm);
+  width: 100%;
+  max-width: 20rem;
+  box-sizing: border-box;
+}
+.qr-frame.large {
+  max-width: min(90vmin, 34rem);
+}
+.qr-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+}
+.qr-caption {
+  text-align: center;
+  max-width: 26rem;
+}
+.qr-caption p {
+  margin: var(--s1) 0;
+}
+
+/* A focused, full-screen presentation for reliable scanning. */
+.qr-enlarged {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s4);
+  background: rgba(0, 0, 0, 0.72);
+}
+.qr-enlarged-panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--r-lg);
+  padding: var(--s5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s3);
+  max-width: 100%;
+}
+
+/* The sender's optional camera scan. */
+.qr-scan {
+  margin-top: var(--s3);
+}
+.qr-scan-idle .filepicker {
+  margin-top: var(--s3);
+}
+.qr-viewfinder-frame {
+  background: #000000;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  width: 100%;
+  max-width: 22rem;
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+}
+.qr-viewfinder {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}

@@ -27,6 +27,7 @@
 
 import { backLink, callout, card, panel, screenHead } from "./components.ts";
 import { h, icon, mount } from "./dom.ts";
+import { showQrCodeControl } from "./qr/show-qr.ts";
 import {
   checkAllNote,
   comparisonWords,
@@ -162,6 +163,9 @@ export async function renderReceiveOnline(ctx: Ctx, root: HTMLElement): Promise<
       h("label", { class: "field-label", attrs: { for: "receive-code" }, text: "Your receive code" }),
       area,
       h("div", { class: "actions" }, copy),
+      // Optional: the SAME public receive code as a QR the other person can scan.
+      // Copy/paste above stays the complete path; this only adds a second way.
+      showQrCodeControl(req.tpr2),
       h("p", { class: "faint small", text: `Send this to the other person. ${expiryWords(req.expiresAt)}` }),
       persistWarning,
       h("h2", { class: "sub", text: "Compare these words with the other person before they send the pad" }),

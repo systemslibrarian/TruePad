@@ -66,15 +66,19 @@ it is not a parallel cryptosystem beside it.
   recorded. Index position is the protocol mapping; the UI recomputes nothing.
   **Indices are not a mnemonic**, and the list is not a mnemonic facility;
 * **Level-1 refusal wording** for every typed engine reason, with the engine's
-  own text one disclosure down.
+  own text one disclosure down;
+* **QR transport** for the receive code — an optional "Show QR code" on the
+  receiver and "Scan QR code" / "Choose QR image" on the sender. It carries the
+  same public TPR2 the clipboard carries and changes no bytes; see §5.3.
 
 The UI bent around the engine. No frozen item moved: `src/core/**`, `src/spt/**`
 and the reference vectors are byte-identical to Phase 1A, and the nine RPCs are
-unchanged.
+unchanged. The QR work added no engine or protocol change either — it is
+page-side transport only, using two bundled pure-JS libraries with no runtime
+network (see `docs/THIRD-PARTY-NOTICES.md`).
 
 Still **not offered**:
 
-* QR encoding or scanning — Phase 1D **deferred** it; see §5.3;
 * any CLI sealed-transfer command. `src/cli/**` and `bin/**` contain no
   reference to any of it, and guards check that against the tree;
 * any upload, backend, account, analytics or sync. TruePad makes the sealed
@@ -448,21 +452,39 @@ mode, so **byte mode** is required. Version-40 byte-mode capacities:
 | Q | 1663 B | **yes, by 11 bytes** — marginal |
 | H | 1273 B | **no** |
 
-So a TPR2 request fits a single QR code at version 40, EC level L or M
-comfortably and Q only just. A version-40 symbol is 177×177 modules and demands
-a decent camera and a large display. **QR is optional convenience; copy/paste
-and file export are the normative channels.**
+So a TPR2 request fits a single QR code at EC level L or M comfortably and Q
+only just. The capacities above are the version-40 worst case; the encoder asks
+for the SMALLEST version that fits at EC-M, which for the current 1652-character
+request is **version 34 (153×153 modules)**. **QR is optional convenience;
+copy/paste and file export remain the normative channels.**
 
-**Phase 1D decision: DEFERRED, not implemented.** The measurement above is why
-it is optional rather than why it is easy. A 1652-byte symbol lands at
-version 40, 177×177 modules; on a 320 px screen each module is under two
-device-independent pixels, which is exactly the reading a beginner blames on
-themselves. Scanning would also add a camera permission and a decoder to a build
-that currently asks for neither and fetches nothing, and TruePad's copy/paste
-path is already complete, testable, and offline. QR moves transport convenience,
-not security: it carries the same TPR2 the clipboard carries, and the twelve
-spoken words are what actually authenticates it either way. Nothing in the
-frozen protocol assumes QR, so adding it later changes no bytes.
+**Status: IMPLEMENTED (post-2.0.0), Browser Edition only.** The receiver can
+"Show QR code"; the sender can "Scan QR code" (camera) or "Choose QR image"
+(a screenshot or photo), and paste is never removed. What is guaranteed:
+
+* **TPR2 only.** The encoder refuses anything but a canonical receive code the
+  strict codec accepts, so a `.tps2` package, pad or key material, a URL wrapper,
+  or arbitrary bytes can never become a symbol. TPS2 stays a file (§17-adjacent).
+* **EC level M**, smallest fitting version (34 for this request). The decoded
+  text is byte-for-byte what the clipboard carries — no wrapper, no compression,
+  no re-encoding.
+* **The twelve words still authenticate.** A scan means only "I read some text
+  off an image"; it is fed to the SAME worker receive-code parser as paste and
+  then to the SAME twelve-word comparison. Nothing is auto-confirmed.
+* **The camera is borrowed, not held.** It is requested only after the operator
+  clicks Scan — never on load — with `facingMode: environment` preferred, and
+  released on decode, Cancel, error, or leaving the screen. No frame is recorded,
+  saved, uploaded, or logged.
+* **No backend and no runtime network.** Two bundled pure-JS libraries
+  (qrcode-generator MIT to encode, jsQR Apache-2.0 to decode; the decoder is
+  loaded on demand and precached for offline use) with no `eval`, no WebAssembly,
+  and no fetch — see `docs/THIRD-PARTY-NOTICES.md`.
+
+Real camera reliability at version 34 is a device-and-browser fact — a small
+screen makes a large symbol hard to scan, which is why the enlarge option and the
+image-file path exist — not a cryptographic claim. Nothing in the frozen protocol
+assumes QR: it carries the same TPR2 the clipboard carries, and adding it changed
+no bytes.
 
 ---
 
