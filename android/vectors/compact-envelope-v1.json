@@ -1,0 +1,212 @@
+{
+  "note": "GENERATED from the released TruePad v2.0.0 (tag v2.0.0, commit 240d7f0) by android/tools/generate-vectors.mjs (run it via android/tools/regenerate-vectors.sh). Every value is the released implementation's own output. The Kotlin port must reproduce these byte-for-byte.",
+  "prefix": "TP2:",
+  "transportVersion": 1,
+  "encode": [
+    {
+      "name": "typical",
+      "input": {
+        "name": "typical",
+        "pairId": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        "direction": "A->B",
+        "sequence": 7,
+        "startOffset": 4096,
+        "ciphertextHex": "404142434445464748494a4b4c4d4e4f",
+        "tagHex": "5bb81c1ec47fe75e649f81d8280c64d9",
+        "ciphertextLength": 16
+      },
+      "compact": "TP2:AQKgoaKjpKWmp6ipqqusra6vAAeAIBBAQUJDREVGR0hJSktMTU5PW7gcHsR_515kn4HYKAxk2Q",
+      "json": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":7,\"startOffset\":4096,\"ciphertextLength\":16,\"ciphertext\":\"404142434445464748494a4b4c4d4e4f\",\"tag\":\"5bb81c1ec47fe75e649f81d8280c64d9\"}"
+    },
+    {
+      "name": "genesis-empty",
+      "input": {
+        "name": "genesis-empty",
+        "pairId": "00112233445566778899aabbccddeeff",
+        "direction": "B->A",
+        "sequence": 0,
+        "startOffset": 0,
+        "ciphertextHex": "",
+        "tagHex": "00000000000000000000000000000000",
+        "ciphertextLength": 0
+      },
+      "compact": "TP2:AQIAESIzRFVmd4iZqrvM3e7_AQAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "json": "{\"formatVersion\":2,\"pairId\":\"00112233445566778899aabbccddeeff\",\"direction\":\"B->A\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":0,\"ciphertext\":\"\",\"tag\":\"00000000000000000000000000000000\"}"
+    },
+    {
+      "name": "multibyte-varints",
+      "input": {
+        "name": "multibyte-varints",
+        "pairId": "ffeeddccbbaa99887766554433221100",
+        "direction": "A->B",
+        "sequence": 128,
+        "startOffset": 1048575,
+        "ciphertextHex": "dededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededede",
+        "tagHex": "ffffffffffffffffffffffffffffffff",
+        "ciphertextLength": 200
+      },
+      "compact": "TP2:AQL_7t3Mu6qZiHdmVUQzIhEAAIAB__8_yAHe3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3v____________________8",
+      "json": "{\"formatVersion\":2,\"pairId\":\"ffeeddccbbaa99887766554433221100\",\"direction\":\"A->B\",\"sequence\":128,\"startOffset\":1048575,\"ciphertextLength\":200,\"ciphertext\":\"dededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededede\",\"tag\":\"ffffffffffffffffffffffffffffffff\"}"
+    },
+    {
+      "name": "max-safe-counters",
+      "input": {
+        "name": "max-safe-counters",
+        "pairId": "0123456789abcdef0123456789abcdef",
+        "direction": "B->A",
+        "sequence": 9007199254740991,
+        "startOffset": 9007199254740991,
+        "ciphertextHex": "00",
+        "tagHex": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "ciphertextLength": 1
+      },
+      "compact": "TP2:AQIBI0VniavN7wEjRWeJq83vAf________8P_________w8BAA8PDw8PDw8PDw8PDw8PDw8",
+      "json": "{\"formatVersion\":2,\"pairId\":\"0123456789abcdef0123456789abcdef\",\"direction\":\"B->A\",\"sequence\":9007199254740991,\"startOffset\":9007199254740991,\"ciphertextLength\":1,\"ciphertext\":\"00\",\"tag\":\"0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f\"}"
+    },
+    {
+      "name": "single-byte-ct",
+      "input": {
+        "name": "single-byte-ct",
+        "pairId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "direction": "A->B",
+        "sequence": 1,
+        "startOffset": 1,
+        "ciphertextHex": "7f",
+        "tagHex": "01010101010101010101010101010101",
+        "ciphertextLength": 1
+      },
+      "compact": "TP2:AQKqqqqqqqqqqqqqqqqqqqqqAAEBAX8BAQEBAQEBAQEBAQEBAQEB",
+      "json": "{\"formatVersion\":2,\"pairId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"direction\":\"A->B\",\"sequence\":1,\"startOffset\":1,\"ciphertextLength\":1,\"ciphertext\":\"7f\",\"tag\":\"01010101010101010101010101010101\"}"
+    }
+  ],
+  "decode": [
+    {
+      "name": "valid",
+      "text": "TP2:AQKgoaKjpKWmp6ipqqusra6vAAeAIBBAQUJDREVGR0hJSktMTU5PW7gcHsR_515kn4HYKAxk2Q",
+      "ok": true,
+      "reason": null
+    },
+    {
+      "name": "no-prefix",
+      "text": "AQKgoaKjpKWmp6ipqqusra6vAAeAIBBAQUJDREVGR0hJSktMTU5PW7gcHsR_515kn4HYKAxk2Q",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "empty-payload",
+      "text": "TP2:",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "padded-base64",
+      "text": "TP2:AQKgoaKjpKWmp6ipqqusra6vAAeAIAQBAgMEAAAAAAAAAAAAAAAAAAAAAA==",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "std-base64-alphabet",
+      "text": "TP2:AQKgoaKjpKWmp6ipqqusra+vAAeAIAQBAgMEAAAAAAAAAAAAAAAAAAAAAA",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "non-canonical-tail",
+      "text": "TP2:AQKgoaKjpKWmp6ipqqusra6vAAeAIBBAQUJDREVGR0hJSktMTU5PW7gcHsR_515kn4HYKAxk2B",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "bad-transport-version",
+      "text": "TP2:AgKgoaKjpKWmp6ipqqusra6vAAeAIBBAQUJDREVGR0hJSktMTU5PW7gcHsR_515kn4HYKAxk2Q",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "envelope-v1-byte",
+      "text": "TP2:AQGgoaKjpKWmp6ipqqusra6vAAeAIBBAQUJDREVGR0hJSktMTU5PW7gcHsR_515kn4HYKAxk2Q",
+      "ok": false,
+      "reason": "envelope-v1"
+    },
+    {
+      "name": "bad-format-version",
+      "text": "TP2:AQOgoaKjpKWmp6ipqqusra6vAAeAIBBAQUJDREVGR0hJSktMTU5PW7gcHsR_515kn4HYKAxk2Q",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "bad-direction-byte",
+      "text": "TP2:AQKgoaKjpKWmp6ipqqusra6vAgeAIBBAQUJDREVGR0hJSktMTU5PW7gcHsR_515kn4HYKAxk2Q",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "truncated-header",
+      "text": "TP2:AQ",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "truncated-in-pairid",
+      "text": "TP2:AQKgoaKjpKWmpw",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "truncated-body",
+      "text": "TP2:AQKgoaKjpKWmp6ipqqusra6vAAeAIBBAQUJDREVGR0hJSktMTU5PW7gcHsR_515kn4HY",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "trailing-bytes",
+      "text": "TP2:AQKgoaKjpKWmp6ipqqusra6vAAeAIBBAQUJDREVGR0hJSktMTU5PW7gcHsR_515kn4HYKAxk2QA",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "whitespace-inside",
+      "text": "TP2:AQKg oaKjpKWmp6ipqqusra6vAAeAIBBAQUJDREVGR0hJSktMTU5PW7gcHsR_515kn4HYKAxk2Q",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "leading-trailing-space",
+      "text": "  TP2:AQKgoaKjpKWmp6ipqqusra6vAAeAIBBAQUJDREVGR0hJSktMTU5PW7gcHsR_515kn4HYKAxk2Q  ",
+      "ok": true,
+      "reason": null
+    },
+    {
+      "name": "non-minimal-varint",
+      "text": "TP2:AQKgoaKjpKWmp6ipqqusra6vAIAAgCAQQEFCQ0RFRkdISUpLTE1OT1u4HB7Ef-deZJ-B2CgMZNk",
+      "ok": false,
+      "reason": "malformed-envelope"
+    }
+  ],
+  "transportDoor": [
+    {
+      "name": "json-through-door",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":7,\"startOffset\":4096,\"ciphertextLength\":16,\"ciphertext\":\"404142434445464748494a4b4c4d4e4f\",\"tag\":\"5bb81c1ec47fe75e649f81d8280c64d9\"}",
+      "ok": true,
+      "reason": null
+    },
+    {
+      "name": "compact-through-door",
+      "text": "TP2:AQKgoaKjpKWmp6ipqqusra6vAAeAIBBAQUJDREVGR0hJSktMTU5PW7gcHsR_515kn4HYKAxk2Q",
+      "ok": true,
+      "reason": null
+    },
+    {
+      "name": "garbage-through-door",
+      "text": "not json at all",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "tp2-garbage-never-falls-through",
+      "text": "TP2:!!!",
+      "ok": false,
+      "reason": "malformed-envelope"
+    }
+  ]
+}

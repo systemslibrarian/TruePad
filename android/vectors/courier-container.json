@@ -1,0 +1,19 @@
+{
+  "note": "GENERATED from the released TruePad v2.0.0 (tag v2.0.0, commit 240d7f0) by android/tools/generate-vectors.mjs (run it via android/tools/regenerate-vectors.sh). Every value is the released implementation's own output. The Kotlin port must reproduce these byte-for-byte.",
+  "pairId": "5ab1e2c30d4f5a6b7c8d9e0fa1b2c3d4",
+  "files": [
+    {
+      "path": "a-to-b/head.json",
+      "bytesHex": "7b22666f726d617456657273696f6e223a327d"
+    },
+    {
+      "path": "a-to-b/secret.bin",
+      "bytesHex": "c8e80a2e54"
+    },
+    {
+      "path": "a-to-b/journal.log",
+      "bytesHex": "7b7d0a"
+    }
+  ],
+  "containerText": "{\n  \"format\": \"truepad2-pair-bundle\",\n  \"version\": 1,\n  \"pairId\": \"5ab1e2c30d4f5a6b7c8d9e0fa1b2c3d4\",\n  \"files\": [\n    {\n      \"path\": \"a-to-b/head.json\",\n      \"bytesB64\": \"eyJmb3JtYXRWZXJzaW9uIjoyfQ==\"\n    },\n    {\n      \"path\": \"a-to-b/secret.bin\",\n      \"bytesB64\": \"yOgKLlQ=\"\n    },\n    {\n      \"path\": \"a-to-b/journal.log\",\n      \"bytesB64\": \"e30K\"\n    }\n  ]\n}"
+}
