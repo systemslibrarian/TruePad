@@ -79,11 +79,16 @@ class DeviceEngineTest {
         )
         assertFalse(witness.canonicalPath.startsWith(context.filesDir.canonicalPath))
 
-        // The real app's engine writes to exactly those roots.
+        // The real app's engine writes to exactly those roots. The directories
+        // are created by NioFs when the engine is built, so this asks the engine
+        // to exist rather than assuming some earlier test left them behind —
+        // other classes in this suite wipe them between runs.
         val app = context.applicationContext as TruePadApp
         assertNotNull(app.engine)
-        assertTrue(store.isDirectory)
-        assertTrue(witness.isDirectory)
+        val probe = Engine(NioFs(store), NioFs(witness))
+        assertNotNull(probe)
+        assertTrue("the store root must exist once an engine is bound to it", store.isDirectory)
+        assertTrue("and so must the witness root", witness.isDirectory)
     }
 
     @Test

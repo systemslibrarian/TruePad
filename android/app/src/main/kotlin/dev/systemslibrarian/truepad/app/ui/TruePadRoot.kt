@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -118,7 +119,13 @@ fun BannerArea(state: UiState, vm: PadViewModel) {
         Banner.Removed -> Callout(Tone.Good, "Removed from TruePad.", Modifier.testTag("banner-removed")) {}
     }
     Spacer(Modifier.height(2.dp))
-    androidx.compose.material3.TextButton(onClick = { vm.dismissBanner() }) {
+    // 48dp like every other target. Found by the accessibility sweep, which
+    // walks the whole tree rather than a list of tags — this button had been
+    // left at Material's 40dp default because nothing named it.
+    androidx.compose.material3.TextButton(
+        onClick = { vm.dismissBanner() },
+        modifier = Modifier.heightIn(min = 48.dp),
+    ) {
         Faint("Dismiss")
     }
 }
