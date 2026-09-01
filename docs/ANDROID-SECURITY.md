@@ -1,10 +1,10 @@
 # TruePad 2 Android Edition — security & durability claims
 
-**Status: Phase 2, engine complete, no application yet.** This document describes
-the `truepad-core` and `truepad-storage` modules under `android/`, which are the
-whole of the Android edition today. There is no `:app` module, no user interface,
-no manifest, and therefore no shipping application. Section 9 says exactly what
-that means for the claims below, and Section 10 lists what is still missing.
+**Status: Phase 2 — engine and application both present.** This document covers
+`truepad-core`, `truepad-storage` and the `:app` module under `android/`. The app
+launches, creates, adds, sends, opens and disables pads over the same frozen
+engine the CLI and Browser Edition use. Section 9 states what is still NOT
+claimed, and Section 10 what remains.
 
 The Android edition is not a new TruePad. It is the same frozen protocol
 (`docs/FORMAT-V2.md`) on a different substrate, and where this document differs
@@ -346,15 +346,132 @@ wear levelling, and copy-on-write filesystems all keep old blocks:
 
 ---
 
+## 8a. The application layer
+
+```
+Compose UI  ->  PadViewModel  ->  AndroidStorage  ->  Engine (:truepad-storage)
+                                                        -> :truepad-core
+```
+
+The app is a PLATFORM BINDING and a user interface. It holds no state machine of
+its own: it does not know what a sequence number is, never decides whether
+something may be sent, and never advances a counter. It calls a verb off the main
+thread and renders the result, and the engine's answer — including its refusal —
+is authoritative.
+
+**The UI's snapshot is never authoritative.** `pads` and `current` exist to draw
+pixels. They are reloaded from the engine after every operation and on every
+return to the foreground, so an activity that died mid-operation cannot leave the
+operator looking at a stale count, and cannot conclude that an operation "did not
+happen" merely because it was not alive to see it finish.
+
+**Duplicate invocation** involves two different properties, and they are worth
+keeping apart. The engine's per-pair lock is what makes REUSE impossible:
+concurrent burns are serialised and each takes its own region, so no byte is ever
+spent twice — that holds however the UI behaves. The ViewModel's mutex prevents
+WASTE: without it, six rapid taps are six valid sends, and a one-time pad that
+just spent six message slots on one message has lost something real even though
+nothing was reused. The falsification round exercises both halves separately.
+Disabling a button after the first tap is a courtesy on top of these, never a
+control in its own right.
+
+**Navigation is not security-critical.** There is no route table, no deep link
+and no URL. Arriving at the send screen for a disabled pad produces exactly the
+refusal it would produce anywhere else, because every gate is re-checked inside
+the verb.
+
+### Screen capture
+
+`FLAG_SECURE` is set on the activity window BEFORE `super.onCreate`, so it covers
+the first frame and the Recents thumbnail. The scope is the whole window rather
+than a chosen set of screens: an opened message is plaintext, a composed message
+is plaintext before it is sent, and the pad list names who you talk to — a subset
+would be a list to maintain and to get wrong the first time a screen gained a
+field.
+
+It is a request the system honours. It is **not** a defence against a rooted or
+compromised device, an accessibility service the user has granted capture rights
+to, or a camera pointed at the screen. The app says so on screen.
+
+### Clipboard
+
+Nothing is copied except by a button the operator pressed, and only a message
+they are already looking at — never pad material, keys, masks, tags or witness
+state. On API 33+ the clip is marked `EXTRA_IS_SENSITIVE`, which asks the system
+not to render a preview of it in the clipboard confirmation UI; that preview is
+what would otherwise put a decrypted message on screen outside `FLAG_SECURE`.
+
+The clipboard is a cross-application surface and TruePad cannot police it. The
+app states plainly that another application may read it.
+
+### Files in
+
+Every file arrives through the Storage Access Framework, because the operator
+opened a picker and chose it. The app holds no storage permission and declares no
+intent filter for any content type, so **no other application can push anything
+into it**.
+
+What comes back is treated as hostile. The read is bounded at 64 MiB by what
+ACTUALLY ARRIVES — the reported size is never consulted, so a provider that
+claims one byte and streams forever is cut off rather than obeyed. A display name
+is decoration only: never a path, never a decision, and stripped of separators,
+control characters and bidi overrides before it is shown. The bytes are then
+handed to the engine, which validates the whole bundle in staging before any of
+it becomes active; a hostile bundle leaves no active pair and no staging behind.
+
+### Files out
+
+Export writes through `CreateDocument` to a destination the operator picked. The
+app never chooses a location, never writes to shared storage, and never hands
+another application a URI into the live store — the bytes written are a COPY the
+engine produced. Sharing an encrypted message uses `ACTION_SEND` with plain text.
+
+**There is therefore no FileProvider, and no `paths` XML.** That is the strongest
+available answer to the question rather than a narrow configuration that has to
+stay correct: with no provider authority of TruePad's own, there is nothing that
+could resolve a URI into the pad store.
+
+### Backup, in three places
+
+| Mechanism | Setting | Why |
+|---|---|---|
+| `android:allowBackup` | `false` | The attribute the platform reads. Disables Auto Backup and adb backup. |
+| `data_extraction_rules.xml` (API 31+) | `<exclude domain="root"/>` in BOTH `<cloud-backup>` and `<device-transfer>` | The interaction between `allowBackup` and device-to-device transfer has not been documented identically across releases, so the exclusion is stated outright for both channels rather than inferred from one attribute. |
+| `backup_rules.xml` (API ≤30) | `<exclude domain="root" path="."/>` | Same policy where `fullBackupContent` is the mechanism. |
+
+A pad is one-time material and a restored copy of one is the two-time pad this
+product exists to prevent, so nothing here is asked to travel. `hasFragileUserData`
+is `false`, so uninstall takes the data with it.
+
+This is not a claim that the data cannot be extracted. It is a claim that TruePad
+does not ask Android to carry it — and the rollback witness in
+`getNoBackupFilesDir()` (§4) is the layer that still holds if some path carries
+it anyway.
+
+### The manifest surface
+
+One exported component: the launcher activity, with a `MAIN`/`LAUNCHER` filter
+and nothing else. No service, no receiver, no provider of TruePad's own, no
+permission that grants a capability, no cleartext traffic. `androidx.startup`
+merges in one un-exported provider; `androidx.profileinstaller` merges in an
+exported receiver, which is **removed** — an exported component for a feature the
+app does not use is surface for nothing.
+
+Two gates keep it that way, and neither can be satisfied by the other:
+`ManifestHardeningTest` reads the INSTALLED debug package on a device, and the
+`:app:verifyReleaseManifest` Gradle task parses the merged RELEASE manifest and
+fails the build if anything but the launcher is exported, if any permission
+appears, or if backup is turned back on.
+
+---
+
 ## 9. What the Android edition does NOT claim today
 
-1. **It is not an application.** There is no `:app` module, no `AndroidManifest.xml`,
-   no exported components, no `FileProvider`, no backup rules, and no UI. Every
-   claim above is about the engine modules. The manifest-level questions —
-   exported components, intent filters, `allowBackup`, `dataExtractionRules`,
-   cleartext traffic, screenshot and recents exposure, the clipboard — **cannot be
-   answered yet, because there is nothing to answer them about.** They are listed
-   in §10 as work, not settled as safe.
+1. **It does not send or receive files as messages.** The engine encrypts
+   arbitrary bytes, but Envelope v2 carries no filename and no content type, so a
+   "send file" feature would need an Android-only container inside the envelope
+   that the CLI and Browser Edition could not open. That is a format fork, and
+   the app does not offer the feature rather than quietly create one.
 2. It does not claim power-loss durability (§2).
 3. It does not claim hardware-backed or Keystore-protected pad storage (§5).
 4. It does not claim erasure of pad material from memory or from flash (§1.1, §8).
@@ -365,29 +482,46 @@ wear levelling, and copy-on-write filesystems all keep old blocks:
 7. It does not implement Sealed Pad Transfer. Pads arrive by courier file only,
    and a `sealed` handoff marker written by another edition is refused, never
    ignored.
-8. The `LOSS IS ACCEPTABLE` half of the invariant is load-bearing: a crash, a
+8. It does not implement Sealed Pad Transfer or QR transfer. Pads arrive by
+   courier file only.
+9. **Emulator evidence is not physical-device evidence.** Every on-device result
+   reported for this phase comes from an API 35 arm64 emulator. That says nothing
+   about a real device's flash translation layer, its TEE, or a vendor's own
+   backup path.
+10. An emitted encrypted message lives only in memory until the operator sends
+   it. Leaving the screen loses the message — the pad material is already spent.
+   That is the LOSS row, and the screen says so rather than pretending otherwise.
+11. The `LOSS IS ACCEPTABLE` half of the invariant is load-bearing: a crash, a
    failed fsync, a severed witness, or a torn file can all cost a message or a
    pad. None of them may cost reuse.
 
 ---
 
-## 10. Remaining Phase 2 work
+## 10. Remaining work
 
-- The `:app` module: Compose UI, the Android `Fs` binding (`filesDir` for the
-  store, `noBackupFilesDir` for the witness), lifecycle and process-death
-  handling, and an uncaught-exception path that cannot print a secret.
-- `AndroidManifest.xml` with no exported components, `android:allowBackup="false"`,
-  explicit `dataExtractionRules` and `fullBackupContent`, and a network security
-  config — then the audit of all of it that §9.1 currently cannot make.
-- `FLAG_SECURE` / recents-screenshot policy, clipboard handling, and share-intent
-  input treated as hostile.
-- Instrumentation tests on a device or emulator, including a real
-  backup-and-restore and a real process kill.
-- Accessibility, which cannot start before there is a UI.
-- A CI job that builds and tests `android/` and runs
-  `tools/regenerate-vectors.sh --check`.
+Nothing in this list blocks the app from being used; each is a real improvement
+with a real cost, named rather than left implicit.
 
----
+- **Physical-device validation.** Everything on-device so far is emulator
+  evidence (§9.9). A real handset would exercise the TEE, real flash, and a
+  vendor backup implementation.
+- **Emulator instrumentation in CI.** The instrumentation suite is a required
+  gate but runs locally; `android/tools/device-security-check.sh` is likewise a
+  local gate. Making a GitHub Actions emulator reliable is its own piece of
+  infrastructure work and is not pretended to be done.
+- **A Keystore-bound witness.** Minting a non-exportable Keystore key at witness
+  bootstrap and binding the journal to it would make a journal restored onto
+  another device or profile unreadable, and therefore fail closed rather than be
+  adopted. This is the one genuine strengthening Android offers over the Browser
+  Edition, and it is designed but not built (§5).
+- **Dependency currency.** The toolchain is pinned deliberately and the
+  `GradleDependency` lint check is disabled with that reason. Upgrades are a
+  reviewed decision, and the review has not been done in this phase.
+- **Translation and locale coverage.** One locale's copy ships today.
+- **A larger accessibility pass.** The baseline is enforced by tests — labels,
+  48dp targets, headings, radio/checkbox roles on full-width rows, nothing said
+  by colour alone, no clipped warnings — but it has not been walked end to end
+  with TalkBack by a person.
 
 ## 11. Invariant map (frozen protocol → Android substrate)
 
@@ -404,4 +538,12 @@ wear levelling, and copy-on-write filesystems all keep old blocks:
 | Malformed input fails closed | strict grammar, typed refusals | `HostileInputTest`, `StoreFormatTest` |
 | Byte-identical to v2.0.0 | golden trace from the released engine | `EngineTraceTest` |
 | No secret leaves through an error path | refusal-message audit | `DestructionAndSecretsTest` |
-| No telemetry | source-level audit | `DestructionAndSecretsTest` |
+| No telemetry | source-level audit | `DestructionAndSecretsTest`, `AppSourceAuditTest` |
+| Store and witness in separate backup domains | `filesDir` vs `noBackupFilesDir` | `DeviceEngineTest`, `AppSourceAuditTest` |
+| One exported component | manifest, both build types | `ManifestHardeningTest`, `:app:verifyReleaseManifest` |
+| Backup excluded on every channel | manifest + two rules files | `AppSourceAuditTest` |
+| Screens not captured | `FLAG_SECURE` on the window | `UiJourneyTest` |
+| A picked URI is untrusted | bounded read, sanitised name | `HostileUriTest` |
+| A double tap cannot spend twice | engine per-pair lock | `UiJourneyTest`, `CrashAndLifecycleTest` |
+| The UI never caches consumable state | reload from the engine on resume | `UiJourneyTest` |
+| Claims are not overstated | sentence-scoped claims lint | `AppSourceAuditTest` |

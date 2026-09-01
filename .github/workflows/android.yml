@@ -1,24 +1,38 @@
-# Build and test the Android edition's engine, and re-verify that its golden
+# Build, lint and test the Android edition, and re-verify that its golden
 # interoperability vectors still match the released v2.0.0.
 #
-# Two gates, and the second is the one that matters most.
+# WHAT THIS WORKFLOW DOES AND DOES NOT COVER, stated plainly so nobody reads a
+# green tick as more than it is.
 #
-#   1. `./gradlew check` — the JVM suites for truepad-core and truepad-storage.
-#      Both modules are pure Kotlin/JVM with no Android SDK dependency, so the
-#      whole security state machine is tested here with no emulator. The same
-#      compiled code runs on ART, so there is no "Android build" that could
-#      drift away from the one CI proved.
+#   1. `./gradlew check` — the JVM suites for truepad-core and truepad-storage,
+#      the app's source audits, Android Lint, and the release-manifest gate.
+#      Both engine modules are pure Kotlin/JVM with no Android SDK dependency,
+#      so the whole security state machine is tested here with no emulator, and
+#      the SAME compiled code runs on ART — there is no separate "Android build"
+#      that could drift from the one CI proved.
 #
-#   2. `tools/regenerate-vectors.sh --check` — regenerates android/vectors/ by
+#   2. `:app:assembleDebug` and `:app:assembleRelease` — the manifest is only
+#      real once it has been merged, and `verifyReleaseManifest` parses the
+#      MERGED RELEASE manifest: one exported component, no permissions, backup
+#      off. A dependency that quietly adds an exported receiver breaks the build.
+#
+#   3. `tools/regenerate-vectors.sh --check` — regenerates android/vectors/ by
 #      running the RELEASED v2.0.0 TypeScript in a throwaway detached worktree
-#      and fails if the committed fixtures differ. Without this, the fixtures
-#      are just numbers somebody once wrote down; with it, "Android agrees with
-#      what shipped" is a claim CI keeps honest. It reads the tag and never
-#      writes to any branch, tag, or the release commit.
+#      and fails if the committed fixtures differ. Without it the fixtures are
+#      numbers somebody once wrote down; with it, "Android agrees with what
+#      shipped" is a claim CI keeps honest. It reads the tag and never writes to
+#      any branch, tag, or the release commit.
 #
-# Instrumentation tests are not run here: there is no :app module yet. When one
-# exists this workflow gains an emulator job (see docs/ANDROID-SECURITY.md §10).
-name: Android engine
+# NOT COVERED HERE: the instrumentation suite and the on-device security check.
+# Both need an emulator, and a reliable emulator job in GitHub Actions is its own
+# piece of infrastructure. They are REQUIRED gates that run locally:
+#
+#     ./gradlew :app:connectedDebugAndroidTest
+#     ./tools/device-security-check.sh
+#
+# Saying that here is the honest alternative to pretending the JVM suites replace
+# them. See docs/ANDROID-SECURITY.md §10.
+name: Android
 
 on:
   push:
@@ -61,15 +75,50 @@ jobs:
         working-directory: android
         run: sed -i "s|^org.gradle.java.home=.*|org.gradle.java.home=${JAVA_HOME}|" gradle.properties
 
-      - name: Build and test the engine
+      # The Android SDK the app module needs. The engine modules do not, but the
+      # app's manifest, resources and lint do.
+      - uses: android-actions/setup-android@v3
+
+      - name: Install the pinned SDK components
+        run: |
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" > /dev/null
+
+      - name: Build, lint and test everything
         working-directory: android
+        # `check` runs: the JVM engine suites, the app's source audits, Android
+        # Lint (warningsAsErrors), and verifyReleaseManifest.
         run: ./gradlew check --console=plain --stacktrace
+
+      - name: Assemble both build types
+        working-directory: android
+        run: ./gradlew :app:assembleDebug :app:assembleRelease --console=plain
+
+      - name: The APK asks for nothing
+        working-directory: android
+        # A last, independent look at the artefact itself rather than at the
+        # sources that produced it.
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/release/app-release-unsigned.apk
+          dump=$("$ANDROID_HOME/build-tools/35.0.0/aapt2" dump xmltree --file AndroidManifest.xml "$apk")
+          if grep -q 'android.permission.INTERNET' <<<"$dump"; then
+            echo "the release APK requests INTERNET" >&2; exit 1
+          fi
+          exported=$(grep -c 'android:exported=true' <<<"$dump" || true)
+          if [ "$exported" != "1" ]; then
+            echo "expected exactly one exported component, found $exported" >&2
+            grep -B4 'android:exported=true' <<<"$dump" >&2 || true
+            exit 1
+          fi
+          echo "release APK: one exported component, no INTERNET"
 
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: android-test-reports
-          path: android/*/build/reports/tests/
+          name: android-reports
+          path: |
+            android/*/build/reports/
+            android/app/build/reports/
           if-no-files-found: ignore
 
   vectors:
