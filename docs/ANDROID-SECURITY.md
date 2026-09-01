@@ -18,6 +18,25 @@ convenience:
 
 ---
 
+## WHERE EACH CLAIM'S EVIDENCE COMES FROM
+
+Every statement in this document rests on one of three kinds of evidence, and
+they are not interchangeable. This table is the first thing to read, because a
+green tick means nothing until you know what ran.
+
+| Evidence | What it covers | Where it runs |
+|---|---|---|
+| **JVM** | The whole protocol and storage state machine — both engine modules are pure Kotlin/JVM and the SAME compiled code runs on ART. Plus the app's source audits and the release-manifest gate. | Every CI run, every local build. |
+| **EMULATOR** | The instrumentation suite and the on-device security checks: the real UI, real `java.nio` on ART, real process kill, the real installed package. | Every CI run (`instrumentation` job) and locally. |
+| **PHYSICAL DEVICE** | Whatever an emulator cannot be: a real flash translation layer, a real TEE, a vendor's own backup implementation. | **NOT YET RUN.** `android/tools/physical-device-check.sh` is the gate and refuses to run against an emulator. |
+| **HUMAN** | Using the app with TalkBack. | **NOT YET PERFORMED.** The automated baseline in `AccessibilityTest` is not a substitute and does not claim to be. |
+
+So: everything below is JVM- and EMULATOR-validated unless it says otherwise.
+Nothing in this document is physical-device evidence, and nothing in it is a
+human accessibility pass.
+
+---
+
 ## 0. What is the same, and what is different
 
 | Layer | Android | Why |
@@ -203,6 +222,24 @@ Android Auto Backup and device-to-device transfer carry the former and **not** t
 latter. A restored pair store therefore meets a witness that still remembers the
 true high-water and the true attempt budget, and the operation refuses
 `witness-regressed` before anything is consumed.
+
+**What that relies on, precisely.** The exclusion of `getNoBackupFilesDir()` is
+Android's own documented contract, and TruePad relies on it. What the app can
+verify is its own side: that the two roots really are different trees, and that a
+store rewound underneath an untouched witness really is refused — both are tested
+on-device (`DeviceEngineTest.aRestoredStoreIsRefusedOnDevice`). What no software
+on the handset can verify is that a particular vendor's backup implementation
+honours the contract. That is why `allowBackup="false"` and the two rules files
+exist as well: three independent ways of asking, so that one of them being wrong
+is not the whole defence. If all three were ignored by some OEM path, the witness
+would be restored with the store and detect nothing — which is exactly the weak
+configuration `WitnessTest.aWitnessInsideTheBackupDomainCannotDetectTheRollback`
+demonstrates rather than hides.
+
+And to be explicit about what this is NOT: `getNoBackupFilesDir()` is a directory
+the backup system skips. It is not a monotonic counter, not hardware-anchored,
+and not a TPM. It gives the witness a different failure domain from the store on
+the same device, and nothing more.
 
 `WitnessTest` tests both configurations, including the weak one — a witness inside
 the backup domain is restored alongside the store and detects nothing — so the
@@ -485,9 +522,12 @@ appears, or if backup is turned back on.
 8. It does not implement Sealed Pad Transfer or QR transfer. Pads arrive by
    courier file only.
 9. **Emulator evidence is not physical-device evidence.** Every on-device result
-   reported for this phase comes from an API 35 arm64 emulator. That says nothing
-   about a real device's flash translation layer, its TEE, or a vendor's own
-   backup path.
+   reported for this phase comes from an API 35 emulator — locally on arm64, and
+   on x86_64 in CI. That says nothing about a real device's flash translation
+   layer, its TEE, or a vendor's own backup path.
+   `android/tools/physical-device-check.sh` is the gate for that, and it REFUSES
+   to run against an emulator rather than producing evidence that would read as
+   hardware validation and is not.
 10. An emitted encrypted message lives only in memory until the operator sends
    it. Leaving the screen loses the message — the pad material is already spent.
    That is the LOSS row, and the screen says so rather than pretending otherwise.
@@ -499,29 +539,35 @@ appears, or if backup is turned back on.
 
 ## 10. Remaining work
 
-Nothing in this list blocks the app from being used; each is a real improvement
-with a real cost, named rather than left implicit.
+Two items, and neither is a code feature. Both are kinds of evidence that cannot
+be manufactured, listed with what would close them.
 
-- **Physical-device validation.** Everything on-device so far is emulator
-  evidence (§9.9). A real handset would exercise the TEE, real flash, and a
-  vendor backup implementation.
-- **Emulator instrumentation in CI.** The instrumentation suite is a required
-  gate but runs locally; `android/tools/device-security-check.sh` is likewise a
-  local gate. Making a GitHub Actions emulator reliable is its own piece of
-  infrastructure work and is not pretended to be done.
-- **A Keystore-bound witness.** Minting a non-exportable Keystore key at witness
-  bootstrap and binding the journal to it would make a journal restored onto
-  another device or profile unreadable, and therefore fail closed rather than be
-  adopted. This is the one genuine strengthening Android offers over the Browser
-  Edition, and it is designed but not built (§5).
-- **Dependency currency.** The toolchain is pinned deliberately and the
-  `GradleDependency` lint check is disabled with that reason. Upgrades are a
-  reviewed decision, and the review has not been done in this phase.
+- **PHYSICAL-DEVICE VALIDATION — not yet run.** Connect one authorised handset
+  and run:
+
+  ```
+  android/tools/physical-device-check.sh
+  ```
+
+  It refuses emulators, runs the full on-device gate on the handset, and then
+  records what only real hardware can show: the store and witness paths as the
+  device reports them, the installed package's backup flags, whether `adb backup`
+  of an `allowBackup="false"` app yields anything, and whether a screenshot of a
+  `FLAG_SECURE` window really is blank. It records TEE and StrongBox presence as
+  device provenance only — TruePad makes no Keystore claim, and that line is not
+  one.
+
+- **HUMAN TALKBACK PASS — not yet performed.** `AccessibilityTest` sweeps every
+  screen and holds every interactive node to labels, 48dp targets, roles,
+  disabled state and heading structure, and `LargeFontTest` re-renders the
+  warning copy at 2× font scale. That is a baseline, not a verdict: it cannot
+  tell you whether the announcement order makes sense, whether the ceremony is
+  followable by ear, or whether a refusal is comprehensible when read aloud.
+
+Also open, none blocking:
+
+- **Dependency currency.** Reviewed and deliberately not changed — see §13.
 - **Translation and locale coverage.** One locale's copy ships today.
-- **A larger accessibility pass.** The baseline is enforced by tests — labels,
-  48dp targets, headings, radio/checkbox roles on full-width rows, nothing said
-  by colour alone, no clipped warnings — but it has not been walked end to end
-  with TalkBack by a person.
 
 ## 11. Invariant map (frozen protocol → Android substrate)
 
@@ -547,3 +593,39 @@ with a real cost, named rather than left implicit.
 | A double tap cannot spend twice | engine per-pair lock | `UiJourneyTest`, `CrashAndLifecycleTest` |
 | The UI never caches consumable state | reload from the engine on resume | `UiJourneyTest` |
 | Claims are not overstated | sentence-scoped claims lint | `AppSourceAuditTest` |
+| Every interactive control is announceable and reachable | whole-tree semantics sweep | `AccessibilityTest` |
+| Warnings are never clipped | re-render at 2x font scale | `LargeFontTest` |
+| No secret in accessibility metadata | semantics-tree scan | `AccessibilityTest` |
+| No raw control byte in any source file | byte scan of the whole tree | `AppSourceAuditTest` |
+| The on-device suite actually ran | JUnit XML parsed, classes and counts asserted | `tools/verify-instrumentation.sh` |
+
+---
+
+## 12. Dependency currency — reviewed, deliberately unchanged
+
+Reviewed at closure. Nothing here has a concrete security or build-support
+problem, so nothing was upgraded: this phase closes evidence gaps, and swapping a
+toolchain underneath the evidence would invalidate it. Recorded so the next
+person inherits a decision rather than a silence.
+
+| Component | Pinned | Current | Assessment |
+|---|---|---|---|
+| Gradle | 8.14 | 9.x | Behind but acceptable. 8.14 builds clean with zero deprecation warnings. |
+| AGP | 8.7.3 | 9.x | Behind but acceptable. Caps `compileSdk`/`targetSdk` at 35, which is why `OldTargetApi` is suppressed. Raising it is the head of the upgrade chain. |
+| Kotlin | 2.0.21 | 2.2.x | Behind but acceptable. |
+| Compose BOM | 2024.10.01 | 2026.08.00 | Behind but acceptable. Provides the `DeviceConfigurationOverride` the font-scale tests need. |
+| androidx.core / lifecycle / activity | 1.13.1 / 2.8.7 / 1.9.3 | newer | Behind but acceptable. |
+| kotlinx-coroutines | 1.9.0 | 1.10.2 | Behind but acceptable. |
+| AndroidX test / Espresso | 1.6.x / 3.6.1 | 1.7.x / 3.7.0 | Behind but acceptable; test-only. |
+| `actions/checkout`, `setup-java`, `setup-node`, `upload-artifact` | v4 | v7, v6, v7, v7 | Behind by majors. Still supported and green. Worth raising when GitHub next deprecates a runtime — that is a maintenance trigger, not a security one. |
+| `android-actions/setup-android` | v3 | v4 | Behind by one major. |
+| `gradle/actions/setup-gradle` | v4 | v6 | Behind by two majors. |
+| `reactivecircus/android-emulator-runner` | v2.38.0 | v2.38.0 | **Current**, pinned to an exact tag. |
+
+**Security-sensitive updates advisable: none identified.** No pinned component is
+a cryptographic dependency — the engine has none, and the only production
+dependencies are the Kotlin stdlib, coroutines, and androidx UI. The engine
+modules depend on nothing but the standard library.
+
+Nothing is classed obsolete or problematic. Modernisation is its own task with
+its own re-validation, and should not be folded into a closure pass.
