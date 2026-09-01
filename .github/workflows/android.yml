@@ -95,22 +95,62 @@ jobs:
 
       - name: The APK asks for nothing
         working-directory: android
-        # A last, independent look at the artefact itself rather than at the
-        # sources that produced it.
+        # A last, independent look at the built ARTEFACT rather than at the
+        # sources or the merged manifest that produced it.
+        #
+        # Parsed in Python rather than grepped: aapt2 renders an XML boolean
+        # differently across versions — `=true` on one, `(type 0x12)0xffffffff`
+        # on another — and a grep for one spelling silently counts zero on a
+        # runner that uses the other. Counting zero exported components looks
+        # like a pass if you are not careful, which is exactly the wrong way for
+        # a hardening check to fail.
         run: |
-          set -euo pipefail
-          apk=app/build/outputs/apk/release/app-release-unsigned.apk
-          dump=$("$ANDROID_HOME/build-tools/35.0.0/aapt2" dump xmltree --file AndroidManifest.xml "$apk")
-          if grep -q 'android.permission.INTERNET' <<<"$dump"; then
-            echo "the release APK requests INTERNET" >&2; exit 1
-          fi
-          exported=$(grep -c 'android:exported=true' <<<"$dump" || true)
-          if [ "$exported" != "1" ]; then
-            echo "expected exactly one exported component, found $exported" >&2
-            grep -B4 'android:exported=true' <<<"$dump" >&2 || true
-            exit 1
-          fi
-          echo "release APK: one exported component, no INTERNET"
+          python3 - <<'CHECK'
+          import re, subprocess, sys, os
+          apk = "app/build/outputs/apk/release/app-release-unsigned.apk"
+          aapt2 = os.environ["ANDROID_HOME"] + "/build-tools/35.0.0/aapt2"
+          dump = subprocess.run([aapt2, "dump", "xmltree", "--file", "AndroidManifest.xml", apk],
+                                capture_output=True, text=True, check=True).stdout
+
+          problems = []
+          if "android.permission.INTERNET" in dump:
+              problems.append("the release APK requests INTERNET")
+
+          # Walk the tree, tracking the element each attribute belongs to.
+          TRUE = ("=true", "0xffffffff", "(type 0x12)0xffffffff")
+          element, name, exported = None, None, None
+          found = []
+          def flush():
+              if element in ("activity", "activity-alias", "service", "receiver", "provider") and exported:
+                  found.append((element, name))
+          for line in dump.splitlines():
+              m = re.match(r"\s*E: ([\w-]+)", line)
+              if m:
+                  flush()
+                  element, name, exported = m.group(1), None, False
+                  continue
+              # aapt2 writes attributes as `android:name(0x01010003)="…"`, so
+              # the resource-id suffix has to be allowed for.
+              if re.search(r":name(\([^)]*\))?=", line) and name is None:
+                  q = re.search(r'"([^"]+)"', line)
+                  if q: name = q.group(1)
+              if re.search(r":exported(\([^)]*\))?=", line) and any(t in line for t in TRUE):
+                  exported = True
+          flush()
+
+          launcher = "dev.systemslibrarian.truepad.app.MainActivity"
+          unexpected = [f"{k}:{n}" for k, n in found if n != launcher]
+          if unexpected:
+              problems.append("exported beyond the launcher: " + ", ".join(unexpected))
+          if not any(n == launcher for _, n in found):
+              problems.append("the launcher activity is not exported, so the parse found nothing — check the parser")
+
+          if problems:
+              print("\n".join(problems), file=sys.stderr)
+              print(dump, file=sys.stderr)
+              sys.exit(1)
+          print(f"release APK: {len(found)} exported component ({found[0][1]}), no INTERNET")
+          CHECK
 
       - uses: actions/upload-artifact@v4
         if: failure()
