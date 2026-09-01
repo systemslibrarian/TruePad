@@ -31,14 +31,41 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 android="$(dirname "$here")"
 
 fail=0
+checks=0
+skips=0
 note() { printf '\n=== %s\n' "$1"; }
-ok()   { printf '  PASS  %s\n' "$1"; }
-bad()  { printf '  FAIL  %s\n' "$1"; fail=1; }
+ok()   { printf '  PASS  %s\n' "$1"; checks=$((checks+1)); }
+bad()  { printf '  FAIL  %s\n' "$1"; fail=1; checks=$((checks+1)); }
+skip() { printf '  N/A   %s\n' "$1"; skips=$((skips+1)); }
+
+# PRECONDITIONS. Every one of these, unchecked, is a way for this script to
+# report PASS having tested nothing.
+[[ -x "$ADB" ]] || { echo "adb not found at $ADB" >&2; exit 1; }
+attached="$("$ADB" devices | awk 'NR>1 && $2=="device" {print $1}')"
+if [[ -z "$attached" ]]; then
+  echo "no authorised device is attached — there is nothing to check" >&2
+  exit 1
+fi
+for apk in "$android/app/build/outputs/apk/debug/app-debug.apk" \
+           "$android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"; do
+  [[ -f "$apk" ]] || { echo "missing APK: $apk — build it first" >&2; exit 1; }
+done
 
 "$ADB" wait-for-device
-device="$("$ADB" shell getprop ro.product.model | tr -d '\r') / API $("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
-emulated="$("$ADB" shell getprop ro.kernel.qemu | tr -d '\r')"
-printf 'device: %s%s\n' "$device" "$([ "$emulated" = "1" ] && echo '  (EMULATOR)' || echo '  (physical)')"
+model="$("$ADB" shell getprop ro.product.model | tr -d '\r')"
+api="$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+build_type="$("$ADB" shell getprop ro.build.type | tr -d '\r')"
+# An emulator declares itself in more than one way depending on the image.
+qemu="$("$ADB" shell getprop ro.kernel.qemu | tr -d '\r')"
+hardware="$("$ADB" shell getprop ro.hardware | tr -d '\r')"
+if [[ "$qemu" == "1" || "$hardware" == ranchu* || "$hardware" == goldfish* || "$model" == sdk_* ]]; then
+  kind="EMULATOR"
+else
+  kind="PHYSICAL"
+fi
+device="$model / API $api / $build_type"
+printf 'device: %s  (%s)\n' "$device" "$kind"
+[[ "$kind" == "EMULATOR" ]] && printf '%s\n' "note: emulator evidence. It says nothing about a real TEE, real flash, or a vendor backup path."
 
 note "installing"
 "$ADB" install -r -d "$android/app/build/outputs/apk/debug/app-debug.apk" >/dev/null
@@ -62,11 +89,23 @@ fi
 # Another process's view. Captured into a variable first: adb exits non-zero
 # when the device command fails, and under `set -o pipefail` that would decide
 # the pipeline's status instead of grep's.
+#
+# THIS CHECK IS BUILD-TYPE DEPENDENT and says so rather than pretending
+# otherwise. On a `user` build the adb shell cannot read another app's data
+# directory, which is the property worth asserting. On `userdebug` or `eng` —
+# which many emulator images are, including some CI ones — the shell is granted
+# far more, and a failure there would be a fact about the BUILD, not about
+# TruePad. Reporting it as a failure would train people to ignore this script;
+# reporting it as a pass would be a lie. It is reported as not applicable.
 listing="$("$ADB" shell "ls /data/data/$PKG" 2>&1 || true)"
-if printf '%s' "$listing" | grep -qiE 'permission denied|no such file'; then
-  ok "the data directory is not readable from the adb shell ($(printf '%s' "$listing" | head -1))"
+if [[ "$build_type" == "user" ]]; then
+  if printf '%s' "$listing" | grep -qiE 'permission denied|no such file'; then
+    ok "the data directory is not readable from the adb shell ($(printf '%s' "$listing" | head -1))"
+  else
+    bad "the data directory was listable from the shell on a user build: $listing"
+  fi
 else
-  bad "the data directory was listable from the shell: $listing"
+  skip "adb-shell readability — this is a '$build_type' build, where the shell is privileged by design; the check only means something on a user build"
 fi
 
 # ------------------------------------------------------ 2. real process death --
@@ -149,9 +188,17 @@ fi
 [ "$leaked" = 0 ] && ok "no plaintext and no pad-shaped material in logcat"
 
 printf '\n'
+# A run that asserted nothing must not read as a pass. If the checks all
+# vanished — a renamed property, a changed adb output format — the count is what
+# notices.
+MIN_CHECKS=13
+if (( checks < MIN_CHECKS )); then
+  echo "only $checks checks ran, expected at least $MIN_CHECKS — this script tested almost nothing" >&2
+  exit 1
+fi
 if [ "$fail" = 0 ]; then
-  echo "device security check: PASS on $device"
+  echo "device security check: PASS on $device ($kind) — $checks checks, $skips not applicable"
 else
-  echo "device security check: FAILURES on $device" >&2
+  echo "device security check: FAILURES on $device ($kind) — $checks checks, $skips not applicable" >&2
 fi
 exit "$fail"

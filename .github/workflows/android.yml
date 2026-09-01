@@ -23,15 +23,23 @@
 #      shipped" is a claim CI keeps honest. It reads the tag and never writes to
 #      any branch, tag, or the release commit.
 #
-# NOT COVERED HERE: the instrumentation suite and the on-device security check.
-# Both need an emulator, and a reliable emulator job in GitHub Actions is its own
-# piece of infrastructure. They are REQUIRED gates that run locally:
+#   4. The `instrumentation` job — a real API 35 emulator, the full
+#      instrumentation suite, and the on-device security checks. It runs
+#      android/tools/ci-instrumentation.sh, which is the same command a developer
+#      runs locally, so CI and a workstation cannot drift into testing different
+#      things.
 #
-#     ./gradlew :app:connectedDebugAndroidTest
-#     ./tools/device-security-check.sh
+#      That job is written to be UNABLE to go green over an empty run. Booting an
+#      emulator and calling a Gradle task proves nothing: a connected-test task
+#      that discovers no tests exits 0, and so does one whose APK never
+#      installed. So the results XML is parsed afterwards and every expected test
+#      class must be present, the count must meet a floor, and failures, errors
+#      and skips must all be zero. A skipped security test is not a passing one.
 #
-# Saying that here is the honest alternative to pretending the JVM suites replace
-# them. See docs/ANDROID-SECURITY.md §10.
+# STILL NOT COVERED: physical hardware. Everything here is an emulator, which
+# says nothing about a real TEE, real flash, or a vendor's backup implementation.
+# android/tools/physical-device-check.sh is the gate for that and refuses to run
+# against an emulator. See docs/ANDROID-SECURITY.md.
 name: Android
 
 on:
@@ -182,3 +190,68 @@ jobs:
       - name: Verify the golden vectors still match the released v2.0.0
         working-directory: android
         run: ./tools/regenerate-vectors.sh --check
+
+  instrumentation:
+    # The on-device gate. Separate from `engine` so a slow emulator never hides
+    # a fast build failure, and so its logs stand on their own.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Use the CI JDK instead of the local Android Studio JBR
+        working-directory: android
+        run: sed -i "s|^org.gradle.java.home=.*|org.gradle.java.home=${JAVA_HOME}|" gradle.properties
+
+      # Without KVM the emulator falls back to software emulation and a suite
+      # this size does not finish inside any sensible timeout. GitHub-hosted
+      # Linux runners expose /dev/kvm; this makes it usable by the runner user.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -w /dev/kvm || { echo "/dev/kvm is not writable; the emulator would be unusably slow" >&2; exit 1; }
+
+      # Built before the emulator starts: a compile error should not cost an
+      # emulator boot, and the gate script asserts both APKs exist.
+      - name: Build the app and its test APK
+        working-directory: android
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --console=plain
+
+      - name: Instrumentation suite and on-device security checks
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          # The suite asserts on FLAG_SECURE, activity recreation and semantics;
+          # animations make all three flaky and none of them is what is under
+          # test.
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none -camera-front none
+          # ONE command, and it is the same one used locally.
+          script: android/tools/ci-instrumentation.sh
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: instrumentation-reports
+          # Reports and JUnit XML only. NOT logcat, and not the emulator's data
+          # image: the suite deliberately handles plaintexts and pad material,
+          # and a failure artefact is a published artefact.
+          path: |
+            android/app/build/reports/androidTests/
+            android/app/build/outputs/androidTest-results/
+          if-no-files-found: ignore
