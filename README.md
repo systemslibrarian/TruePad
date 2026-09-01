@@ -753,4 +753,18 @@ npm run cli -- status <dir>   # the pad CLI
 CI (`.github/workflows/deploy.yml`) runs the unit suites, the build (which
 type-checks both configs) and the e2e suite before anything deploys.
 
-MIT licensed.
+## License
+
+TruePad is licensed under the GNU Affero General Public License v3.0 only
+(**AGPL-3.0-only**). See [LICENSE](LICENSE) for the full text.
+
+You may inspect, use, modify and redistribute TruePad under the AGPL;
+redistribution and covered network use are subject to the AGPL's source-code
+obligations. Third-party components — such as the vendored BIP-39 wordlist
+([provenance and notice](src/browser/ui/wordlist/PROVENANCE.md)) and the
+`@noble/post-quantum` dependency — remain under their own licenses.
+
+Earlier revisions of this repository were distributed under the MIT license.
+This change licenses the current and future release line under AGPL-3.0-only;
+it does not and cannot revoke the rights already granted for revisions that
+were distributed under MIT.

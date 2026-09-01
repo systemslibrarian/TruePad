@@ -32,6 +32,13 @@ version and a date when formally tagged.
   the shipped artefacts against it, and machine guards that fail the build when
   a document starts claiming more than the code earns.
 
+### Licensing
+
+- Project licensing changed from MIT to GNU AGPL v3 only (**AGPL-3.0-only**)
+  for the current release line. Previously distributed revisions remain
+  available under the licenses under which they were distributed. Third-party
+  components keep their own licenses and notices.
+
 ### Known limitations at this candidate
 
 Recorded in full in the [release audit](docs/SEALED-PAD-TRANSFER-RELEASE-AUDIT.md),

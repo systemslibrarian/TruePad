@@ -31,7 +31,7 @@
     "shannon"
   ],
   "author": "",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "bugs": {
     "url": "https://github.com/systemslibrarian/TruePad/issues"
