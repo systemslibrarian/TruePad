@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Carried over from the released PWA manifest so the two editions look
+         like the same product. -->
+    <color name="truepad_background">#11100C</color>
+</resources>

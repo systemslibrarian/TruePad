@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12 (API 31) and above.
+
+  android:allowBackup="false" already disables cloud backup. This file is the
+  belt to that brace, and it exists mainly for <device-transfer>: the
+  interaction between allowBackup and device-to-device transfer has not always
+  been documented the same way across releases, so the exclusion is stated
+  outright for BOTH channels instead of relying on one attribute to imply the
+  other. If a future platform reads only one of them, TruePad is still excluded.
+
+  Excluding domain="root" excludes every app-private domain beneath it — the
+  pad store under files/, the rollback witness under no_backup/, databases,
+  shared preferences and the cache. Nothing about this app is worth restoring:
+  a pad is one-time material, and a restored copy of one is precisely the
+  two-time-pad this product exists to prevent.
+
+  This is not a claim that the data cannot be extracted. It is a claim that
+  TruePad does not ask Android to carry it. See docs/ANDROID-SECURITY.md §4.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+    </device-transfer>
+</data-extraction-rules>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      A bare shim so the manifest has a theme before Compose takes over. The
+      real palette lives in Theme.kt; this only sets the window background so
+      there is no white flash on a dark device, using the released product's
+      background colour (#11100c, from the shipped PWA manifest).
+    -->
+    <style name="Theme.TruePad" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/truepad_background</item>
+        <item name="android:statusBarColor">@color/truepad_background</item>
+        <item name="android:navigationBarColor">@color/truepad_background</item>
+    </style>
+</resources>

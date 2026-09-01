@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  TruePad Android performs no network I/O and holds no INTERNET permission, so
+  in the shipping app this file never comes into play.
+
+  It is here as a tripwire. If a dependency or a future change ever added the
+  INTERNET permission, the default posture would silently become "cleartext
+  allowed on some API levels, whatever the system trust store says". This config
+  makes that fail closed instead: no cleartext, and only the system trust
+  anchors — so an accidental network capability is a broken request rather than
+  a quiet exfiltration path.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

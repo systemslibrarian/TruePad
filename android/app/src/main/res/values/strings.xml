@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The launcher label. The released product's short name. -->
+    <string name="app_name">TruePad</string>
+</resources>

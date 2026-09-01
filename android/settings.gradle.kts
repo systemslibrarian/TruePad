@@ -34,7 +34,7 @@ rootProject.name = "truepad-android"
 //                    is exercised by fast JVM tests and reused unchanged on
 //                    device. See docs/ANDROID-SECURITY.md.
 //   app              the native application: Compose UI plus the Android
-//                    filesystem/lifecycle bindings. NOT YET WRITTEN.
+//                    filesystem/lifecycle bindings.
 //
 // A module is included only once its directory exists. An earlier version
 // included ":app" unconditionally and pruned it afterwards, which Gradle 8.14
