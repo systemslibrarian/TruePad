@@ -5,6 +5,7 @@ import dev.systemslibrarian.truepad.core.bytesToHex
 import dev.systemslibrarian.truepad.core.requiredSourceLength
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -226,6 +227,49 @@ class HostileInputTest {
         fixedEngine(bobFs).importPair("bob", container)
         val shortEnvelope = varEngine.burn(FIXED_PAIR_ID, Party2.A, ByteArray(3)).envelope
         assertEquals("record-size-mismatch", refusalOf { fixedEngine(bobFs).open(FIXED_PAIR_ID, Party2.B, shortEnvelope) }.reason)
+    }
+
+    /**
+     * The pad LIST is what an app renders, so it has its own contract: a
+     * destroyed pair still appears (its tombstone is permanent) but carries no
+     * meters, a pair too broken to summarise is skipped rather than shown as a
+     * broken row, and nothing that is not a pair directory is ever listed.
+     */
+    @Test
+    fun theListDistinguishesLiveDestroyedAndUnsummarisablePairs() {
+        val fs = MemoryFs()
+        val live = fixedEngine(fs, pairIdHex = "aa".repeat(16))
+        live.gen("live one", traceSources(256, 4), 256, 4, witnessKind = WitnessKind.LOCAL)
+        val dead = fixedEngine(fs, pairIdHex = "bb".repeat(16))
+        dead.gen("dead one", traceSources(256, 4), 256, 4, witnessKind = WitnessKind.LOCAL)
+        dead.destroy("bb".repeat(16), "bb".repeat(16), "operator destroy")
+
+        // Junk that shares the store root must never be mistaken for a pad:
+        // the lock directory, the staging root, and a stray file.
+        fs.writeFileAtomic("$STAGING_ROOT/leftover/x", ByteArray(1))
+        fs.writeFileAtomic("not-a-pair-id/$HEAD_FILE", ByteArray(1))
+        fs.writeFileAtomic("witness/${"cc".repeat(16)}.log", ByteArray(1))
+
+        val entries = fixedEngine(fs).listSummaries()
+        assertEquals(listOf("aa".repeat(16), "bb".repeat(16)), entries.map { it.pairId })
+
+        val liveEntry = entries.first { it.pairId == "aa".repeat(16) }
+        assertFalse(liveEntry.destroyed)
+        assertEquals("live one", liveEntry.label)
+        assertEquals(256L, liveEntry.summary!!.meters.getValue(Direction.A_TO_B).capacity)
+
+        val deadEntry = entries.first { it.pairId == "bb".repeat(16) }
+        assertTrue("a destroyed pad still has a row", deadEntry.destroyed)
+        assertEquals("dead one", deadEntry.label)
+        assertNull("and no meters can be fabricated for it", deadEntry.summary)
+
+        // A half-built pair is skipped, not surfaced as a broken row — but it is
+        // still on disk and every verb still refuses it.
+        fs.writeFileAtomic("${storeDir("dd".repeat(16), Direction.A_TO_B)}/$HEAD_FILE", "{".toByteArray())
+        val after = fixedEngine(fs).listSummaries()
+        assertEquals("the broken pair is not listed", 2, after.size)
+        assertTrue("but listPairs still sees the directory", fixedEngine(fs).listPairs().contains("dd".repeat(16)))
+        assertEquals("half-pair", refusalOf { fixedEngine(fs).status("dd".repeat(16)) }.reason)
     }
 
     /** Every record is padded to F, so ciphertext length leaks no message length. */

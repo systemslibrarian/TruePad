@@ -106,6 +106,21 @@ class PairSummary(
     val meters: Map<Direction, DirectionMeters>,
 )
 
+/**
+ * One row of the pad list. A DESTROYED pair still has a row — its tombstone is
+ * permanent and every verb refuses it — but it has no meters, because there is
+ * no live store left to meter. Nullable rather than zero-filled: a pad with no
+ * material left and a pad that no longer exists are different facts, and
+ * fabricating zeros for the second would let the UI render it as the first.
+ */
+class PairListEntry(
+    val pairId: String,
+    val label: String,
+    val createdAt: String,
+    val destroyed: Boolean,
+    val summary: PairSummary?,
+)
+
 class GenResult(val pair: PairSummary, val verdict: String, val requiredSourceLength: Long)
 class BurnResult(val envelope: String, val encryptionBytes: Int, val authRecords: Int, val meters: PairSummary)
 class OpenResult(val plaintext: ByteArray, val skippedBytes: Long, val skippedRecords: Long, val meters: PairSummary)
@@ -403,8 +418,42 @@ class Engine(
 
     fun status(pairId: String): PairSummary = fs.withLock(pairId) { buildSummary(pairId) }
 
+    /**
+     * The pad list, as the released engine's `list-pairs` op returns it.
+     *
+     * The Kotlin port previously exposed only the pairIds, which left an app
+     * with no way to render a list: a label needs pair.json, and asking
+     * [status] for a destroyed pair throws `pair-destroyed`. Callers worked
+     * around that by catching an exception per row, which turns an ordinary
+     * listing into exception control flow and makes "destroyed" and "corrupt"
+     * indistinguishable.
+     *
+     * A pair that cannot be summarised at all — mid-write, corrupt, half-built —
+     * is SKIPPED rather than surfaced as a broken row, matching the release. It
+     * is still on disk and every verb still refuses it; it simply is not
+     * something to put in a list.
+     */
+    fun listSummaries(): List<PairListEntry> = listPairs().mapNotNull { pairId ->
+        try {
+            if (fs.exists(tombstonePath(pairId))) {
+                val meta = readPairMeta(fs, pairId)
+                PairListEntry(pairId, meta.label, meta.createdAt, destroyed = true, summary = null)
+            } else {
+                val summary = status(pairId)
+                PairListEntry(pairId, summary.label, summary.createdAt, destroyed = false, summary = summary)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     fun listPairs(): List<String> = fs.list("").filter { name ->
-        name != STAGING_ROOT && name != "witness" && name != ".locks" &&
+        // A pair directory is named by its pairId, so anything that is not one
+        // is not a pair — the staging root, the lock directory, a witness log
+        // left by an older layout, or whatever else shares the root. Matching
+        // the name is what the released list-pairs does, and it is stricter than
+        // enumerating the known non-pair names one at a time.
+        HEX_32_RE.matches(name) &&
             (
                 fs.exists(filePath(storeDir(name, Direction.A_TO_B), HEAD_FILE)) ||
                     fs.exists(filePath(storeDir(name, Direction.B_TO_A), HEAD_FILE)) ||
