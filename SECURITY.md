@@ -85,9 +85,8 @@ licence for the code to fail inside what it does.
 
 ## Supported versions
 
-Until **TruePad 2.0.0** is formally tagged, security fixes target current
-`master`. After the first formal release, this section will identify the
-supported tagged line.
+The supported release line is **2.0.x**: security fixes land there. Fixes also
+target current `master`, which is where the next release line is prepared.
 
 There is no supported v1.x release, because there was never a formal TruePad 1.0.
 

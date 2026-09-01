@@ -20,6 +20,7 @@ const README = readFileSync(join(ROOT, "README.md"), "utf8");
 const SECURITY = readFileSync(join(ROOT, "SECURITY.md"), "utf8");
 const CHANGELOG = readFileSync(join(ROOT, "CHANGELOG.md"), "utf8");
 const HOME = readFileSync(join(ROOT, "src/browser/ui/home.ts"), "utf8");
+const PKG = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
 /** The first screen: everything above the deep-dive sections. */
 const FIRST_SCREEN = README.slice(0, README.indexOf("## The exhibit"));
 
@@ -98,9 +99,13 @@ describe("README describes the TruePad that ships", () => {
   it("states release status truthfully and invents no history", () => {
     const status = README.slice(README.indexOf("## Release status"));
     const section = status.slice(0, status.indexOf("\n## "));
-    expect(section).toMatch(/audited release candidate/i);
-    expect(section).toMatch(/No formal version or tag exists yet/i);
-    expect(section, "the planned release must be named").toMatch(/v2\.0\.0/);
+    // v2.0.0 is tagged now: the status must say so, and must NOT carry the
+    // pre-release current-state wording that is now false.
+    expect(section, "must name v2.0.0 as the first formal release").toMatch(
+      /TruePad 2\.0\.0 is the project's first formally tagged release/i
+    );
+    expect(section, "stale candidate wording must be gone").not.toMatch(/audited release candidate/i);
+    expect(section, "stale no-tag wording must be gone").not.toMatch(/No formal version or tag exists yet/i);
     expect(section, "and must say why 2").toMatch(/never a formal TruePad 1\.0|Format v2 \/ Browser\s*\n?generation/i);
     // No fabricated lineage, anywhere.
     expect(README).not.toMatch(/v1\.0\.0/);
@@ -231,24 +236,46 @@ describe("SECURITY.md is truthful about what exists", () => {
     );
   });
 
-  it("targets master until the first tag, and claims no v1.x line", () => {
+  it("names the 2.0.x supported line, and claims no v1.x line", () => {
     const v = SECURITY.slice(SECURITY.indexOf("## Supported versions"));
-    expect(v).toMatch(/Until \*\*TruePad 2\.0\.0\*\* is formally tagged, security fixes target current\s*\n?`master`/);
+    expect(v, "the supported release line is 2.0.x now that v2.0.0 is tagged").toMatch(
+      /supported release line is \*\*2\.0\.x\*\*/
+    );
+    expect(v, "master is still where fixes are prepared").toMatch(/target current\s*\n?`master`/);
+    expect(v, "the pre-release 'until tagged' wording must be gone").not.toMatch(
+      /Until \*\*TruePad 2\.0\.0\*\* is formally tagged/
+    );
     expect(v).toMatch(/no supported v1\.x release/i);
   });
 });
 
-describe("CHANGELOG names the plan without inventing a past", () => {
-  it("is unreleased and points at v2.0.0", () => {
+describe("CHANGELOG records the v2.0.0 release without inventing a past", () => {
+  it("carries a formal, dated v2.0.0 release heading", () => {
     expect(CHANGELOG).toMatch(/^# Changelog/);
-    expect(CHANGELOG).toMatch(/## Unreleased — planned v2\.0\.0/);
+    // A real released heading with an ISO date, not the pre-release plan.
+    expect(CHANGELOG).toMatch(/^## v2\.0\.0 — \d{4}-\d{2}-\d{2}$/m);
+    expect(CHANGELOG, "the pre-release 'Unreleased — planned' heading must be gone").not.toMatch(
+      /## Unreleased — planned v2\.0\.0/
+    );
     expect(CHANGELOG).toMatch(/first formally tagged release/i);
+    // The AGPL transition entry stays, and never claims a retroactive MIT revocation.
+    expect(CHANGELOG).toMatch(/from MIT to GNU AGPL v3 only/);
   });
 
-  it("invents no version, date, or prior release", () => {
+  it("invents no prior release line", () => {
     expect(CHANGELOG).not.toMatch(/v1\.0\.0/);
-    expect(CHANGELOG, "no invented release date").not.toMatch(/\d{4}-\d{2}-\d{2}/);
-    expect(CHANGELOG, "no released heading").not.toMatch(/^## \[?v?\d+\.\d+\.\d+/m);
+    // Exactly one released heading, and it is v2.0.0.
+    const headings = [...CHANGELOG.matchAll(/^## v?\d+\.\d+\.\d+/gm)].map((m) => m[0]);
+    expect(headings).toEqual(["## v2.0.0"]);
+  });
+});
+
+describe("the package manifest carries the released version and license", () => {
+  it("is stamped 2.0.0 under AGPL-3.0-only", () => {
+    expect(PKG.version, "the formal release version").toBe("2.0.0");
+    expect(PKG.license, "the license must not drift off AGPL-3.0-only").toBe("AGPL-3.0-only");
+    // The pre-release placeholder must be gone from the manifest.
+    expect(PKG.version).not.toBe("0.1.0");
   });
 });
 

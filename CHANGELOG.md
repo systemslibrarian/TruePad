@@ -1,15 +1,12 @@
 # Changelog
 
-## Unreleased — planned v2.0.0
+## v2.0.0 — 2026-09-01
 
-**v2.0.0 will be TruePad's first formally tagged release.** The number reflects
+**v2.0.0 is TruePad's first formally tagged release.** The number reflects
 the current Format v2 / Browser generation of the system, not a sequence of
 earlier releases: there was never a formal TruePad 1.0. `truepad-pad` and its
 unauthenticated Format v1 envelope predate this generation and are kept as
 teaching material, but they were never released under a version tag.
-
-This entry describes the current audited release candidate. It will receive a
-version and a date when formally tagged.
 
 ### The system as it now stands
 
@@ -39,7 +36,7 @@ version and a date when formally tagged.
   available under the licenses under which they were distributed. Third-party
   components keep their own licenses and notices.
 
-### Known limitations at this candidate
+### Known limitations at this release
 
 Recorded in full in the [release audit](docs/SEALED-PAD-TRANSFER-RELEASE-AUDIT.md),
 which returns a verdict of **B — release ready with documented non-blocking

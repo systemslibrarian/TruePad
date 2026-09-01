@@ -85,19 +85,17 @@ why reuse fails, secrecy versus integrity, and the DeckBook comparison.
 
 ## Release status
 
-TruePad 2 is an **audited release candidate**. The release audit records a
-verdict of **B — release ready with documented non-blocking limitations**, and
-those limitations are real and written down rather than solved: a browser
-profile restore can rewind local state, the OPFS write fallback is not truly
-atomic, the word ceremonies depend on humans actually performing them, an
-archived sealed file carries harvest-now-decrypt-later exposure, and no software
-can prove that anything was physically erased.
+**TruePad 2.0.0 is the project's first formally tagged release.** It went out
+against a release audit whose verdict was **B — release ready with documented
+non-blocking limitations**, and those limitations are real and written down
+rather than solved: a browser profile restore can rewind local state, the OPFS
+write fallback is not truly atomic, the word ceremonies depend on humans actually
+performing them, an archived sealed file carries harvest-now-decrypt-later
+exposure, and no software can prove that anything was physically erased.
 
-**No formal version or tag exists yet.** `package.json` reads `0.1.0`, a
-development placeholder rather than a released version. The planned first formal
-release is **v2.0.0** — the number reflects the current Format v2 / Browser
-generation, and there was never a formal TruePad 1.0. Tagging is a separate,
-explicit decision.
+`package.json` reads `2.0.0`. The number reflects the current Format v2 / Browser
+generation, and there was never a formal TruePad 1.0 — 2.0.0 is where the formal
+version history begins, not the second entry in it.
 
 ## Earlier teaching CLI: `truepad-pad` (v1)
 
