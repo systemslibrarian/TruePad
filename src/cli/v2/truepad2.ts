@@ -406,11 +406,12 @@ function requireNotFrozen(pair: LoadedPair): void {
  * status reads and reports the witness but refuses nothing (§15.3).
  */
 
-// §15.3 PREFLIGHT. none is a no-op; platform/remote are refused
-// (witness-unsupported, never silently downgraded); separate-state-file reads
-// the witness and refuses a store that sits strictly below it
-// (witness-regressed — the restored-store signature of §9.4). All refusals
-// are free: no byte of secret.bin is touched and no journal line is appended.
+// §15.3 PREFLIGHT. none is a no-op; separate-state-file and platform-monotonic
+// (provider tpm2-nv-counter-v1) read the witness and refuse a store that sits
+// strictly below it (witness-regressed — the restored-store signature of §9.4);
+// remote-monotonic is refused witness-unsupported, never silently downgraded.
+// All refusals are free: no byte of secret.bin is touched and no journal line
+// is appended.
 function witnessPreflight(store: LoadedStore2): WitnessSnapshot | null {
   const rollback = store.head.rollback;
   if (rollback.witnessClass === "none") {
@@ -641,9 +642,10 @@ function positiveInt(value: string | undefined, flag: string): number {
 
 // Resolve the two gen witness flags into a §1.1 rollback header field.
 // Neither flag → the default { witnessClass: "none", config: {} } (§15.2). One
-// without the other is a usage error. platform/remote are the typed
-// witness-unsupported refusal; only separate-state-file is written, and its
-// path must be absolute.
+// without the other is a usage error. separate-state-file and
+// platform-monotonic (provider tpm2-nv-counter-v1) are written; remote-monotonic
+// is the typed witness-unsupported refusal. For both written classes the path
+// must be absolute.
 function witnessRollbackFromFlags(witnessClass: string | undefined, witnessPath: string | undefined): Rollback {
   if (witnessClass === undefined && witnessPath === undefined) {
     return { witnessClass: "none", config: {} };
@@ -783,11 +785,13 @@ export function gen(args: Args2): void {
       ? FREEZE_THRESHOLD_DEFAULT
       : positiveInt(single(args, "freeze-threshold"), "freeze-threshold");
 
-  // §15.2 rollback witness: both flags together or neither. Only
-  // separate-state-file is implemented; platform/remote are refused
-  // witness-unsupported (never silently downgraded), anything else is a usage
-  // error. The path travels verbatim in the header and each peer maintains
-  // its own witness file at that path on its host — so it MUST be absolute.
+  // §15.2 rollback witness: both flags together or neither. separate-state-file
+  // and platform-monotonic (provider tpm2-nv-counter-v1) are written;
+  // remote-monotonic is refused witness-unsupported (never silently
+  // downgraded), anything else is a usage error. The path travels verbatim in
+  // the header — a separate-state-file peer maintains its own witness file
+  // there, a platform-monotonic path names the already-initialised platform
+  // state file — so it MUST be absolute.
   // Checked here, before any file is written, so a bad witness flag costs
   // nothing.
   const rollback = witnessRollbackFromFlags(single(args, "witness-class"), single(args, "witness-path"));

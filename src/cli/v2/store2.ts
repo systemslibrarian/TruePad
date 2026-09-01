@@ -102,9 +102,10 @@ export type SourceDeclaration = {
   lengthBytes: number;
 };
 
-// §15.2 rollback classes. Loading accepts all three structurally; ENFORCEMENT
-// (the platform/remote `witness-unsupported` refusal, the reachability and
-// regression checks) lives in the verbs, never here.
+// §15.2 rollback classes. Loading accepts every class structurally; ENFORCEMENT
+// (the remote-monotonic / non-tpm2-provider `witness-unsupported` refusal, and
+// the reachability and regression checks that back separate-state-file and
+// platform-monotonic) lives in the verbs, never here.
 export type Rollback =
   | { witnessClass: "none"; config: Record<string, never> }
   | { witnessClass: "separate-state-file"; config: { path: string } }

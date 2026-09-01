@@ -487,7 +487,7 @@ describe("rollback witness end to end", { timeout: 120_000 }, () => {
     expect(existsSync(a)).toBe(false);
   });
 
-  it("gen --witness-class remote-monotonic is also refused witness-unsupported (N18, the other unimplemented class)", () => {
+  it("gen --witness-class remote-monotonic is refused witness-unsupported (N18, the unimplemented class)", () => {
     const a = join(dir, "a");
     const gen = run(
       "gen", a,

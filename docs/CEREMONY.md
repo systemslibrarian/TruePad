@@ -470,9 +470,12 @@ Stated here rather than distributed as caveats:
   operation. It does **not** make a plain file monotonic: an authority
   restored wholesale to an older VALID copy between operations leaves a
   separate state file with no external truth to detect it. That is exactly
-  what `platform-monotonic` and `remote-monotonic` are for, and neither is
-  implemented — so the operator assumption stands unchanged: keep the witness
-  in a failure domain the pair's backup does not reach, and never restore it.
+  what `platform-monotonic` and `remote-monotonic` are for. Of those,
+  `platform-monotonic` is implemented — for one provider, `tpm2-nv-counter-v1`,
+  provisioned as in §6, whose TPM counter is the external truth a plain file
+  lacks — while `remote-monotonic` is not. For a `separate-state-file` witness
+  the operator assumption stands unchanged: keep the witness in a failure
+  domain the pair's backup does not reach, and never restore it.
   A basename ending in `.lock` is refused as reserved, because it is the name
   given to a neighbouring witness's lock file.
 - **A shared witness must be on local storage, on one host.** The serialisation

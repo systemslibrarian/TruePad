@@ -138,10 +138,12 @@ Field rules:
   `"platform-monotonic"`, `"remote-monotonic"`. Phase 0 defined only
   `"none"`; Phase 4 defines the classes normatively in §15 —
   `"separate-state-file"` is implemented (config `{ "path": <absolute
-  path> }`), while `"platform-monotonic"` and `"remote-monotonic"` are
-  specified with their assumptions and REFUSED by this build
-  (`witness-unsupported`, fail closed — never a silent downgrade).
-  `config` is class-specific and `{}` for `"none"`.
+  path> }`) and `"platform-monotonic"` is implemented for exactly one
+  provider, `tpm2-nv-counter-v1` (§15.2), while `"remote-monotonic"` is
+  specified with its assumptions and REFUSED by this build
+  (`witness-unsupported`, fail closed — never a silent downgrade). A
+  `"platform-monotonic"` header naming any other provider is refused the
+  same way. `config` is class-specific and `{}` for `"none"`.
 - `recordPolicy.record` (added with Phase 5, §16) is
   `{ "kind": "variable" }` or `{ "kind": "fixed", "bytes": F }`. A header
   without the field — every store generated before Phase 5 — is variable;
@@ -1462,7 +1464,7 @@ refusal-register row for comparison.
 | `witness-unreachable` | state (witness) | configured witness cannot be read (§15.3) — fail closed | none |
 | `witness-inconsistent` | state (witness) | witness file violates its own shape (§15.3) — fail closed | none |
 | `witness-regressed` | state (witness) | store high-waters below the witness record (§15.3, §9.4) — a restored store, refused before any burn | none |
-| `witness-unsupported` | structural | `witnessClass` platform-monotonic/remote-monotonic in this build (§15.2) — refused, never silently downgraded | none |
+| `witness-unsupported` | structural | `witnessClass` remote-monotonic, or platform-monotonic naming a provider other than `tpm2-nv-counter-v1`, in this build (§15.2) — refused, never silently downgraded | none |
 | `destroy-unconfirmed` | structural | destroy without the matching confirmation (§17.1) — nothing touched | none |
 | `auth-failed` | verification | tag mismatch (§12.3 O4) | one reservation + one failure record; **no secret burned** |
 
@@ -1497,7 +1499,7 @@ an implementation exists; the mathematics in N6–N7 holds now.
 | N15 | With a witness configured, `burn`/`open`/`retire` refuse `witness-unreachable` or `witness-inconsistent` before anything is consumed when the witness cannot be read or fails its shape. | §15.3 |
 | N16 | Store high-waters OR `attemptsReserved` strictly below the witness record refuse `witness-regressed` before anything is consumed — a restored store cannot move, and cannot refill a contested record's attempt budget. | §15.3, §9.4 |
 | N17 | A witness entry is exactly the three monotone counters (two high-waters + `attemptsReserved`), all required — a missing or extra field is `witness-inconsistent`, never a silent default — and contains no pad byte, key, mask, plaintext, or ciphertext. | §15.1, §15.2 |
-| N18 | `witnessClass` platform-monotonic or remote-monotonic is refused `witness-unsupported` at gen and at load — never silently downgraded to a weaker class. | §15.2 |
+| N18 | `witnessClass` platform-monotonic is implemented for exactly one provider, `tpm2-nv-counter-v1`; remote-monotonic, and platform-monotonic naming any other provider, is refused `witness-unsupported` at gen and at load — never silently downgraded to a weaker class. | §15.2 |
 | N18a | With a witness configured, a restore that rolls back the per-record attempt budget (failed authentications reserve attempts without moving the high-waters) is refused `witness-regressed`, so §5's finite-forgery bound is restore-safe, not only crash-safe. | §15.1, §15.4 |
 | N19 | A fixed-record store refuses a valid-range `ciphertextLength ≠ F` structurally (`record-size-mismatch`), costing nothing durable; a `ciphertextLength > maxCiphertextBytes` is still refused first by §4's oversize check (`oversize-ciphertext`), also free. | §16.2 |
 | N20 | For a fixed-record store, the per-attempt forgery bound is exactly `(4 + F/16) · 2^-128`. | §16 |
@@ -1516,7 +1518,7 @@ material is already retired when it fires.)
 | L1 | Multi-source gen: repeatable `--source`, equal lengths, bytewise XOR, one-file-one-source, the verbatim verdict line "Uniform if at least one declared source was uniform and independent of the others.", and a manifest with nothing derived from pad bytes. | Phase 1 — DELIVERED |
 | L2 | Live authentication: the SEND and OPEN transactions of §12 actually executed by `burn`/`open`; the forged-`startOffset` burn attack becoming the typed refusals of §14.1; the freeze and window brakes operating; the `status` meters and `CHANNEL CAPACITY LIMITED BY:` display of §13; this ledger's N-claims wired into the claims-test suite. | Phase 2 — DELIVERED |
 | L3 | Ceremony as code: `ceremony create/verify`, offline gen with ≥2 sources of distinct physics, tmpfs workspace, two peer media, printed operator assertions, retirement ceremony (including auth-exhausted pairs, contested-record retirement, destruction of stranded encryption material). | Phase 3 — DELIVERED |
-| L4 | Rollback witness (§15): `separate-state-file` live with fail-closed semantics and the §9.4 closure for witnessed stores; the confidentiality/metadata split stated. `platform-monotonic`/`remote-monotonic` specified, unimplemented, refused `witness-unsupported`. | Phase 4 — DELIVERED (two classes specified-only) |
+| L4 | Rollback witness (§15): `separate-state-file` live with fail-closed semantics and the §9.4 closure for witnessed stores; the confidentiality/metadata split stated. `platform-monotonic` implemented for one provider, `tpm2-nv-counter-v1` (TPM 2.0 NV counter, swtpm/tpm2-tools interop validated, no physical-hardware validation); `remote-monotonic` specified, unimplemented, refused `witness-unsupported`. | Phase 4 — DELIVERED (platform-monotonic one provider; remote-monotonic specified-only) |
 | L5 | Fixed-size records ≤ `maxCiphertextBytes` (§16), narrowing §4's maximum per store and fixing the block count in §5's expression. | Phase 5 — DELIVERED |
 | L6 | `destroy` semantics (§17) and the verbatim README destruction sentence ("Software can forget its reference to pad material; it cannot prove that flash forgot the bytes."). | Phase 6 — DELIVERED |
 
@@ -1637,8 +1639,10 @@ stated tradeoff, not a hidden one.
   plain file intrinsically monotonic. A whole authority restored or replaced
   with an older VALID copy outside that window has no external truth against
   which a separate state file could detect the fact — which is precisely why
-  `platform-monotonic` and `remote-monotonic` exist, and neither is
-  implemented here. The operator assumption is that the
+  `platform-monotonic` and `remote-monotonic` exist. Of those,
+  `platform-monotonic` is implemented here for `tpm2-nv-counter-v1` (below),
+  whose TPM anchor does supply that external truth; `remote-monotonic` is not.
+  For a `separate-state-file` witness the operator assumption is that the
   path lives in a different failure domain (another medium, not covered
   by the same backup) and is never restored. Protection begins at the
   first witnessed commit; an entry-less witness accepts a fresh pair.

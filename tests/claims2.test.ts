@@ -238,3 +238,53 @@ describe("the v2 banner keeps the register", () => {
     );
   });
 });
+
+// The witness-class implementation status drifted once: the build shipped
+// platform-monotonic (provider tpm2-nv-counter-v1) while several normative
+// passages still called it unimplemented/refused. Nothing guarded that status,
+// which is how it survived. This block pins the status to the SHIPPED code, in
+// both directions — the doc must not underclaim a live class, and the binary
+// must actually implement it — so a regression in either the docs or the code
+// fails here rather than in a reader's understanding.
+describe("FORMAT-V2's witness-class status matches what the binary ships", () => {
+  it("§1.1 and N18 record platform-monotonic as implemented for tpm2-nv-counter-v1", () => {
+    expect(FLAT).toContain(
+      "`witnessClass` platform-monotonic is implemented for exactly one provider, `tpm2-nv-counter-v1`"
+    );
+    expect(FLAT).toContain(
+      "`\"platform-monotonic\"` is implemented for exactly one provider, `tpm2-nv-counter-v1` (§15.2)"
+    );
+    // and it must NOT regress to the old wholesale claim that BOTH classes are
+    // refused by this build (the exact §1.1 phrasing that was false against the
+    // shipped code).
+    expect(FLAT).not.toMatch(
+      /`"platform-monotonic"` and `"remote-monotonic"` are specified with their assumptions and REFUSED by this build/
+    );
+    expect(FLAT).not.toContain("Phase 4 — DELIVERED (two classes specified-only)");
+  });
+
+  it("the binary refuses remote-monotonic as witness-unsupported, but NOT platform-monotonic", () => {
+    // remote-monotonic is the genuinely unimplemented class: refused outright.
+    const source = join(dir, "wc-source.bin");
+    writeFileSync(source, randomBytes(2 * (16 + 32 * 1)));
+    const remote = run(
+      "gen", join(dir, "r"), "--source", source,
+      "--encryption-bytes", "16", "--auth-records", "1",
+      "--witness-class", "remote-monotonic", "--witness-path", join(dir, "w.json")
+    );
+    expect(remote.code).toBe(2);
+    expect(remote.stderr).toContain("refused: witness-unsupported");
+
+    // platform-monotonic is a LIVE class: gen does not refuse the class, it
+    // refuses to conjure the authority. The discriminator is that its failure
+    // is the implemented-path error (an uninitialised authority), never the
+    // witness-unsupported refusal remote-monotonic gets.
+    const platform = run(
+      "gen", join(dir, "p"), "--source", source,
+      "--encryption-bytes", "16", "--auth-records", "1",
+      "--witness-class", "platform-monotonic", "--witness-path", join(dir, "no-such.json")
+    );
+    expect(platform.stderr).toMatch(/witness platform init/);
+    expect(platform.stderr).not.toContain("refused: witness-unsupported");
+  });
+});
