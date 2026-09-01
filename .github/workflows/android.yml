@@ -1,0 +1,95 @@
+# Build and test the Android edition's engine, and re-verify that its golden
+# interoperability vectors still match the released v2.0.0.
+#
+# Two gates, and the second is the one that matters most.
+#
+#   1. `./gradlew check` — the JVM suites for truepad-core and truepad-storage.
+#      Both modules are pure Kotlin/JVM with no Android SDK dependency, so the
+#      whole security state machine is tested here with no emulator. The same
+#      compiled code runs on ART, so there is no "Android build" that could
+#      drift away from the one CI proved.
+#
+#   2. `tools/regenerate-vectors.sh --check` — regenerates android/vectors/ by
+#      running the RELEASED v2.0.0 TypeScript in a throwaway detached worktree
+#      and fails if the committed fixtures differ. Without this, the fixtures
+#      are just numbers somebody once wrote down; with it, "Android agrees with
+#      what shipped" is a claim CI keeps honest. It reads the tag and never
+#      writes to any branch, tag, or the release commit.
+#
+# Instrumentation tests are not run here: there is no :app module yet. When one
+# exists this workflow gains an emulator job (see docs/ANDROID-SECURITY.md §10).
+name: Android engine
+
+on:
+  push:
+    branches: [master, android-phase-2]
+    paths: ['android/**', 'docs/ANDROID-SECURITY.md', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['android/**', 'docs/ANDROID-SECURITY.md', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The vector check checks tag v2.0.0 out into a worktree, so the tag
+          # and its history must be present — a shallow clone cannot do it.
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          # The engine targets JVM 17 bytecode (Android-consumable) but builds
+          # on 21, matching the JDK gradle.properties pins locally.
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # gradle.properties pins org.gradle.java.home to Android Studio's bundled
+      # JBR so local builds do not depend on a registered system JDK. CI has no
+      # Android Studio, so point Gradle at the JDK setup-java just installed.
+      - name: Use the CI JDK instead of the local Android Studio JBR
+        working-directory: android
+        run: sed -i "s|^org.gradle.java.home=.*|org.gradle.java.home=${JAVA_HOME}|" gradle.properties
+
+      - name: Build and test the engine
+        working-directory: android
+        run: ./gradlew check --console=plain --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-test-reports
+          path: android/*/build/reports/tests/
+          if-no-files-found: ignore
+
+  vectors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          # The released src/ is TypeScript imported directly by the generator,
+          # which needs node's native type stripping (>= 22.18).
+          node-version: 24
+          cache: npm
+
+      # No `npm ci` here on purpose. This branch predates the release's
+      # @noble/post-quantum dependency, so installing THIS package.json would
+      # not provide it. The script installs the release's own pinned tree inside
+      # the v2.0.0 worktree instead, which is the correct authority anyway.
+      - name: Verify the golden vectors still match the released v2.0.0
+        working-directory: android
+        run: ./tools/regenerate-vectors.sh --check
