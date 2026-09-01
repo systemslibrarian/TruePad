@@ -63,6 +63,66 @@ class AppSourceAuditTest {
     }
 
     /**
+     * NO CONTROL CHARACTER SURVIVES IN A SOURCE FILE, anywhere under android/.
+     *
+     * This has now bitten twice, both times in HostileUriTest, both times because
+     * a test needed a NUL or a bidi override as DATA and it was written as a raw
+     * byte instead of an escape. The consequence is not cosmetic: git classifies
+     * the whole file as binary, so it stops producing diffs, `grep` stops finding
+     * anything in it, and a security test file becomes one nobody can review.
+     *
+     * The data is still tested — as `\u0000`, `\u202e` and so on, which the
+     * compiler turns into exactly the same characters at runtime. What is
+     * forbidden is the raw byte in the file on disk.
+     *
+     * Bidi overrides are included because they are worse than invisible: they
+     * REORDER the text around them, so a line can render as something other than
+     * what it says.
+     */
+    @Test
+    fun noSourceFileContainsARawControlCharacter() {
+        val roots = listOf(File("src"), File("../truepad-core/src"), File("../truepad-storage/src"), File("../tools"))
+        val sources = roots.flatMap { root ->
+            root.walkTopDown()
+                .filter { it.isFile && it.extension in setOf("kt", "kts", "xml", "sh", "mjs", "pro") }
+                .toList()
+        }
+        assertTrue("the audit must find sources, found ${sources.size}", sources.size >= 25)
+
+        val forbidden = sortedSetOf<Int>()
+        val offenders = mutableListOf<String>()
+        for (f in sources) {
+            val bytes = f.readBytes()
+            // Raw control bytes: anything below space except tab and newline,
+            // plus DEL. Carriage return is allowed only as part of CRLF, which
+            // this repo does not use, so it is forbidden too.
+            val control = bytes.filter { b ->
+                val v = b.toInt() and 0xFF
+                (v < 0x20 && v != 0x09 && v != 0x0A) || v == 0x7F
+            }
+            if (control.isNotEmpty()) {
+                control.forEach { forbidden.add(it.toInt() and 0xFF) }
+                offenders += "${f.path} (${control.map { "0x%02x".format(it.toInt() and 0xFF) }.distinct()})"
+            }
+            // Invisible direction controls. The overrides and isolates REORDER
+            // the text around them, so a line can render as something other than
+            // what it says; the marks are merely invisible. Both are banned raw.
+            val text = String(bytes, Charsets.UTF_8)
+            val bidi = text.filter {
+                it in "\u202A\u202B\u202C\u202D\u202E\u2066\u2067\u2068\u2069\u200E\u200F"
+            }
+            if (bidi.isNotEmpty()) {
+                offenders += "${f.path} (direction control ${bidi.map { "U+%04X".format(it.code) }.distinct()})"
+            }
+        }
+        assertTrue(
+            "write these as escapes, never as raw bytes — a source file with one in it " +
+                "stops being diffable and greppable:\n  " + offenders.joinToString("\n  "),
+            offenders.isEmpty(),
+        )
+    }
+
+    /**
      * NOTHING IS LOGGED. Not a debug line, not an error, not a stack trace.
      *
      * Logcat is readable by the user, by any debugger attached to the device, and

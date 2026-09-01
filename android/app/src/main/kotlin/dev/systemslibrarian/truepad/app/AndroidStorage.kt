@@ -135,7 +135,7 @@ object AndroidStorage {
                     // Control characters, including the NUL and the bidi
                     // overrides that can make a name render as something else.
                     c.isISOControl() -> append('_')
-                    c == '‮' || c == '‭' || c == '‏' || c == '‎' -> append('_')
+                    c == '\u202E' || c == '\u202D' || c == '\u200F' || c == '\u200E' -> append('_')
                     else -> append(c)
                 }
             }
