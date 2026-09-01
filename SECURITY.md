@@ -15,23 +15,19 @@ build it.
 
 ## Reporting a vulnerability
 
-**Private vulnerability reporting is currently disabled on this repository, so
-there is no private channel here today.** That is a statement of fact, not a
-policy preference, and it is the honest answer rather than an invented address.
+**Private vulnerability reporting is enabled on this repository.** Use GitHub's
+own **Report a vulnerability** button — on the repository's **Security** tab,
+under **Advisories** — to open a private advisory only the maintainers can see.
+That is the correct route for anything with working exploit detail, and it keeps
+the report out of public view until there is a fix to disclose alongside it.
 
-Until it is enabled:
-
-- **Do not put working exploit detail in a public issue.** Open an issue that
-  describes the *class* of problem — "pad reuse reachable through X", "a secret
-  crosses the worker boundary in Y" — and say you have details to share
-  privately. That is enough for a maintainer to enable private reporting and
-  come back to you, and it does not hand anyone a recipe in the meantime.
-- If you would rather not open anything public at all, that is a reasonable
-  choice, and the gap is ours rather than yours.
-
-Maintainers: private vulnerability reporting can be turned on for this
-repository, after which GitHub's own **Report a vulnerability** button becomes
-the correct route and this section should be rewritten to point at it.
+- **Do not put working exploit detail in a public issue.** The private advisory
+  is the place for a proof of concept, a reproduction, or a concrete path to pad
+  reuse or a secret crossing the worker boundary. A public issue may describe the
+  *class* of problem, but the recipe belongs in the private channel.
+- If you would rather sketch the *class* of problem publicly first — "pad reuse
+  reachable through X", "a secret crosses the worker boundary in Y" — and share
+  the specifics through the private advisory, that is welcome too.
 
 ## In scope
 

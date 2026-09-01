@@ -406,7 +406,7 @@ What that route claims, and what it does not:
 `docs/SEALED-PAD-TRANSFER.md` is normative for all of the above;
 `docs/SEALED-PAD-TRANSFER-RELEASE-AUDIT.md` records how it was verified.
 
-### 6.3 The source claim is independent of the platform claim
+### 6.4 The source claim is independent of the platform claim
 
 Choosing the external ceremony gives this edition **none** of §8's absent
 guarantees: no power-loss durability, no independent external rollback

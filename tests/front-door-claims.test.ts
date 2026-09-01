@@ -195,9 +195,12 @@ describe("SECURITY.md is truthful about what exists", () => {
     expect(SECURITY.startsWith("# Security Policy")).toBe(true);
     const report = SECURITY.slice(SECURITY.indexOf("## Reporting a vulnerability"));
     const section = report.slice(0, report.indexOf("\n## "));
-    // Either it says PVR is on and points at it, or it says plainly that there
-    // is no private channel. What it may never do is invent one.
-    expect(section).toMatch(/private vulnerability reporting is currently disabled|Report a vulnerability/i);
+    // Private vulnerability reporting is enabled on this repository, so the
+    // policy must point researchers at GitHub's "Report a vulnerability" button
+    // and must NOT tell them the private channel is unavailable — that would be
+    // a stale, incorrect security policy.
+    expect(section).toMatch(/Report a vulnerability/i);
+    expect(section, "PVR is enabled; must not claim it is disabled").not.toMatch(/currently disabled/i);
     expect(section, "no invented contact address").not.toMatch(/[a-z0-9._-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
     expect(section, "must warn against public exploit detail").toMatch(/[Dd]o not put working exploit detail/);
   });
