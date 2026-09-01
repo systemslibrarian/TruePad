@@ -12,11 +12,27 @@ package dev.systemslibrarian.truepad.core
 
 private const val KEY_BYTES = 16
 
+// The reference implementation is JavaScript, so every count it can represent
+// exactly is bounded by Number.MAX_SAFE_INTEGER. Staying inside the reference's
+// domain is what keeps the two implementations in agreement.
+private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
+
 /** L = 2·(E + 32·N): the exact byte count every declared source must supply. */
 fun requiredSourceLength(capacity: Long, capacityRecords: Long): Long {
-    require(capacity >= 0) { "capacity must be non-negative, not $capacity" }
-    require(capacityRecords >= 0) { "capacityRecords must be non-negative, not $capacityRecords" }
-    return 2 * (capacity + AUTH_RECORD_BYTES * capacityRecords)
+    require(capacity in 0..MAX_SAFE_INTEGER) { "capacity must be a non-negative safe integer, not $capacity" }
+    require(capacityRecords in 0..MAX_SAFE_INTEGER) {
+        "capacityRecords must be a non-negative safe integer, not $capacityRecords"
+    }
+    // The reference computes in Number and is bounded by Number.isSafeInteger.
+    // A Kotlin Long reaches further and would wrap silently past where the
+    // reference stops being exact, so the ceiling is enforced on the RESULT too.
+    val authBytes = AUTH_RECORD_BYTES.toLong() * capacityRecords
+    require(authBytes <= MAX_SAFE_INTEGER) { "32 * $capacityRecords exceeds the safe-integer range" }
+    val total = 2 * (capacity + authBytes)
+    require(total in 0..MAX_SAFE_INTEGER) {
+        "2*(E + 32*N) = $total exceeds the safe-integer range for E=$capacity, N=$capacityRecords"
+    }
+    return total
 }
 
 class PairSlices(
@@ -72,11 +88,17 @@ fun partition(combined: ByteArray, capacity: Int, capacityRecords: Int): PairSli
 /** Auth record `sequence`: K_s = [32s,32s+16), R_s = [32s+16,32s+32) (slice-local). */
 fun authRecordAt(authSlice: ByteArray, sequence: Int): Pair<ByteArray, ByteArray> {
     require(sequence >= 0) { "sequence must be non-negative, not $sequence" }
-    val start = sequence * AUTH_RECORD_BYTES
-    require(start + AUTH_RECORD_BYTES <= authSlice.size) {
+    // Computed in Long, DELIBERATELY. In Int, sequence * 32 wraps at 2^27: the
+    // bound check below would then pass and this would hand back auth record 0's
+    // K and R for a completely different sequence - the same one-time key used
+    // twice, which is the one failure this product exists to prevent. The
+    // reference computes in Number and simply throws. Never narrow this.
+    val start = sequence.toLong() * AUTH_RECORD_BYTES
+    require(start + AUTH_RECORD_BYTES <= authSlice.size.toLong()) {
         "auth record $sequence needs slice bytes [$start, ${start + AUTH_RECORD_BYTES}) but the slice holds ${authSlice.size}"
     }
-    val key = authSlice.copyOfRange(start, start + KEY_BYTES)
-    val mask = authSlice.copyOfRange(start + KEY_BYTES, start + AUTH_RECORD_BYTES)
+    val from = start.toInt()
+    val key = authSlice.copyOfRange(from, from + KEY_BYTES)
+    val mask = authSlice.copyOfRange(from + KEY_BYTES, from + AUTH_RECORD_BYTES)
     return key to mask
 }

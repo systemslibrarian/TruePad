@@ -33,8 +33,30 @@ fun parseJson(text: String): JsonValue {
     return v
 }
 
+/*
+ * A hostile document can nest thousands of levels deep. This parser is recursive
+ * descent, so without a cap a deep nest is a StackOverflowError - an Error, not
+ * the JsonParseException every caller catches - and it would escape the decoder
+ * and kill the operation instead of producing a clean typed refusal. JSON.parse
+ * has its own engine limit and throws a catchable SyntaxError; this keeps the
+ * failure inside the same channel.
+ */
+private const val MAX_JSON_DEPTH = 200
+
 private class JsonParser(private val s: String) {
     var pos = 0
+    private var depth = 0
+
+    private inline fun <T> nested(build: () -> T): T {
+        if (++depth > MAX_JSON_DEPTH) {
+            throw JsonParseException("JSON nested deeper than $MAX_JSON_DEPTH at index $pos")
+        }
+        try {
+            return build()
+        } finally {
+            depth -= 1
+        }
+    }
 
     fun atEnd(): Boolean = pos >= s.length
 
@@ -55,8 +77,8 @@ private class JsonParser(private val s: String) {
     fun parseValue(): JsonValue {
         skipWs()
         return when (peek()) {
-            '{' -> parseObject()
-            '[' -> parseArray()
+            '{' -> nested { parseObject() }
+            '[' -> nested { parseArray() }
             '"' -> JsonString(parseString())
             't', 'f' -> parseBool()
             'n' -> { expect("null"); JsonNull }
@@ -137,8 +159,16 @@ private class JsonParser(private val s: String) {
                         'u' -> {
                             if (pos + 4 >= s.length) throw JsonParseException("bad \\u escape")
                             val hex = s.substring(pos + 1, pos + 5)
-                            val code = hex.toIntOrNull(16) ?: throw JsonParseException("bad \\u escape '$hex'")
-                            sb.append(code.toChar())
+                            // EXACTLY four hex digits. toIntOrNull(16) would also
+                            // accept a leading sign - "+123" parses as 0x123 - which
+                            // JSON.parse refuses. Accepting it would let Android read
+                            // a head.json the CLI and Browser reject, and on an
+                            // envelope it could flip the normative v1-vs-malformed
+                            // refusal precedence.
+                            if (!hex.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) {
+                                throw JsonParseException("bad \\u escape '$hex'")
+                            }
+                            sb.append(hex.toInt(16).toChar())
                             pos += 4
                         }
                         else -> throw JsonParseException("invalid escape '\\$e'")
