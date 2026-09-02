@@ -79,6 +79,30 @@ export type RollbackAuthority =
   | { kind: "separate-state-file"; health: WitnessHealth }
   | { kind: "platform-monotonic"; health: WitnessHealth };
 
+/** The LIVE ceremony-assurance the independent platform authority attests for
+ *  THIS pair — the strong-making fact that pair-directory JSON cannot forge
+ *  (TruePad 3.0, §2-§7). It lives in the TPM-anchored platform state, outside the
+ *  pair directory, and each level is reached only by a real ceremony operation
+ *  that consumes a TPM increment.
+ *
+ *  - `unavailable`      no platform authority (no TPM witness, or unreachable):
+ *                       the maximum-assurance ceremony facts cannot be attested.
+ *  - `ordinary`         the authority attests NO ceremony for this pair (a plain
+ *                       gen pair, or a pair whose provenance merely CLAIMS a
+ *                       ceremony the authority never recorded).
+ *  - `ceremony-created` the physical ceremony created this pair (handoff pending).
+ *  - `handoff-accepted` the private handoff was accepted — the load-bearing fact.
+ *  - `withdrawn`        a terminal, platform-attested downgrade (never reversible
+ *                       by deleting or editing a pair-directory sidecar).
+ *  - `inconsistent`     the authority's state is stale/substituted/corrupt. */
+export type AssuranceAuthority =
+  | "unavailable"
+  | "ordinary"
+  | "ceremony-created"
+  | "handoff-accepted"
+  | "withdrawn"
+  | "inconsistent";
+
 export interface DeploymentFacts {
   creation: CreationClass;
   source: SourceClass;
@@ -92,6 +116,11 @@ export interface DeploymentFacts {
    *  under the pair lock. A configured-but-degraded witness never satisfies the
    *  strongest requirement, and a regressed/inconsistent one is disqualifying. */
   rollback: RollbackAuthority;
+  /** The LIVE ceremony-assurance the independent platform authority attests for
+   *  this pair — the strong ceremony facts that editable pair-directory JSON
+   *  cannot mint. Only `handoff-accepted` satisfies the maximum-assurance
+   *  ceremony requirement; `withdrawn`/`inconsistent` are disqualifying. */
+  assuranceAuthority: AssuranceAuthority;
 }
 
 export type Assessment = "conditionally-eligible" | "not-eligible" | "insufficient-evidence";
@@ -152,10 +181,24 @@ export function assessDeployment(f: DeploymentFacts): DeploymentAssessment {
       return notEligible("the rollback witness is in an inconsistent state (corruption, or a foreign authority)");
     }
   }
+  // The independent platform ceremony-assurance authority (§2-§7). A terminal
+  // withdrawal it attests is permanent and cannot be undone by editing or
+  // deleting a pair-directory sidecar; an inconsistent (stale/substituted)
+  // authority fails closed.
+  if (f.assuranceAuthority === "withdrawn") {
+    return notEligible(
+      "the platform authority attests a TERMINAL withdrawal of this pair's ceremony premises — a permanent downgrade"
+    );
+  }
+  if (f.assuranceAuthority === "inconsistent") {
+    return notEligible("the platform ceremony-assurance authority is inconsistent (stale, substituted, or corrupt)");
+  }
 
-  // 2 — the single strongest path. Every condition must hold, and the rollback
-  //     component requires a LIVE, healthy platform-monotonic authority — a
-  //     separate-state-file witness, however healthy, does not satisfy it (§3).
+  // 2 — the single strongest path. Every condition must hold. The rollback
+  //     component requires a LIVE, healthy platform-monotonic authority (§3), and
+  //     the ceremony facts must be attested by the INDEPENDENT platform authority
+  //     as `handoff-accepted` (§2) — editable provenance.json alone is NOT
+  //     sufficient to mint the ceremony/handoff story.
   const maximalExceptRollback =
     f.creation === "cli-ceremony" &&
     f.source === "external-declared" &&
@@ -163,7 +206,12 @@ export function assessDeployment(f: DeploymentFacts): DeploymentAssessment {
     f.sealedAncestor === false &&
     f.ceremonyPremises === "accepted" &&
     f.storage === "native";
-  if (maximalExceptRollback && f.rollback.kind === "platform-monotonic" && f.rollback.health === "healthy") {
+  if (
+    maximalExceptRollback &&
+    f.rollback.kind === "platform-monotonic" &&
+    f.rollback.health === "healthy" &&
+    f.assuranceAuthority === "handoff-accepted"
+  ) {
     return { assessment: "conditionally-eligible", knownReason: null };
   }
 
@@ -188,6 +236,22 @@ export function assessDeployment(f: DeploymentFacts): DeploymentAssessment {
       return insufficient(
         "the platform-monotonic rollback authority is unsupported in this build, so the maximum-assurance rollback " +
           "requirement is not confirmed"
+      );
+    }
+    // The rollback authority IS a live healthy platform-monotonic witness, so
+    // the only thing left is the independent ceremony attestation. The provenance
+    // may CLAIM a ceremony, but the platform authority is what makes it
+    // load-bearing (§2): editable provenance.json alone cannot mint it.
+    if (f.rollback.kind === "platform-monotonic" && f.rollback.health === "healthy") {
+      if (f.assuranceAuthority === "unavailable") {
+        return insufficient(
+          "the platform ceremony-assurance authority does not attest a completed ceremony for this pair (it reads " +
+            "unavailable); a provenance.json that merely claims a ceremony is not sufficient"
+        );
+      }
+      return insufficient(
+        `the platform authority has not attested an accepted private handoff for this pair (ceremony assurance: ` +
+          `${f.assuranceAuthority}); a provenance.json that merely claims one is not sufficient`
       );
     }
     return insufficient(
@@ -251,6 +315,18 @@ export function rollbackAuthorityLabel(r: RollbackAuthority): string {
         : `platform-monotonic (${r.health}) — not currently satisfying the maximum-assurance requirement`;
   }
 }
+
+/** A human line for the independent platform ceremony-assurance authority. Only
+ *  `handoff-accepted` (attested by the TPM-anchored authority) satisfies the
+ *  maximum-assurance ceremony requirement. */
+export const ASSURANCE_AUTHORITY_LABEL: Record<AssuranceAuthority, string> = {
+  unavailable: "unavailable (no platform ceremony authority)",
+  ordinary: "ordinary (no ceremony attested by the platform authority)",
+  "ceremony-created": "ceremony-created (platform-attested; handoff pending)",
+  "handoff-accepted": "handoff-accepted (platform-attested)",
+  withdrawn: "WITHDRAWN (platform-attested terminal downgrade)",
+  inconsistent: "inconsistent (stale/substituted/corrupt platform authority)"
+};
 
 /** The premises TruePad did NOT prove — shown wherever CONDITIONALLY ELIGIBLE is
  *  displayed (§40), so the label can never be screenshot alone as "secure". */

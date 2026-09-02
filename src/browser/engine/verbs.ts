@@ -667,7 +667,11 @@ async function deriveDeployment(vfs: Vfs, pairId: string): Promise<DeploymentVie
     ceremonyPremises: "absent",
     // A Browser Edition pad's live state lives in ordinary browser storage.
     storage: "browser-opfs",
-    rollback: browserRollbackAuthority(meta.witness)
+    rollback: browserRollbackAuthority(meta.witness),
+    // The browser has no independent platform ceremony authority; it can never
+    // attest a maximum-assurance ceremony (and browser storage already
+    // disqualifies it before this axis matters).
+    assuranceAuthority: "unavailable"
   };
   const { assessment, knownReason } = assessDeployment(facts);
   return { assessment, creation, source, delivery, sealedAncestor, knownReason: knownReason ?? null };

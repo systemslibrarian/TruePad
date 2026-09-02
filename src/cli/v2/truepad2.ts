@@ -39,7 +39,7 @@ import {
   unlinkSync,
   writeSync
 } from "node:fs";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { bytesToHex, hexToBytes } from "../../core/hex.ts";
 import type { PadDirection, Party } from "../../core/pad.ts";
@@ -98,21 +98,25 @@ import {
 import {
   initPlatformWitness,
   platformAdvance,
+  platformAssurance,
   platformHealth,
   platformPreflight,
   validatePlatformState,
+  type PlatformAssurance,
   type PlatformConfig,
   type PlatformHealth
 } from "./platform-witness.ts";
 import {
   ASSESSMENT_LABEL,
   assessDeployment,
+  ASSURANCE_AUTHORITY_LABEL,
   CONDITIONAL_CAVEAT,
   CREATION_LABEL,
   DELIVERY_LABEL,
   rollbackAuthorityLabel,
   SOURCE_LABEL,
   UNPROVEN_PREMISES,
+  type AssuranceAuthority,
   type DeploymentFacts,
   type RollbackAuthority,
   type WitnessHealth
@@ -435,16 +439,51 @@ function requireNotFrozen(pair: LoadedPair): void {
  * status reads and reports the witness but refuses nothing (§15.3).
  */
 
+/**
+ * The witness/authority state file that `head.json` names MUST live OUTSIDE the
+ * pair directory (TruePad 3.0 authority-redirect closure). `head.json` is an
+ * ordinary, unauthenticated pair-directory file: an attacker bounded to
+ * pair-directory writes can forge a whole platform/witness state (with the
+ * readable current TPM anchor and a fabricated assurance map) INSIDE the pair
+ * directory and redirect `rollback.config` at it, laundering a plain-gen pair to
+ * gold. The independent authority is, by definition, external; a statePath that
+ * resolves inside (or under) the pair directory is not independent and is
+ * rejected everywhere the authority is consumed — assessment and burn/open/retire.
+ * (An external state file the attacker cannot write is outside this threat
+ * boundary; see docs/MAXIMUM-ASSURANCE.md.)
+ */
+function witnessPathInsidePair(statePath: string, pairDir: string): boolean {
+  const p = resolve(statePath);
+  const base = resolve(pairDir);
+  return p === base || p.startsWith(base + sep);
+}
+
 // §15.3 PREFLIGHT. none is a no-op; separate-state-file and platform-monotonic
 // (provider tpm2-nv-counter-v1) read the witness and refuse a store that sits
 // strictly below it (witness-regressed — the restored-store signature of §9.4);
 // remote-monotonic is refused witness-unsupported, never silently downgraded.
 // All refusals are free: no byte of secret.bin is touched and no journal line
-// is appended.
-function witnessPreflight(store: LoadedStore2): WitnessSnapshot | null {
+// is appended. `pairDir` is the pair directory: a witness whose state file the
+// header points INSIDE it is rejected (an in-pair-dir authority is not
+// independent — the authority-redirect closure).
+function witnessPreflight(store: LoadedStore2, pairDir: string): WitnessSnapshot | null {
   const rollback = store.head.rollback;
   if (rollback.witnessClass === "none") {
     return null;
+  }
+  const configPath =
+    rollback.witnessClass === "platform-monotonic"
+      ? (rollback.config as unknown as PlatformConfig).statePath
+      : rollback.witnessClass === "separate-state-file"
+        ? rollback.config.path
+        : null;
+  if (configPath !== null && witnessPathInsidePair(configPath, pairDir)) {
+    throw new Refused2(
+      "witness-unsupported",
+      `this pair's rollback witness state file (${configPath}) resolves INSIDE the pair directory. A rollback ` +
+        "authority must be independent of the pair it protects — an in-pair-directory witness is not, and is refused " +
+        "so a forged in-pair authority cannot be adopted. Re-point the witness at an external path. Nothing was burned."
+    );
   }
   if (rollback.witnessClass === "platform-monotonic") {
     // The TPM-anchored authority (§15.2, provider tpm2-nv-counter-v1). Every
@@ -1002,7 +1041,7 @@ export function burn(args: Args2): void {
     const halfDir = join(dir, SUBDIR2[direction]);
     // §15.3 preflight, free and for this direction's store only: a store below
     // its rollback witness refuses before anything is consumed.
-    const witnessSnapshot = witnessPreflight(store);
+    const witnessSnapshot = witnessPreflight(store, dir);
     // §16.2: on a fixed store the plaintext is framed to exactly F bytes
     // (length prefix hides the message length on the wire), and C = F flows
     // through the unchanged §12.2 path. A plaintext past F − 4 is refused
@@ -1210,7 +1249,7 @@ export function open(args: Args2): void {
     requireNotFrozen(pair);
     // §15.3 preflight, before any verification: a store below its rollback
     // witness refuses here, so no attempt reservation is ever written.
-    const witnessSnapshot = witnessPreflight(store);
+    const witnessSnapshot = witnessPreflight(store, dir);
     const attempts = effective.attempts.get(sequence) ?? 0;
     if (attempts >= head.authentication.verifyAttemptLimit) {
       throw new Refused2(
@@ -1469,18 +1508,50 @@ function worstHealth(a: WitnessHealth, b: WitnessHealth): WitnessHealth {
  *  directions are probed and the worst health governs (a rollback on either
  *  half is a rollback). `remote-monotonic` cannot be generated (gen refuses it),
  *  so anything unexpected is reported `unknown` — never trusted. */
-function rollbackAuthorityForPair(pair: LoadedPair, tpm?: Parameters<typeof platformHealth>[4]): RollbackAuthority {
+function rollbackAuthorityForPair(pair: LoadedPair, pairDir: string, tpm?: Parameters<typeof platformHealth>[4]): RollbackAuthority {
   const a = pair["A->B"].head.rollback.witnessClass;
   const b = pair["B->A"].head.rollback.witnessClass;
   if (a !== b) return { kind: "unknown" }; // the two halves disagree on the witness class
   if (a === "none") return { kind: "none" };
   if (a === "separate-state-file") {
+    // Authority-redirect closure: an in-pair-directory witness is not independent.
+    if (witnessPathInsidePair(pair["A->B"].head.rollback.config.path, pairDir)) {
+      return { kind: "separate-state-file", health: "inconsistent" };
+    }
     return { kind: "separate-state-file", health: worstHealth(separateHealthOf(pair["A->B"]), separateHealthOf(pair["B->A"])) };
   }
   if (a === "platform-monotonic") {
+    const statePath = (pair["A->B"].head.rollback.config as unknown as PlatformConfig).statePath;
+    if (witnessPathInsidePair(statePath, pairDir)) {
+      return { kind: "platform-monotonic", health: "inconsistent" };
+    }
     return { kind: "platform-monotonic", health: worstHealth(platformHealthOf(pair["A->B"], tpm), platformHealthOf(pair["B->A"], tpm)) };
   }
   return { kind: "unknown" };
+}
+
+/** The LIVE ceremony-assurance the INDEPENDENT platform authority attests for
+ *  this pair (§2-§7). Only a pair backed by a platform-monotonic witness whose
+ *  state file is EXTERNAL to the pair directory can be attested; every other pair
+ *  reads `unavailable`, and an in-pair-directory (non-independent, redirect-forged)
+ *  authority reads `inconsistent`. So no editable pair-directory file — neither
+ *  provenance.json nor a forged in-pair authority pointed at by head.json — can
+ *  produce a maximum-assurance ceremony. The probe is read-only (no TPM increment). */
+function assuranceAuthorityForPair(
+  pair: LoadedPair,
+  sharedPairId: string | null,
+  pairDir: string,
+  tpm?: Parameters<typeof platformAssurance>[2]
+): AssuranceAuthority {
+  const a = pair["A->B"].head.rollback.witnessClass;
+  const b = pair["B->A"].head.rollback.witnessClass;
+  if (sharedPairId === null || a !== b || a !== "platform-monotonic") return "unavailable";
+  const config = pair["A->B"].head.rollback.config as unknown as PlatformConfig;
+  // Authority-redirect closure: an in-pair-directory authority is not independent
+  // and cannot attest anything, however well-formed its forged state file is.
+  if (witnessPathInsidePair(config.statePath, pairDir)) return "inconsistent";
+  const level: PlatformAssurance = platformAssurance(config, sharedPairId, tpm);
+  return level;
 }
 
 /**
@@ -1508,6 +1579,8 @@ function assembleDeploymentFacts(pair: LoadedPair, pairDir: string, tpm?: Parame
   const usable = bound ? provenance : null; // an unbound/mismatched record is UNKNOWN
 
   // The withdrawal authority is independent of provenance.json and monotonic.
+  // (For a platform pair the LOAD-BEARING withdrawal lives in the platform
+  // authority below; the sidecar remains a descriptive convenience.)
   const withdrawn = sharedPairId !== null && isWithdrawn(pairDir, sharedPairId);
   const ceremonyPremises = withdrawn ? "withdrawn" : (usable?.ceremonyPremises ?? "unknown");
 
@@ -1518,7 +1591,10 @@ function assembleDeploymentFacts(pair: LoadedPair, pairDir: string, tpm?: Parame
     sealedAncestor: usable === null ? "unknown" : usable.sealedAncestor,
     ceremonyPremises,
     storage: "native",
-    rollback: rollbackAuthorityForPair(pair, tpm)
+    rollback: rollbackAuthorityForPair(pair, pairDir, tpm),
+    // The independent platform ceremony-assurance: the strong ceremony facts that
+    // editable pair-directory JSON cannot mint (§2). Read-only, under the lock.
+    assuranceAuthority: assuranceAuthorityForPair(pair, sharedPairId, pairDir, tpm)
   };
 }
 
@@ -1560,6 +1636,19 @@ function printDeploymentClaims(pair: LoadedPair, pairDir: string): void {
   err(claimRow("irreversible counters", "ACTIVE"));
   err(claimRow("live storage authority", "NATIVE"));
   err(claimRow("rollback authority", rollbackAuthorityLabel(facts.rollback)));
+  err("  Ceremony authority (independent platform attestation)");
+  err(claimRow("ceremony assurance", ASSURANCE_AUTHORITY_LABEL[facts.assuranceAuthority]));
+  if (
+    (facts.assuranceAuthority === "ordinary" || facts.assuranceAuthority === "ceremony-created") &&
+    (facts.creation === "cli-ceremony" || facts.delivery === "physical-private-operator-asserted") &&
+    facts.ceremonyPremises === "accepted"
+  ) {
+    // A platform authority EXISTS but does not attest the accepted handoff the
+    // provenance claims — the same-pair forgery signal (§2, Attack A). (When no
+    // platform authority exists at all — `unavailable` — this is simply a
+    // non-platform pair, not a forgery, so no warning.)
+    err(claimRow("provenance vs authority", "provenance claims an accepted ceremony the platform authority does not attest"));
+  }
   err("  Deployment assessment (derived)");
   err(`    ${ASSESSMENT_LABEL[assessment]}`);
   if (assessment === "conditionally-eligible") {
@@ -1705,7 +1794,7 @@ export function retire(args: Args2): void {
     const halfDir = join(dir, SUBDIR2[direction]);
     // §15.3 preflight, free and before anything is consumed: retire advances
     // high-waters, so a store below its witness refuses here too.
-    const witnessSnapshot = witnessPreflight(store);
+    const witnessSnapshot = witnessPreflight(store, dir);
     if (throughSequence >= head.authentication.capacityRecords) {
       throw new Refused2(
         "sequence-malformed",

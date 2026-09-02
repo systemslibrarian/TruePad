@@ -56,6 +56,7 @@ import { HEAD_FILE, JOURNAL_FILE, loadStore2, SECRET_FILE, type LoadedStore2 } f
 import { gen, Refused2, SUBDIR2, withPair, type Args2, type LoadedPair } from "./truepad2.ts";
 import { ceremonyProvenance, PROVENANCE_FILE, provenanceBoundTo, readProvenance, writeProvenance } from "./provenance.ts";
 import { isWithdrawn, withdrawalRecord, writeWithdrawal } from "./withdrawal.ts";
+import { platformAssurance, platformRecordAssurance, type AssuranceLevel, type PlatformConfig } from "./platform-witness.ts";
 
 /* ---- the operator assertions ----------------------------------------------
  * Presence flags (parseArgs2 consumes no value for them): the operator makes
@@ -525,12 +526,47 @@ export function ceremonyCreate(args: Args2): void {
 
   const manifest = JSON.parse(readFileSync(join(pairDir, "manifest.json"), "utf8")) as Manifest;
 
+  // LOAD-BEARING ceremony authority (§5): if this ceremony is anchored to a
+  // platform-monotonic (TPM) authority, record `ceremony-created` for THIS pair
+  // in that independent authority, outside the pair directory. A plain `gen`
+  // store NEVER records this, so a gen pair whose provenance.json is later edited
+  // to claim `cli-ceremony` cannot be accepted or ranked maximum-assurance —
+  // `ceremony accept` will find the authority at `ordinary` and refuse (Attack A).
+  const headForAssurance = JSON.parse(readFileSync(join(pairDir, SUBDIR2["A->B"], HEAD_FILE), "utf8")) as {
+    rollback?: { witnessClass?: string; config?: unknown };
+  };
+  if (headForAssurance.rollback?.witnessClass === "platform-monotonic") {
+    const config = headForAssurance.rollback.config as PlatformConfig;
+    // Authority-redirect closure: the platform authority MUST be external to the
+    // pair (it is copied to media, and an in-pair authority is not independent).
+    // Refuse before provisioning rather than build a pair that can never be gold.
+    const stateResolved = resolve(config.statePath);
+    const pairResolved = resolve(pairDir);
+    if (stateResolved === pairResolved || stateResolved.startsWith(pairResolved + sep)) {
+      throw new Refused2(
+        "ceremony-incomplete",
+        `the platform witness state file (${config.statePath}) is inside the ceremony workspace/pair directory. The ` +
+          "rollback authority must be independent of the pair it protects — point --witness-path at an external " +
+          "location. Nothing usable was provisioned."
+      );
+    }
+    const created = platformRecordAssurance(config, manifest.pairId, "ceremony-created");
+    if (!created.ok) {
+      throw new Refused2(
+        "ceremony-incomplete",
+        `the independent platform ceremony authority could not record this pair's ceremony creation: ${created.message} ` +
+          "Nothing usable was provisioned."
+      );
+    }
+  }
+
   // Overwrite gen's `cli-gen` provenance with the ceremony's: this pair was
   // created by the physical ceremony, and every operator premise was asserted.
   // Delivery is still `local-only` — the private-handoff fact is established
   // ONLY by the one-way `ceremony accept` step on a peer medium, never here.
   // This is durable BEFORE the media are copied, so both peers carry it and it
-  // is byte-verified.
+  // is byte-verified. (On a platform pair the provenance is DESCRIPTIVE; the
+  // load-bearing ceremony fact is the platform assurance recorded just above.)
   writeProvenance(pairDir, ceremonyProvenance(manifest.pairId, manifest.createdAt));
 
   // Provision the two peer media: each receives the WHOLE pair — both
@@ -754,6 +790,35 @@ function requireSharedPairId(pair: LoadedPair): string {
   return idA;
 }
 
+// The platform config a pair is bound to, if BOTH halves carry a
+// platform-monotonic witness; else null. The ceremony-assurance ladder lives in
+// that independent, TPM-anchored authority (§2-§7), outside the pair directory.
+function platformConfigOfPair(pair: LoadedPair): PlatformConfig | null {
+  const a = pair["A->B"].head.rollback;
+  const b = pair["B->A"].head.rollback;
+  if (a.witnessClass !== "platform-monotonic" || b.witnessClass !== "platform-monotonic") return null;
+  return a.config as unknown as PlatformConfig;
+}
+
+// Advance the platform ceremony-assurance ladder for this pair, refusing if the
+// INDEPENDENT authority will not attest the transition — this is what stops a
+// forged provenance (a plain-gen pair the authority never recorded as
+// ceremony-created) from being accepted (§2, Attack A). A non-platform pair has
+// no such authority to advance; the caller records only the descriptive sidecar,
+// and such a pair can never reach the maximum-assurance verdict anyway.
+function advancePlatformAssurance(pair: LoadedPair, pairId: string, target: AssuranceLevel): boolean {
+  const config = platformConfigOfPair(pair);
+  if (config === null) return false;
+  const r = platformRecordAssurance(config, pairId, target);
+  if (!r.ok) {
+    throw new Refused2(
+      "ceremony-incomplete",
+      `the independent platform ceremony authority did not attest this transition: ${r.message} Nothing was changed.`
+    );
+  }
+  return true;
+}
+
 export function ceremonyAccept(args: Args2): void {
   const mediumArg = args.positional[2];
   if (mediumArg === undefined) {
@@ -833,12 +898,21 @@ export function ceremonyAccept(args: Args2): void {
       );
     }
 
-    // One-way transition, durable BEFORE anything is reported, under the lock.
+    // LOAD-BEARING transition first: advance the INDEPENDENT platform authority
+    // to handoff-accepted. On a platform pair this REFUSES unless the authority
+    // already attests ceremony-created — so a forged provenance on a plain-gen
+    // pair (which the authority never recorded) cannot be accepted (§2/§6,
+    // Attack A). A non-platform pair has no authority to advance and only the
+    // descriptive sidecar is written (such a pair is never maximum-assurance).
+    const platformAttested = advancePlatformAssurance(pair, pairId, "handoff-accepted");
+
+    // Descriptive one-way sidecar, durable BEFORE anything is reported.
     writeProvenance(medium, { ...record, delivery: "physical-private-operator-asserted" });
 
     err("CEREMONY HANDOFF ACCEPTED");
     err(`  medium:  ${medium}`);
     err(`  pairId:  ${pairId}`);
+    err(`  authority: ${platformAttested ? "platform-attested (handoff-accepted)" : "descriptive only (no platform authority; not maximum-assurance)"}`);
     err(`  role:    ${as}`);
     err(
       "  TruePad recorded this OPERATOR ASSERTION. It did NOT observe the courier and cannot prove the handoff was " +
@@ -885,9 +959,12 @@ export function ceremonyWithdraw(args: Args2): void {
 
   withPair(medium, (pair) => {
     const pairId = requireSharedPairId(pair);
+    const config = platformConfigOfPair(pair);
 
-    if (isWithdrawn(medium, pairId)) {
-      // Idempotent: the downgrade is already durable and permanent.
+    // Already-withdrawn is decided by the LOAD-BEARING authority: the platform
+    // authority for a platform pair, the sidecar otherwise.
+    const alreadyWithdrawn = config !== null ? platformAssurance(config, pairId) === "withdrawn" : isWithdrawn(medium, pairId);
+    if (alreadyWithdrawn) {
       err("CEREMONY PREMISES ALREADY WITHDRAWN");
       err(`  medium:  ${medium}`);
       err(`  pairId:  ${pairId}`);
@@ -896,17 +973,23 @@ export function ceremonyWithdraw(args: Args2): void {
       return;
     }
 
-    // Durable, pair-bound, BEFORE anything is reported, under the lock.
+    // LOAD-BEARING terminal transition first: record `withdrawn` in the
+    // independent platform authority (§7). For a platform pair this is what
+    // makes the downgrade survive deleting or corrupting the sidecar, and a
+    // stale restore of the platform state is caught by its anchor.
+    const platformAttested = advancePlatformAssurance(pair, pairId, "withdrawn");
+    // Descriptive sidecar, durable BEFORE anything is reported.
     writeWithdrawal(medium, withdrawalRecord(pairId, new Date().toISOString(), reason));
 
     err("CEREMONY PREMISES WITHDRAWN");
     err(`  medium:  ${medium}`);
     err(`  pairId:  ${pairId}`);
+    err(`  authority: ${platformAttested ? "platform-attested terminal (survives sidecar deletion/corruption)" : "descriptive sidecar only (no platform authority)"}`);
     err(`  role:    ${as}`);
     err(`  reason:  ${reason}`);
     err(
-      "  This is a PERMANENT downgrade recorded in a separate durable authority. Restoring an older provenance.json " +
-        "cannot raise the classification again. This pair is now NOT ELIGIBLE."
+      "  This is a PERMANENT downgrade. On a platform pair it is attested by the independent TPM-anchored authority, " +
+        "so deleting or editing pair-directory files cannot raise the classification again. This pair is now NOT ELIGIBLE."
     );
     out(JSON.stringify({ medium, as, pairId, ceremonyPremises: "withdrawn", changed: true }));
   });

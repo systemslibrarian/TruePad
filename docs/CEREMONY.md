@@ -286,12 +286,15 @@ node bin/truepad2.mjs ceremony accept <medium-dir> --as A|B \
 This is a one-way boundary. It refuses anything but a ceremony pad whose
 premises were recorded (a plain `gen` store, an imported or sealed lineage,
 or an unreadable provenance all fail closed and change nothing); it requires
-**both** operator assertions and names any that are missing; and it writes
-the durable `delivery = physical private handoff (operator premise)` fact
-before it reports. Its pad-book record says plainly that **TruePad recorded
-an operator assertion and did not observe the courier** — it cannot prove the
-handoff was private or that no other copy exists. A second `accept` refuses,
-and nothing moves the delivery back.
+**both** operator assertions and names any that are missing. On a
+**platform-monotonic (TPM) pair** it advances the *independent platform
+authority* to `handoff-accepted` — which refuses unless that authority already
+attests `ceremony-created`, so a pair whose `provenance.json` merely *claims* a
+ceremony the platform never recorded cannot be accepted. It then writes the
+descriptive `provenance.json` and reports. Its pad-book record says plainly that
+**TruePad recorded an operator assertion and did not observe the courier** — it
+cannot prove the handoff was private or that no other copy exists. A second
+`accept` refuses, and nothing moves the delivery back.
 
 Only after acceptance — and with a **live platform-monotonic (TPM)** rollback
 authority configured at generation — does `truepad2 status` show the strongest
@@ -314,12 +317,15 @@ withdrawal:
 node bin/truepad2.mjs ceremony withdraw <medium-dir> --as A|B [--reason TEXT]
 ```
 
-This is a supported, one-way downgrade written to a SEPARATE durable authority,
-`withdrawal.json`, pair-bound by the public pairId. From then on the pair is
-NOT ELIGIBLE, and — crucially — restoring an older, stronger `provenance.json`
-cannot raise the classification again, because the evaluator consults the
-withdrawal independently and first. A withdrawn pair cannot re-accept a handoff.
-See [SHANNON-DEPLOYMENT.md §14](SHANNON-DEPLOYMENT.md).
+This is a supported, one-way downgrade. On a **platform-monotonic (TPM) pair** it
+is recorded as the terminal `withdrawn` in the *independent platform authority*,
+so it **survives deleting or corrupting** the descriptive `withdrawal.json`
+sidecar and survives restoring an older `provenance.json` — the evaluator reads
+the terminal state from the authority, and a stale restore of that authority is
+caught by its TPM anchor. On a pair with no platform authority (never a
+maximum-assurance pair) only the sidecar is written. From then on the pair is
+NOT ELIGIBLE, and a withdrawn pair cannot re-accept a handoff. See
+[SHANNON-DEPLOYMENT.md §14–§15](SHANNON-DEPLOYMENT.md).
 
 ---
 

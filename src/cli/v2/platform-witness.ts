@@ -59,10 +59,29 @@ import { PROVIDER_ID, UINT64_MAX, parseNvIndex, tpm2ToolsProvider, type TpmProvi
 
 export const PLATFORM_STATE_VERSION = 1;
 
+/* ---- ceremony assurance authority (TruePad 3.0, §2-§7) ---------------------
+ * The strong-making ceremony facts — that THIS pair was created by the physical
+ * ceremony, that its private handoff was accepted, and that it was terminally
+ * withdrawn — must not be forgeable by editing pair-directory JSON. So they live
+ * HERE, in the TPM-anchored platform authority state (outside the pair
+ * directory), and each transition consumes a TPM increment (the same crash-safe
+ * PREPARE→commit→verify as a witness advance). A stale restore of this state is
+ * caught by the anchor relation, exactly as for the witness map.
+ *
+ * The ladder is monotone and `withdrawn` is terminal:
+ *   ordinary(absent) → ceremony-created → handoff-accepted → withdrawn
+ * with `withdrawn` also reachable directly from `ceremony-created`. It never
+ * moves backward.
+ */
+export type AssuranceLevel = "ceremony-created" | "handoff-accepted" | "withdrawn";
+export type AssuranceEntry = { level: AssuranceLevel };
+
 // The durable local half of the authority. Non-secret throughout: public
 // identifiers, and the same three monotone counters §15.2 already freezes.
 // `anchor` is a DECIMAL STRING because a TPM counter is a uint64 and JavaScript
 // numbers stop being exact at 2^53 — it is parsed to BigInt, never to Number.
+// `assurance` is an OPTIONAL per-pair ceremony-authority ladder (absent for a
+// state written before 3.0, or for a pair with no ceremony authority yet).
 export type PlatformWitnessState = {
   formatVersion: number;
   provider: string;
@@ -71,6 +90,7 @@ export type PlatformWitnessState = {
   nvName: string;
   anchor: string;
   witness: Record<string, WitnessCounters>;
+  assurance: Record<string, AssuranceEntry>;
 };
 
 // What the pair header carries (rollback.config for platform-monotonic). It
@@ -148,6 +168,23 @@ export function validatePlatformState(raw: unknown): { state: PlatformWitnessSta
       attemptsReserved: value.attemptsReserved
     };
   }
+  // The optional 3.0 ceremony-assurance ladder. Absent ⇒ {} (no ceremony
+  // authority recorded). Strict when present: each entry is exactly { level }
+  // with a known ladder value, and fails closed on anything else.
+  const assurance: Record<string, AssuranceEntry> = {};
+  if (raw.assurance !== undefined) {
+    if (!isRecord(raw.assurance)) return { why: "assurance must be an object mapping <pairId> to { level }" };
+    for (const [key, value] of Object.entries(raw.assurance)) {
+      if (
+        !isRecord(value) ||
+        Object.keys(value).length !== 1 ||
+        (value.level !== "ceremony-created" && value.level !== "handoff-accepted" && value.level !== "withdrawn")
+      ) {
+        return { why: `assurance["${key}"] must be exactly { level: "ceremony-created"|"handoff-accepted"|"withdrawn" }` };
+      }
+      assurance[key] = { level: value.level };
+    }
+  }
   return {
     state: {
       formatVersion: PLATFORM_STATE_VERSION,
@@ -156,7 +193,8 @@ export function validatePlatformState(raw: unknown): { state: PlatformWitnessSta
       nvIndex: index.index,
       nvName: raw.nvName,
       anchor: raw.anchor as string,
-      witness
+      witness,
+      assurance
     }
   };
 }
@@ -799,7 +837,8 @@ function initLocked(statePath: string, nvIndex: string, tpm: TpmProvider): Platf
     nvIndex,
     nvName: settled.value.name,
     anchor: after.value.toString(),
-    witness: {}
+    witness: {},
+    assurance: {}
   });
   return {
     ok: true,
@@ -809,4 +848,116 @@ function initLocked(statePath: string, nvIndex: string, tpm: TpmProvider): Platf
       anchor: after.value.toString()
     }
   };
+}
+
+/* ---- ceremony assurance: transition and read-only probe (§2-§7) ------------
+ * A ceremony-assurance transition is a witness-authority operation: it takes the
+ * authority lock, verifies identity, reconciles any prepared commit, checks the
+ * transition is a legal MONOTONE advance for THIS pair, then does the same
+ * crash-safe PREPARE(anchor+1) → TPM increment → verify as a witness advance.
+ * LOSS/REFUSAL IS ACCEPTABLE; a STRONGER FALSE HISTORY IS NOT — a crash leaves a
+ * recoverable prepared state, never a falsely-advanced assurance level.
+ */
+
+// Which advances are legal. `withdrawn` is terminal and reachable from any
+// non-withdrawn level (an operator may always terminally disqualify a pair);
+// creation and acceptance only move strictly up the ladder.
+function assuranceAdvanceOk(from: AssuranceLevel | "ordinary", to: AssuranceLevel): boolean {
+  if (to === "ceremony-created") return from === "ordinary";
+  if (to === "handoff-accepted") return from === "ceremony-created";
+  if (to === "withdrawn") return from !== "withdrawn";
+  return false;
+}
+
+export function platformRecordAssurance(
+  config: PlatformConfig,
+  pairId: string,
+  target: AssuranceLevel,
+  tpm: TpmProvider = tpm2ToolsProvider()
+): PlatformResult<null> {
+  const release = acquireWitnessLock(config.statePath, { pairId, direction: "A->B" });
+  try {
+    const identity = verifyAuthority(tpm, config);
+    if (!identity.ok) return identity;
+    const state = readState(config.statePath);
+    if (!state.ok) return state;
+    if (state.value.authorityId !== config.authorityId) {
+      return { ok: false, message: `the platform witness state belongs to a different authority (${state.value.authorityId})` };
+    }
+    const settled = reconcile(tpm, config, state.value);
+    if (!settled.ok) return settled;
+    const current = readState(config.statePath);
+    if (!current.ok) return current;
+
+    const from: AssuranceLevel | "ordinary" = current.value.assurance[pairId]?.level ?? "ordinary";
+    if (from === target) {
+      // Idempotent: the terminal/target level is already durable; consume no
+      // counter value and report success without a transition.
+      return { ok: true, value: null };
+    }
+    if (!assuranceAdvanceOk(from, target)) {
+      return {
+        ok: false,
+        message:
+          `the platform ceremony-assurance for ${pairId} is "${from}" and cannot advance to "${target}": the ladder ` +
+          "is monotone (ordinary → ceremony-created → handoff-accepted, with withdrawn terminal) and never moves backward."
+      };
+    }
+
+    const nextAnchor = settled.value + 1n;
+    if (nextAnchor > UINT64_MAX) {
+      return { ok: false, message: `the TPM NV counter at ${config.nvIndex} is exhausted and cannot be incremented again.` };
+    }
+    const mergedAssurance: Record<string, AssuranceEntry> = { ...current.value.assurance, [pairId]: { level: target } };
+    // PREPARE durably at T+1, then COMMIT the hardware, then verify.
+    writeState(config.statePath, { ...current.value, anchor: nextAnchor.toString(), assurance: mergedAssurance });
+    const bumped = tpm.increment(config.nvIndex);
+    if (!bumped.ok) {
+      return {
+        ok: false,
+        message:
+          `the platform assurance transition was prepared durably but the TPM increment failed (${bumped.message}). ` +
+          "The prepared state is recoverable by the next operation; nothing was falsely advanced."
+      };
+    }
+    const after = tpm.readCounter(config.nvIndex);
+    if (!after.ok) return { ok: false, message: `the TPM counter could not be re-read after the increment (${after.message})` };
+    if (after.value !== nextAnchor) {
+      return { ok: false, message: `the TPM counter reads ${after.value} after an increment that should have reached ${nextAnchor}` };
+    }
+    return { ok: true, value: null };
+  } finally {
+    release();
+  }
+}
+
+// The LIVE ceremony-assurance level for one pair, obtained by a strictly
+// READ-ONLY probe (no TPM increment, no prepared-commit settle) for the
+// deployment evaluator. A stale/restored state file is caught by the anchor
+// relation and reads `inconsistent`; an unreachable authority reads
+// `unavailable`; an absent entry reads `ordinary`.
+export type PlatformAssurance = AssuranceLevel | "ordinary" | "unavailable" | "inconsistent";
+
+export function platformAssurance(
+  config: PlatformConfig,
+  pairId: string,
+  tpm: TpmProvider = tpm2ToolsProvider()
+): PlatformAssurance {
+  if (config.provider !== PROVIDER_ID) return "inconsistent";
+  const ready = tpm.available();
+  if (!ready.ok) return "unavailable";
+  if (!verifyAuthority(tpm, config).ok) return "inconsistent";
+  const state = readState(config.statePath);
+  if (!state.ok) return "unavailable";
+  if (state.value.authorityId !== config.authorityId) return "inconsistent";
+  if (state.value.nvName !== config.nvName || state.value.nvIndex !== config.nvIndex) return "inconsistent";
+  const counter = tpm.readCounter(config.nvIndex);
+  if (!counter.ok) return "unavailable";
+  const fileAnchor = parseAnchor(state.value.anchor);
+  if (fileAnchor === null) return "inconsistent";
+  // A restored/replaced state file (behind the TPM) or a corrupt anchor relation
+  // fails closed — this is what makes a stale pre-ceremony or pre-withdrawal
+  // snapshot restore detectable (§7, §13).
+  if (!classifyAnchor(fileAnchor, counter.value).ok) return "inconsistent";
+  return state.value.assurance[pairId]?.level ?? "ordinary";
 }

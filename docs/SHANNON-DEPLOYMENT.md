@@ -159,10 +159,12 @@ that evaluator; no edition invents its own rule.
 The facts are the immutable provenance — **creation**, **source**, **delivery**,
 **sealed-ancestor** (permanent once a sealed `.tps2` appears in the lineage), and
 **ceremony-premises** — plus the live **storage authority** (native filesystem,
-or ordinary browser storage) and the live **rollback authority**. The provenance
-is bound to the exact pair by the public `pairId` (see §13); a record whose
-`pairId` does not match the pair's heads is treated as UNKNOWN, so strong
-provenance transplanted from another pair can never raise this one.
+or ordinary browser storage), the live **rollback authority**, and the live
+**assurance authority** (§15), which is the strong ceremony fact the independent
+TPM-anchored platform authority attests and editable pair-directory JSON cannot
+forge. The provenance is bound to the exact pair by the public `pairId` (see §13);
+a record whose `pairId` does not match the pair's heads is treated as UNKNOWN, so
+strong provenance transplanted from another pair can never raise this one.
 
 The rollback authority is a **live** fact, obtained under the pair lock — not
 merely the configured witness class. A configured witness is not an available
@@ -177,14 +179,18 @@ The evaluator's ordering is load-bearing:
    software CSPRNG source; a sealed `.tps2` delivery or any sealed ancestor;
    ordinary browser storage as the live authority (one rollback domain, no
    independent witness); a withdrawn ceremony premise (see §14); plain-`gen`
-   creation; or a configured rollback witness that is **regressed** (the store
-   sits below it — the restored-store signature) or **inconsistent**.
+   creation; a configured rollback witness that is **regressed** (the store sits
+   below it — the restored-store signature) or **inconsistent**; or a platform
+   assurance authority that attests a terminal **withdrawal** or reads
+   **inconsistent** (a stale/substituted authority, §15).
 2. The **one strongest path** — a native ceremony pad, external-declared source,
-   private handoff *accepted*, no sealed ancestor, premises accepted, and a
-   **live, healthy platform-monotonic (TPM) rollback authority** — is
-   **CONDITIONALLY ELIGIBLE**. A separate-state-file witness, however healthy,
-   does **not** satisfy this: it can be restored together with the pair, so it is
-   strong rollback protection but not the maximum-assurance authority. Even at the
+   private handoff *accepted*, no sealed ancestor, premises accepted, a
+   **live, healthy platform-monotonic (TPM) rollback authority**, AND the
+   independent platform authority attesting **`handoff-accepted`** for this exact
+   pair (§15) — is **CONDITIONALLY ELIGIBLE**. A separate-state-file witness,
+   however healthy, does **not** satisfy the rollback requirement; and a
+   provenance.json that merely *claims* a ceremony does **not** satisfy the
+   assurance requirement — only the platform attestation does. Even at the
    strongest, TruePad has proved none of the physical premises, so the label
    always travels with the six it did not prove and is never a bare "secure" badge.
 3. Everything else is **INSUFFICIENT EVIDENCE**: the strong premises are not all
@@ -230,7 +236,35 @@ ceremony premise to `withdrawn` — NOT ELIGIBLE. So restoring an older, stronge
 `provenance.json` after a withdrawal cannot raise the classification: the
 withdrawal is a different file the evaluator checks first. (A whole-directory
 restore that also deletes the withdrawal is the general restore attack, caught by
-the live rollback witness — a restored store reads regressed.)
+the live rollback witness — a restored store reads regressed.) On a **platform
+pair** the withdrawal is additionally recorded in the platform authority (§15) as
+the terminal `withdrawn`, so the downgrade survives deleting or corrupting the
+sidecar entirely.
+
+## 15. The independent platform ceremony authority
+
+The strong ceremony facts — that this exact pair was **created by the physical
+ceremony** and that its **private handoff was accepted** — must not be forgeable
+by editing an ordinary pair-directory file. `provenance.json` alone is
+descriptive: a plain-`gen` pair whose `provenance.json` is hand-edited to claim
+`cli-ceremony`/`accepted` parses as such. So the load-bearing ceremony fact lives
+in the **platform authority** — the same TPM-anchored `platform-monotonic`
+witness the strongest verdict already requires, whose state file sits *outside*
+the pair directory.
+
+That authority records a monotone, per-pair ceremony ladder —
+`ordinary → ceremony-created → handoff-accepted`, with `withdrawn` terminal —
+where each advance is a real ceremony operation that consumes a **TPM increment**
+(`ceremony create`, `ceremony accept`, `ceremony withdraw`). The evaluator
+requires `assurance-authority = handoff-accepted` for CONDITIONALLY ELIGIBLE, and
+reads it with a strictly read-only probe. A pair the authority never recorded
+reads `ordinary` (editing its JSON changes nothing the evaluator trusts, and
+`ceremony accept` refuses); a stale restore of the authority's own state file is
+caught by its TPM anchor and reads `inconsistent`; a pair with no platform
+authority reads `unavailable`. None of these can be gold. This is what closes
+same-pair provenance forgery and withdrawal-sidecar deletion (the TruePad 3.0
+authority closure); the threat boundary and the operator flow are in
+[MAXIMUM-ASSURANCE.md](MAXIMUM-ASSURANCE.md).
 
 The classification is a factual statement about what TruePad has and has not
 recorded. It is not a security score, and a NOT ELIGIBLE or INSUFFICIENT

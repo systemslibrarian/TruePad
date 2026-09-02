@@ -33,7 +33,8 @@ const STRONGEST: DeploymentFacts = {
   sealedAncestor: false,
   ceremonyPremises: "accepted",
   storage: "native",
-  rollback: { kind: "platform-monotonic", health: "healthy" }
+  rollback: { kind: "platform-monotonic", health: "healthy" },
+  assuranceAuthority: "handoff-accepted"
 };
 
 const withFacts = (patch: Partial<DeploymentFacts>): DeploymentFacts => ({ ...STRONGEST, ...patch });
@@ -142,6 +143,40 @@ describe("the strongest verdict requires a LIVE platform-monotonic rollback auth
         "not-eligible"
       );
     }
+  });
+});
+
+describe("the strongest verdict requires the INDEPENDENT platform ceremony authority (§2, Attack A/B)", () => {
+  it("a maximal pad whose platform authority does not attest handoff-accepted is INSUFFICIENT, not gold", () => {
+    // Every provenance axis is maximal and the TPM rollback is healthy — but the
+    // independent authority has not attested the accepted handoff. Editable
+    // provenance alone can NEVER mint the ceremony story.
+    for (const a of ["ordinary", "unavailable", "ceremony-created"] as const) {
+      const r = assessDeployment(withFacts({ assuranceAuthority: a }));
+      expect(r.assessment, a).toBe("insufficient-evidence");
+      expect(r.knownReason, a).toMatch(/platform/i);
+    }
+  });
+
+  it("a platform-attested TERMINAL withdrawal is NOT ELIGIBLE, whatever provenance says (Attack B)", () => {
+    // Even with an otherwise-maximal (forged-looking) provenance story, the
+    // platform authority's terminal withdrawal dominates.
+    const r = assessDeployment(withFacts({ assuranceAuthority: "withdrawn" }));
+    expect(r.assessment).toBe("not-eligible");
+    expect(r.knownReason).toMatch(/withdraw/i);
+  });
+
+  it("an inconsistent (stale/substituted) platform authority is NOT ELIGIBLE", () => {
+    const r = assessDeployment(withFacts({ assuranceAuthority: "inconsistent" }));
+    expect(r.assessment).toBe("not-eligible");
+    expect(r.knownReason).toMatch(/inconsistent/i);
+  });
+
+  it("handoff-accepted is the ONLY assurance value that reaches gold", () => {
+    for (const a of ["unavailable", "ordinary", "ceremony-created", "withdrawn", "inconsistent"] as const) {
+      expect(assessDeployment(withFacts({ assuranceAuthority: a })).assessment).not.toBe("conditionally-eligible");
+    }
+    expect(assessDeployment(withFacts({ assuranceAuthority: "handoff-accepted" })).assessment).toBe("conditionally-eligible");
   });
 });
 

@@ -15,6 +15,24 @@ and, just as important, exactly what it does and does not mean.
 > the strongest label. It never converts a computational fact into an
 > information-theoretic one by wording.
 
+## The threat boundary (what "cannot launder" means)
+
+The maximum-assurance profile is designed to resist an attacker who can **edit,
+replace, or delete ordinary pair-directory files** — `provenance.json`,
+`withdrawal.json` — and **restore stale pair directories**, without letting any
+of that raise the classification. Concretely it resists: same-pair semantic
+rewriting, cross-pair substitution, provenance replacement/deletion, withdrawal
+replacement/deletion, stale directory restoration, stale-state cloning, ordinary
+supported CLI operations, and accidental crashes/torn writes.
+
+It does **not** claim resistance against a party that can replace the TruePad
+binary, replace the kernel, compromise the OS, compromise TPM firmware, or
+deliberately reprovision the platform trust anchor. Those remain platform and
+operator limits. The load-bearing ceremony facts therefore live in the
+**TPM-anchored platform authority** (see below), whose state file sits *outside*
+the pair directory and whose transitions are bound to a hardware monotonic
+counter — so editing pair-directory JSON cannot mint or resurrect them.
+
 ## The classification is derived, never stored
 
 TruePad records **facts** and bounded **operator declarations**, and derives the
@@ -24,7 +42,7 @@ store ever holds a self-certifying verdict — there is no `trueRandom`,
 `goldStandard` field anywhere, and none may be added. Downgrades are allowed;
 assurance is never *upgraded* by a convenience operation.
 
-## The seven facts
+## The eight facts
 
 The evaluator (`src/claims/shannon-deployment.ts`) takes exactly these, and every
 edition assembles them from its own durable store:
@@ -38,6 +56,7 @@ edition assembles them from its own durable store:
 | **ceremony-premises** | the operator-premise state — `accepted`, `absent`, `withdrawn`, or `unknown` |
 | **storage** | where live state is held — `native` filesystem, or `browser-opfs` |
 | **rollback-authority** | the LIVE reuse/rollback authority — its class AND current health (reachable, consistent, not behind the store), obtained under the pair lock |
+| **assurance-authority** | what the INDEPENDENT platform authority attests for this pair — `handoff-accepted` / `ceremony-created` / `withdrawn` / `ordinary` / `unavailable` / `inconsistent`. This is the strong ceremony fact that pair-directory JSON cannot forge (see below) |
 
 Every fact is bound to the exact pair by the public `pairId`: a strong provenance
 record transplanted beside another pair does not apply to it (see
@@ -70,28 +89,66 @@ native CLI. Each step records a fact the previous one could not:
 
 3. **Accept the private handoff, once the media have reached their peers.**
    `truepad2 ceremony accept <medium> --as A|B --assert-private-handoff
-   --assert-no-extra-copy`. This is the one-way boundary that records `delivery =
-   physical private handoff (operator premise)`. It runs under the pair lock;
-   refuses a tombstoned, half, spliced, non-ceremony, sealed-lineage,
+   --assert-no-extra-copy`. This is the one-way boundary. It runs under the pair
+   lock; refuses a tombstoned, half, spliced, non-ceremony, sealed-lineage,
    wrong-pair-bound, withdrawn, or unreadable-provenance store, or a missing
-   assertion; writes durable provenance before it reports; and its pad-book record
+   assertion; **advances the independent platform authority to `handoff-accepted`
+   for this pair** (which refuses unless the authority already attests
+   `ceremony-created` — so a forged provenance the authority never recorded cannot
+   be accepted); writes the descriptive `provenance.json`; and its pad-book record
    says plainly that **TruePad recorded an operator assertion and did not observe
    the courier.**
 
 With `creation = cli-ceremony`, external-declared source, delivery accepted, no
-sealed ancestor, premises accepted, **native** storage, and a **live, healthy
-platform-monotonic** rollback authority, `truepad2 status` shows **CONDITIONALLY
+sealed ancestor, premises accepted, **native** storage, a **live, healthy
+platform-monotonic** rollback authority, **and the platform authority attesting
+`handoff-accepted` for this pair**, `truepad2 status` shows **CONDITIONALLY
 ELIGIBLE** — beside the six premises below.
+
+## The independent platform ceremony authority (why editing JSON cannot mint gold)
+
+`provenance.json` is an ordinary, editable pair-directory file. On its own it is
+enough to *describe* a ceremony — but not to *prove* one: a plain-`gen` pair whose
+`provenance.json` is hand-edited to claim `creation = cli-ceremony`,
+`ceremony-premises = accepted` reads that way to the file parser. So the
+**load-bearing** ceremony facts do not live in `provenance.json` at all.
+
+They live in the **platform authority** — the same TPM-anchored
+`platform-monotonic` witness the strongest verdict already requires. Its state
+file sits *outside* the pair directory, and it records, per pair, a monotone
+ceremony ladder:
+
+```
+ordinary → ceremony-created → handoff-accepted        (withdrawn is terminal)
+```
+
+Each advance is a real ceremony operation that consumes a **TPM increment**:
+`ceremony create` records `ceremony-created`; `ceremony accept` advances to
+`handoff-accepted`; `ceremony withdraw` records the terminal `withdrawn`. The
+evaluator requires `assurance-authority = handoff-accepted` for the strongest
+verdict, and reads it with a strictly read-only probe. Consequences:
+
+- A plain-`gen` pair the authority never recorded reads `ordinary`. Editing its
+  `provenance.json` changes nothing the evaluator trusts, and `ceremony accept`
+  refuses (it cannot advance `ordinary → handoff-accepted`).
+- A stale restore of the authority's own state file is caught by its TPM anchor
+  and reads `inconsistent` — NOT ELIGIBLE.
+- A pair cloned to a machine **without** the correct platform authority reads
+  `unavailable` — never gold.
 
 ## Withdrawing a ceremony premise (a permanent downgrade)
 
 `truepad2 ceremony withdraw <medium> --as A|B [--reason …]` records a supported,
-one-way downgrade in a SEPARATE durable authority (`withdrawal.json`, pair-bound).
-The evaluator consults it independently of `provenance.json`, so once a
-withdrawal is durable the pad is NOT ELIGIBLE and **restoring an older, stronger
-`provenance.json` cannot raise it again** (see
-[SHANNON-DEPLOYMENT.md §14](SHANNON-DEPLOYMENT.md)). A withdrawn pair cannot
-re-accept a handoff.
+one-way downgrade. On a **platform pair** it advances the platform authority to
+the terminal `withdrawn` — so the downgrade **survives deleting or corrupting
+`withdrawal.json`, and survives restoring an older `provenance.json`**, because
+the evaluator reads the terminal state from the independent authority (a stale
+restore of that authority is caught by its anchor). A descriptive
+`withdrawal.json` sidecar is also written. (On a pair with **no** platform
+authority — never a maximum-assurance pair — the sidecar is the only record, so a
+withdrawal there is a best-effort downgrade within the already-non-gold band.) A
+withdrawn pair cannot re-accept a handoff. See
+[SHANNON-DEPLOYMENT.md §14](SHANNON-DEPLOYMENT.md).
 
 ## The six premises that remain yours
 
@@ -123,9 +180,36 @@ crash during a provenance write leaves the old record or none, never a torn one
 and never one that looks more assured than what was durably established. A
 restored or cloned store keeps its recorded creation; relocating a `gen` store
 never makes it a ceremony store; transplanting a strong record beside another
-pair never raises it. The rollback authority is checked **live** under the pair
-lock, so a witness that has gone unreachable, regressed, or inconsistent drops the
-verdict immediately rather than leaving a stale green. A durable withdrawal cannot
-be undone by restoring old provenance. Every one of these is exercised by the
-falsification, hostile-input, concurrency, and pair-substitution guards under
-`tests/`.
+pair never raises it; **rewriting a pair's own `provenance.json` into a ceremony
+story never reaches gold, because the ceremony fact lives in the platform
+authority, not the JSON.** The rollback and ceremony authorities are both checked
+**live** under the pair lock, so a witness or authority that has gone unreachable,
+regressed, or inconsistent drops the verdict immediately rather than leaving a
+stale green. A durable withdrawal on a platform pair cannot be undone by deleting
+or corrupting the sidecar or by restoring old provenance. Every one of these is
+exercised by the falsification, hostile-input, concurrency, pair-substitution,
+same-pair-forgery, and platform-assurance guards under `tests/`.
+
+## Known residual (closure in progress)
+
+The load-bearing ceremony facts live in the platform authority, and a forged
+authority placed **inside** the pair directory is rejected (an authority must be
+external), closing same-pair provenance forgery via an in-pair state file. One
+residual remains under active work: because `head.json` is unauthenticated and
+names the authority's location and identity, an attacker who can both edit a
+pair's `head.json` **and** supply their own *external* TPM authority pre-loaded
+with the victim pair's `pairId` could point the pair at that foreign authority.
+Closing this requires the operator to **pin their trusted authority** at
+assessment time (so the evaluator uses the operator's authority, not the one
+`head.json` names) rather than trusting the in-header authority identity. Until
+that lands, the maximum-assurance verdict should be read only against an
+operator-verified platform authority. This is tracked as the TruePad 3.0
+authority-binding follow-up.
+
+## Physical-TPM validation is a separate, outstanding gate
+
+The platform authority is validated in this environment by unit tests (a
+deterministic FakeTpm) and by the TPM-emulator (swtpm + tpm2-tools)
+interoperability job. **That is emulator interoperability evidence, not physical
+TPM hardware validation.** A claim about a specific physical TPM remains a
+separate real-hardware validation item, tracked outside this software closure.

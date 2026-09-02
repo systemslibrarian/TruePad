@@ -206,6 +206,42 @@ describe("(§1) strong provenance cannot be transplanted to raise another pair",
   });
 });
 
+/* ---- Attack A: same-pair semantic rewrite cannot reach GOLD ---------------- */
+
+describe("(Attack A) editing a pair's OWN provenance into a ceremony story cannot reach CONDITIONALLY ELIGIBLE", () => {
+  // The full platform-authority closure (a forged pair reads `ordinary` and
+  // `ceremony accept` refuses) is proven with a FakeTpm in
+  // tests/platform-assurance.test.ts — that path needs a TPM the CLI subprocess
+  // cannot fake. Here we pin the CLI-observable invariant: no amount of
+  // pair-directory JSON editing produces a maximum-assurance verdict, because
+  // gold requires the INDEPENDENT platform ceremony authority, which is
+  // `unavailable` for a pair with no platform witness.
+  it("a plain-gen pair with its own provenance rewritten to cli-ceremony/accepted never reads gold", () => {
+    const g = join(dir, "forge");
+    genStore(g);
+    const pid = JSON.parse(readFileSync(join(g, "a-to-b", "head.json"), "utf8")).pairId as string;
+    writeFileSync(
+      provenancePath(g),
+      JSON.stringify({
+        provenanceVersion: 1,
+        pairId: pid,
+        creation: "cli-ceremony",
+        source: "external-declared",
+        delivery: "physical-private-operator-asserted",
+        sealedAncestor: false,
+        ceremonyPremises: "accepted",
+        createdAt: "2026-09-02T00:00:00.000Z"
+      })
+    );
+    const e = run("status", g).stderr;
+    expect(e).not.toContain("CONDITIONALLY ELIGIBLE");
+    // The independent authority is unavailable (no platform witness), so the
+    // forged provenance cannot be promoted to gold.
+    expect(e).toMatch(/ceremony assurance .+ unavailable/);
+    expect(e).toContain("INSUFFICIENT EVIDENCE");
+  });
+});
+
 /* ---- §5 irreversible downgrade: stale provenance cannot resurrect assurance - */
 
 describe("(§5) a withdrawal is permanent; stale provenance cannot raise the classification", () => {
