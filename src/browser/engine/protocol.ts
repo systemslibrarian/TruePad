@@ -16,16 +16,22 @@
  * ========================================================================= */
 
 import type { PadDirection } from "../../core/pad.ts";
-import type { DeliveryClass, ShannonAssessment, SourceClass } from "../../claims/shannon-deployment.ts";
+import type { Assessment, CreationClass, DeliveryClass, SourceClass } from "../../claims/shannon-deployment.ts";
 
-/** A DERIVED Shannon deployment classification for one pad — never a stored
- *  verdict. The worker computes it from provenance (`origin` + whether the pad
- *  arrived by sealed delivery) each time `status` is asked; the page renders it.
- *  It carries no secret and nothing pad-derived. */
+/** A DERIVED deployment classification for one pad — never a stored verdict.
+ *  The worker computes it from provenance (`creation` + source + whether the pad
+ *  has a sealed ancestor) each time `status` is asked; the page renders it. It
+ *  carries no secret and nothing pad-derived. A Browser Edition pad holds live
+ *  state in ordinary browser storage (OPFS), so the evaluator can never rank it
+ *  above NOT ELIGIBLE — the browser is not the maximum-assurance surface. */
 export type DeploymentView = {
-  assessment: ShannonAssessment;
+  assessment: Assessment;
+  creation: CreationClass;
   source: SourceClass;
   delivery: DeliveryClass;
+  /** `true` once any sealed (.tps2) delivery appears in this pad's lineage —
+   *  permanent; `"unknown"` only when provenance could not be read. */
+  sealedAncestor: boolean | "unknown";
   knownReason: string | null;
 };
 

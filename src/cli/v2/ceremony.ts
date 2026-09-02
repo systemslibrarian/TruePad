@@ -54,6 +54,7 @@ import type { PadDirection } from "../../core/pad.ts";
 import { acquireLock, LOCK_FILE } from "../lock.ts";
 import { HEAD_FILE, JOURNAL_FILE, loadStore2, SECRET_FILE, type LoadedStore2 } from "./store2.ts";
 import { gen, Refused2, SUBDIR2, type Args2 } from "./truepad2.ts";
+import { ceremonyProvenance, PROVENANCE_FILE, readProvenance, writeProvenance } from "./provenance.ts";
 
 /* ---- the operator assertions ----------------------------------------------
  * Presence flags (parseArgs2 consumes no value for them): the operator makes
@@ -190,7 +191,11 @@ function pairFiles(): readonly string[] {
       join(SUBDIR2[direction], SECRET_FILE),
       join(SUBDIR2[direction], JOURNAL_FILE)
     ]),
-    "manifest.json"
+    "manifest.json",
+    // The provenance record is part of the provisioning contract: it is
+    // byte-verified on each medium, so a ceremony pair cannot arrive on a peer
+    // medium with a missing or altered creation/premise record.
+    PROVENANCE_FILE
   ];
 }
 
@@ -519,6 +524,14 @@ export function ceremonyCreate(args: Args2): void {
 
   const manifest = JSON.parse(readFileSync(join(pairDir, "manifest.json"), "utf8")) as Manifest;
 
+  // Overwrite gen's `cli-gen` provenance with the ceremony's: this pair was
+  // created by the physical ceremony, and every operator premise was asserted.
+  // Delivery is still `local-only` — the private-handoff fact is established
+  // ONLY by the one-way `ceremony accept` step on a peer medium, never here.
+  // This is durable BEFORE the media are copied, so both peers carry it and it
+  // is byte-verified.
+  writeProvenance(pairDir, ceremonyProvenance(manifest.createdAt));
+
   // Provision the two peer media: each receives the WHOLE pair — both
   // direction stores plus the manifest. Two full copies, one per peer,
   // never one direction per drive: each peer needs its sending half to
@@ -691,4 +704,99 @@ export function ceremonyVerify(args: Args2): void {
   } finally {
     lock.release();
   }
+}
+
+/* ============================================================================
+ * ceremony accept — the one-way physical-handoff acceptance step
+ * ----------------------------------------------------------------------------
+ * `truepad2 ceremony create` records that a pair was created by the physical
+ * ceremony, but it CANNOT record that the private courier handoff happened —
+ * that is a fact only the operator holds, established after the media reach
+ * their peers. `ceremony accept` is that one-way boundary: on a peer medium
+ * that carries a ceremony pair, the operator asserts the handoff was private
+ * and that no extra copy exists, and TruePad records `delivery = physical
+ * private handoff (operator assertion)`. It NEVER observes the courier.
+ *
+ * It refuses anything but a ceremony pair whose premises were accepted and whose
+ * delivery is still local-only: a plain-gen store, an imported/sealed lineage,
+ * an unreadable provenance, or an already-accepted handoff all fail closed and
+ * change nothing. The transition is one-way — `local-only -> physical-private`
+ * — and never the reverse, and never from a non-ceremony creation.
+ * ========================================================================= */
+
+export const ACCEPT_ASSERTIONS = [
+  {
+    flag: "assert-private-handoff",
+    statement:
+      "This medium reached its intended peer by a private physical handoff I performed or trust; no one else obtained the pad in transit."
+  },
+  {
+    flag: "assert-no-extra-copy",
+    statement:
+      "No copy of this pair remains anywhere but the two intended peer media — no backup, no cloud sync, no snapshot."
+  }
+] as const;
+
+export function ceremonyAccept(args: Args2): void {
+  const mediumArg = args.positional[2];
+  if (mediumArg === undefined) {
+    throw new Error("ceremony accept needs <medium-dir>: the peer medium holding the ceremony pair");
+  }
+  const medium = resolve(mediumArg);
+  const as = single(args, "as");
+  if (as !== "A" && as !== "B") {
+    throw new Error("ceremony accept needs --as A or --as B: your role on this medium");
+  }
+
+  const record = readProvenance(medium);
+  if (record === null) {
+    throw new Refused2(
+      "ceremony-incomplete",
+      "this medium carries no readable ceremony provenance; only a pair created by `truepad2 ceremony create` can " +
+        "accept a private handoff. Nothing was changed."
+    );
+  }
+  if (record.creation !== "cli-ceremony" || record.ceremonyPremises !== "accepted") {
+    throw new Refused2(
+      "ceremony-incomplete",
+      "only a ceremony-created pair whose premises were recorded can accept a private handoff; this pair was not " +
+        "created by the physical ceremony. Nothing was changed."
+    );
+  }
+  if (record.delivery === "physical-private-operator-asserted") {
+    throw new Refused2(
+      "ceremony-incomplete",
+      "this pair's private handoff was already accepted; the delivery fact is one-way and does not change. " +
+        "Nothing was changed."
+    );
+  }
+  // record.delivery is "local-only" here (the only other value the schema and
+  // its self-consistency checks allow for a cli-ceremony record).
+
+  const missing = ACCEPT_ASSERTIONS.filter(({ flag }) => !args.flags.has(flag));
+  if (missing.length > 0) {
+    throw new Refused2(
+      "ceremony-incomplete",
+      `accepting a private handoff requires every operator assertion; missing: ` +
+        `${missing.map(({ flag }) => `--${flag}`).join(", ")}. Each is a statement TruePad cannot verify — it did ` +
+        "not observe the courier and cannot prove the handoff was private or that no other copy exists. Nothing " +
+        "was changed."
+    );
+  }
+
+  // One-way transition, durable before anything is reported.
+  writeProvenance(medium, { ...record, delivery: "physical-private-operator-asserted" });
+
+  err("CEREMONY HANDOFF ACCEPTED");
+  err(`  medium:  ${medium}`);
+  err(`  role:    ${as}`);
+  err(
+    "  TruePad recorded this OPERATOR ASSERTION. It did NOT observe the courier and cannot prove the handoff was " +
+      "private or that no other copy exists:"
+  );
+  for (const { flag, statement } of ACCEPT_ASSERTIONS) {
+    err(`    --${flag}: ${statement}`);
+  }
+  err("  Delivery is now: physical private handoff (operator premise). This is one-way.");
+  out(JSON.stringify({ medium, as, delivery: "physical-private-operator-asserted" }));
 }

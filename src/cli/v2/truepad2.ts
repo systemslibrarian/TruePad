@@ -87,7 +87,7 @@ import {
   type WitnessCounters,
   type WitnessSnapshot
 } from "./witness.ts";
-import { CEREMONY_ASSERTIONS, ceremonyCreate, ceremonyVerify } from "./ceremony.ts";
+import { ACCEPT_ASSERTIONS, ceremonyAccept, CEREMONY_ASSERTIONS, ceremonyCreate, ceremonyVerify } from "./ceremony.ts";
 import {
   initPlatformWitness,
   platformAdvance,
@@ -97,9 +97,16 @@ import {
 } from "./platform-witness.ts";
 import {
   ASSESSMENT_LABEL,
-  assessShannonDeployment,
-  CONDITIONAL_CAVEAT
+  assessDeployment,
+  CONDITIONAL_CAVEAT,
+  CREATION_LABEL,
+  DELIVERY_LABEL,
+  SOURCE_LABEL,
+  UNPROVEN_PREMISES,
+  type DeploymentFacts,
+  type RollbackWitness
 } from "../../claims/shannon-deployment.ts";
+import { genProvenance, readProvenance, writeProvenance } from "./provenance.ts";
 
 export const BANNER2 =
   "truepad2: reuse-safe pad handling with authenticated envelopes (Store Format v2; docs/FORMAT-V2.md is the\n" +
@@ -204,11 +211,16 @@ export function parseArgs2(argv: string[]): Args2 {
       // Ceremony assertions are presence flags (ceremony.ts owns the list
       // and the statements): the operator asserts by naming the flag, and
       // there is no value to consume.
-      // Presence flags carry no value: the ceremony assertions (ceremony.ts
-      // owns the list and the statements — the operator asserts by naming the
-      // flag), and --compact, which selects a PRESENTATION of the same
-      // envelope and so has nothing to take a value about.
-      if (CEREMONY_ASSERTIONS.some((assertion) => assertion.flag === name) || PRESENCE_FLAGS.has(name)) {
+      // Presence flags carry no value: the ceremony assertions and the
+      // ceremony-accept assertions (ceremony.ts owns both lists and the
+      // statements — the operator asserts by naming the flag), and --compact,
+      // which selects a PRESENTATION of the same envelope and so has nothing to
+      // take a value about.
+      if (
+        CEREMONY_ASSERTIONS.some((assertion) => assertion.flag === name) ||
+        ACCEPT_ASSERTIONS.some((assertion) => assertion.flag === name) ||
+        PRESENCE_FLAGS.has(name)
+      ) {
         const asserted = flags.get(name) ?? [];
         asserted.push("asserted");
         flags.set(name, asserted);
@@ -928,6 +940,12 @@ export function gen(args: Args2): void {
   const manifestPath = join(dir, "manifest.json");
   writeFileSyncPrivate(manifestPath, JSON.stringify(manifest, null, 2));
 
+  // Durable provenance: a plain gen store is `cli-gen` (external sources, no
+  // ceremony, not yet distributed). ceremony create OVERWRITES this with
+  // `cli-ceremony` before it copies to the two media. Written durably so a
+  // crash cannot leave a record that looks more assured than the store is.
+  writeProvenance(dir, genProvenance(manifest.createdAt));
+
   err(`sources: ${sourcePaths.length} declared, XOR-combined over the first ${required} bytes of each.`);
   for (const source of manifest.sources) {
     err(`  ${source.name}: ${source.lengthBytes} bytes declared, ${source.unusedBytes} unused. Origin: ${source.declaredOrigin}`);
@@ -1406,46 +1424,89 @@ function witnessClassName(rollback: HeadV2["rollback"]): string {
   }
 }
 
+/** Map a store's live rollback witness class to the evaluator's axis. The store
+ *  is the ONLY independent rollback authority a CLI pad has; `remote-monotonic`
+ *  is unsupported in this build, so it is reported as `unknown` (never a
+ *  witness the evaluator would trust). */
+function rollbackWitnessOf(rollback: HeadV2["rollback"]): RollbackWitness {
+  switch (rollback.witnessClass) {
+    case "none":
+      return "none";
+    case "separate-state-file":
+      return "separate-state-file";
+    case "platform-monotonic":
+      return "platform-monotonic";
+    case "remote-monotonic":
+      return "unknown";
+  }
+}
+
 /**
- * The DEPLOYMENT CLAIMS section (stderr). It DERIVES a Shannon deployment
- * assessment from recorded facts — it never reads or writes a stored verdict.
- * A CLI store always carries operator-declared external sources (gen requires a
- * `--source`; there is no CSPRNG path here) and is delivered by a private
- * courier the tool cannot observe, so it is CONDITIONALLY ELIGIBLE — with the
- * physical premises left, honestly, as things TruePad did not prove.
+ * The DEPLOYMENT ASSESSMENT section (stderr). It ASSEMBLES the immutable
+ * provenance facts (from the strict `provenance.json` next to the store) and the
+ * live facts (native storage, the store's rollback witness) and hands them to
+ * the ONE evaluator (`assessDeployment`). It never reads or writes a stored
+ * verdict, and it never hardcodes a classification.
+ *
+ * This is where §3/§26 bites: a plain `truepad2 gen` store carries `cli-gen`
+ * provenance and is reported NOT ELIGIBLE ("plain gen, not the physical
+ * ceremony"). A `ceremony create` store is INSUFFICIENT until its peer runs
+ * `ceremony accept` — only a `cli-ceremony` pad whose private handoff was
+ * accepted, with an independent rollback witness, reaches CONDITIONALLY
+ * ELIGIBLE, and even then the physical premises TruePad did NOT prove are
+ * printed alongside it (§40) so the label is never screenshot as "secure".
+ * A store with no readable provenance is UNKNOWN → INSUFFICIENT, never promoted.
  */
-function printDeploymentClaims(head: HeadV2): void {
+function printDeploymentClaims(head: HeadV2, pairDir: string): void {
   const sourceCount = head.sourceDeclarations.length;
-  const facts = {
-    // A CLI store's material is always an operator-supplied external source.
-    sourceClass: "external-declared" as const,
-    // Distribution to the peer is a private courier — an operator premise.
-    deliveryClass: "private-handoff-operator-asserted" as const
+  const provenance = readProvenance(pairDir); // null ⇒ UNKNOWN, mapped conservatively below
+
+  const facts: DeploymentFacts = {
+    creation: provenance?.creation ?? "unknown",
+    source: provenance?.source ?? "unknown",
+    delivery: provenance?.delivery ?? "unknown",
+    // A CLI store is never sealed; when provenance is unreadable, we do not
+    // reconstruct that fact — it becomes "unknown" and cannot help the verdict.
+    sealedAncestor: provenance === null ? "unknown" : provenance.sealedAncestor,
+    ceremonyPremises: provenance?.ceremonyPremises ?? "unknown",
+    // The CLI edition holds live state on the native filesystem it locks.
+    storage: "native",
+    rollbackWitness: rollbackWitnessOf(head.rollback)
   };
-  const { assessment } = assessShannonDeployment(facts);
+  const { assessment, knownReason } = assessDeployment(facts);
 
   err("");
-  err("DEPLOYMENT CLAIMS");
+  err("DEPLOYMENT ASSESSMENT");
   err("  OTP combiner");
   err(claimRow("literal one-time-pad XOR", "YES"));
   err("  Authentication");
   err(claimRow("one-time Wegman-Carter", "YES"));
   err(claimRow("theorem scope", "conditional on fresh one-time auth material"));
-  err("  Source provenance");
-  err(claimRow("creation path", "CLI (external sources declared)"));
+  err("  Recorded provenance");
+  err(claimRow("creation path", CREATION_LABEL[facts.creation]));
+  err(claimRow("source material", SOURCE_LABEL[facts.source]));
+  err(claimRow("delivery", DELIVERY_LABEL[facts.delivery]));
   err(claimRow("external source declarations", String(sourceCount)));
   err(claimRow("physical uniformity proven by TruePad", "NO"));
   err(claimRow("source independence proven by TruePad", "NO"));
-  err("  Distribution");
-  err(claimRow("sealed computational delivery used", "NO"));
-  err(claimRow("private handoff", "OPERATOR PREMISE"));
   err("  Reuse protection");
   err(claimRow("irreversible counters", "ACTIVE"));
+  err(claimRow("live storage authority", "NATIVE"));
   err(claimRow("witness class", witnessClassName(head.rollback)));
-  err("  Shannon deployment assessment");
+  err("  Deployment assessment (derived)");
   err(`    ${ASSESSMENT_LABEL[assessment]}`);
-  err("");
-  err(`  ${CONDITIONAL_CAVEAT}`);
+  if (assessment === "conditionally-eligible") {
+    err("");
+    err(`  ${CONDITIONAL_CAVEAT}`);
+    err("");
+    err("  TruePad did NOT prove these physical premises; they remain your responsibility:");
+    for (const premise of UNPROVEN_PREMISES) {
+      err(`    - ${premise}`);
+    }
+  } else if (knownReason !== null) {
+    err("");
+    err(`  Why not stronger: ${knownReason}.`);
+  }
 }
 
 /**
@@ -1519,7 +1580,7 @@ export function status(args: Args2): void {
   }
   // The deployment section is DERIVED and printed to stderr only; the machine
   // line on stdout is unchanged (its shape is a contract).
-  printDeploymentClaims(snapshot.head);
+  printDeploymentClaims(snapshot.head, dir);
   printLengthPrivacy(snapshot.head);
   out(JSON.stringify(machine));
 }
@@ -2051,7 +2112,11 @@ function ceremony(args: Args2): void {
     ceremonyVerify(args);
     return;
   }
-  throw new Error("ceremony needs a subcommand: create or verify");
+  if (sub === "accept") {
+    ceremonyAccept(args);
+    return;
+  }
+  throw new Error("ceremony needs a subcommand: create, accept, or verify");
 }
 
 /* ---- entry ----------------------------------------------------------------- */
@@ -2079,7 +2144,14 @@ const ALLOWED_FLAGS: Record<string, readonly string[]> = {
   retire: ["direction", "through-sequence", "through-offset", "reason"],
   destroy: ["confirm", "reason"],
   witness: ["nv-index", "provider"],
-  ceremony: [...GEN_FLAGS, "medium-a", "medium-b", ...CEREMONY_ASSERTIONS.map((assertion) => assertion.flag)]
+  ceremony: [
+    ...GEN_FLAGS,
+    "medium-a",
+    "medium-b",
+    "as",
+    ...CEREMONY_ASSERTIONS.map((assertion) => assertion.flag),
+    ...ACCEPT_ASSERTIONS.map((assertion) => assertion.flag)
+  ]
 };
 
 export function main(argv: string[]): number {

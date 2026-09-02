@@ -74,9 +74,12 @@ describe("MESSAGE LENGTH PRIVACY section", () => {
     expect(src).toMatch(/Timing and the number of messages are still visible/i);
   });
 
-  it("(§11) record policy does NOT change the Shannon deployment assessment", () => {
-    // Both a fixed and a variable CLI store carry declared external sources, so
-    // both are CONDITIONALLY ELIGIBLE. Length privacy is a separate axis.
+  it("(§11) record policy does NOT change the deployment assessment", () => {
+    // A fixed and a variable store are BOTH plain-gen pads, so both are NOT
+    // ELIGIBLE (gen is not the physical ceremony, §3/§26). The point of §11 is
+    // that the record policy — a length-privacy axis — does not move the
+    // deployment assessment either way. Fixed does not upgrade it; variable does
+    // not downgrade it. They must land on the SAME verdict.
     const pf = join(dir, "pf2");
     const pv = join(dir, "pv2");
     expect(
@@ -85,9 +88,12 @@ describe("MESSAGE LENGTH PRIVACY section", () => {
     expect(run("gen", pv, "--source", source(400), "--encryption-bytes", "32", "--auth-records", "2").code).toBe(0);
     for (const pair of [pf, pv]) {
       const e = run("status", pair).stderr;
-      expect(e, `${pair} deployment`).toContain("Shannon deployment assessment");
-      expect(e, `${pair} eligible`).toContain("CONDITIONALLY ELIGIBLE");
-      expect(e, `${pair} not laundered`).not.toMatch(/NOT ELIGIBLE/);
+      expect(e, `${pair} deployment`).toContain("DEPLOYMENT ASSESSMENT");
+      // Identical deployment verdict regardless of record policy.
+      expect(e, `${pair} verdict`).toContain("NOT ELIGIBLE");
+      expect(e, `${pair} not laundered`).not.toMatch(/CONDITIONALLY ELIGIBLE/);
+      // And the reason is the creation path (gen), never the record policy.
+      expect(e, `${pair} reason`).toMatch(/Why not stronger:.*plain gen/);
     }
   });
 });

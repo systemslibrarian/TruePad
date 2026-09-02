@@ -43,7 +43,14 @@ import type {
   ManifestView,
   PairSummary
 } from "./protocol.ts";
-import { assessShannonDeployment, type DeliveryClass, type SourceClass } from "../../claims/shannon-deployment.ts";
+import {
+  assessDeployment,
+  type CreationClass,
+  type DeliveryClass,
+  type DeploymentFacts,
+  type RollbackWitness,
+  type SourceClass
+} from "../../claims/shannon-deployment.ts";
 import {
   EngineRefused,
   HEAD_FILE,
@@ -605,36 +612,73 @@ async function genImpl(vfs: Vfs, req: Req<"gen">): Promise<GenResult> {
 /* ---- status --------------------------------------------------------------- */
 
 /**
- * DERIVE a Shannon deployment classification for one pad from its provenance.
- * It reads facts that already persist — the pad's `origin` and, for an imported
- * pad, whether a durable sealed-receive marker names it — and classifies them.
- * It writes nothing and stores no verdict; the assessment is recomputed each
- * time. The ordering is the classifier's (a known computational path dominates):
+ * DERIVE a deployment classification for one pad from its provenance and its
+ * live storage. It reads facts that already persist — the pad's `origin`, the
+ * browser witness kind, and (for an imported pad) whether a durable
+ * sealed-receive marker names it — assembles them into `DeploymentFacts`, and
+ * hands them to the ONE evaluator. It writes nothing and stores no verdict.
  *
- *   generated-here → software CSPRNG source → NOT ELIGIBLE
- *   imported + a sealed-receive marker → computational delivery → NOT ELIGIBLE
- *   imported, no marker → unknown import → INSUFFICIENT EVIDENCE
- *   no provenance (bare/legacy) → INSUFFICIENT EVIDENCE
+ * A Browser Edition pad ALWAYS holds live state in ordinary browser storage
+ * (`storage: "browser-opfs"`), which the evaluator treats as a known
+ * rollback-domain contradiction. So a browser pad can never rank above NOT
+ * ELIGIBLE, whatever its origin — the browser is not the maximum-assurance
+ * surface (§27). The recorded facts still shape WHICH known reason is shown:
+ *
+ *   generated-here → software CSPRNG source → NOT ELIGIBLE (source reason)
+ *   imported + a sealed-receive marker → sealed ancestor → NOT ELIGIBLE (delivery reason)
+ *   imported, no marker → unknown import over browser storage → NOT ELIGIBLE (storage reason)
+ *   no provenance (bare/legacy) → unknown over browser storage → NOT ELIGIBLE (storage reason)
  */
 async function deriveDeployment(vfs: Vfs, pairId: string): Promise<DeploymentView> {
-  const origin = await readPairOrigin(vfs, pairId);
+  const meta = await readPairMeta(vfs, pairId);
+  const origin = meta.origin;
+
+  let creation: CreationClass;
   let source: SourceClass;
   let delivery: DeliveryClass;
+  let sealedAncestor: boolean | "unknown";
   if (origin === "generated-here") {
     // Browser generation is a software CSPRNG — real, and computational.
+    creation = "browser-generated";
     source = "software-csprng";
-    delivery = "local-generation";
+    delivery = "local-only";
+    sealedAncestor = false;
   } else if (origin === "imported") {
     // TruePad did not make an imported pad's bytes, so their source is unknown;
-    // the delivery is sealed (computational) only if a durable marker says so.
+    // a durable sealed-receive marker makes the sealed ancestry PERMANENT (§14).
+    const sealed = await pairArrivedSealed(vfs, pairId);
+    creation = "imported";
     source = "unknown";
-    delivery = (await pairArrivedSealed(vfs, pairId)) ? "sealed-online" : "raw-import-unknown";
+    delivery = sealed ? "sealed-tps2" : "raw-import-unknown";
+    sealedAncestor = sealed;
   } else {
+    creation = "unknown";
     source = "unknown";
     delivery = "unknown";
+    sealedAncestor = "unknown";
   }
-  const { assessment, knownReason } = assessShannonDeployment({ sourceClass: source, deliveryClass: delivery });
-  return { assessment, source, delivery, knownReason: knownReason ?? null };
+
+  const facts: DeploymentFacts = {
+    creation,
+    source,
+    delivery,
+    sealedAncestor,
+    // The browser never runs the physical ceremony; premises are simply absent.
+    ceremonyPremises: "absent",
+    // A Browser Edition pad's live state lives in ordinary browser storage.
+    storage: "browser-opfs",
+    rollbackWitness: browserRollbackWitness(meta.witness)
+  };
+  const { assessment, knownReason } = assessDeployment(facts);
+  return { assessment, creation, source, delivery, sealedAncestor, knownReason: knownReason ?? null };
+}
+
+/** Map the browser-product witness kind to the evaluator's rollback axis. Named
+ *  honestly: a browser-local witness is a second OPFS store under the same
+ *  origin — one rollback domain, not an independent authority — and the
+ *  evaluator never lets it lift a browser pad above NOT ELIGIBLE. */
+function browserRollbackWitness(kind: BrowserWitnessKind): RollbackWitness {
+  return kind === "browser-local-witness" ? "browser-local-witness" : "none";
 }
 
 async function statusImpl(vfs: Vfs, req: Req<"status">): Promise<StatusResult> {

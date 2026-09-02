@@ -200,14 +200,18 @@ facts. The only persisted record is the existing `head.json →
 sourceDeclarations[]`: each source's name, the operator's own origin note, and
 its length. Nothing pad-derived (N14).
 
-TruePad turns these facts into a **derived** *Shannon deployment assessment* —
+TruePad turns these facts into a **derived** *deployment assessment* —
 `CONDITIONALLY ELIGIBLE`, `NOT ELIGIBLE`, or `INSUFFICIENT EVIDENCE` — shown by
-`truepad2 status` and on the Browser Edition's Pad details. It is computed from
-provenance every time and never stored; a software CSPRNG source or sealed
-computational delivery is NOT ELIGIBLE, an unknown import is INSUFFICIENT
-EVIDENCE, and only an operator-declared external source is CONDITIONALLY ELIGIBLE
-— with the physical premises still unproven. See
-[Shannon deployment](SHANNON-DEPLOYMENT.md).
+`truepad2 status` and on the Browser Edition's Pad details. One shared evaluator
+computes it from provenance every time and never stores it. A software CSPRNG
+source, a sealed computational delivery, ordinary browser storage as the live
+authority, or a plain `gen` store (which is *not* the physical ceremony) is NOT
+ELIGIBLE; a ceremony store whose private handoff has not yet been accepted is
+INSUFFICIENT EVIDENCE; and only a native ceremony pad with an *accepted* private
+handoff and an independent rollback witness is CONDITIONALLY ELIGIBLE — with the
+physical premises still unproven and shown beside the label. See
+[Shannon deployment](SHANNON-DEPLOYMENT.md) and
+[Maximum assurance](MAXIMUM-ASSURANCE.md).
 
 ### Content confidentiality, length privacy, and traffic analysis are three claims
 

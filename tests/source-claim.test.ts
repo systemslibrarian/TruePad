@@ -522,18 +522,23 @@ describe("(20) pad delivery distinguishes physical handoff from computational tr
  * ======================================================================== */
 
 describe("(13, 15) the store format is unchanged and carries no randomness claim flag", () => {
-  // Every spelling of a self-certifying security verdict this project bans.
+  // Every spelling of a self-certifying security verdict this project bans —
+  // including the maximum-assurance profile names (§29), which must never become
+  // a persisted boolean either.
   const FLAG =
-    /\btrueRandom\b|\binformationTheoretic\b|\bverifiedRandom\b|\bphysicallyRandom\b|\bitCapable\b|\bperfectSecrecy\b|\bshannonSecure\b|\bcertifiedEntropy\b/;
+    /\btrueRandom\b|\binformationTheoretic\b|\bverifiedRandom\b|\bphysicallyRandom\b|\bitCapable\b|\bperfectSecrecy\b|\bshannonSecure\b|\bcertifiedEntropy\b|\bmaximumSecurity\b|\bgoldStandard\b/;
 
-  it("no claim flag exists in the store, the protocol, the deployment classifier, or the spec", () => {
+  it("no claim flag exists in the store, the protocol, the deployment evaluator, the provenance record, or the spec", () => {
     for (const file of [
       ["src", "browser", "engine", "store.ts"],
       ["src", "browser", "engine", "protocol.ts"],
       ["src", "browser", "engine", "verbs.ts"],
       ["src", "cli", "v2", "store2.ts"],
       ["src", "cli", "v2", "truepad2.ts"],
-      // The Shannon deployment classifier DERIVES, it never persists a verdict:
+      // The durable CLI provenance record stores FACTS, never a verdict: its
+      // source (comments aside) must carry none of these identifiers.
+      ["src", "cli", "v2", "provenance.ts"],
+      // The single deployment evaluator DERIVES, it never persists a verdict:
       // its source (comments aside) must carry none of these identifiers either.
       ["src", "claims", "shannon-deployment.ts"],
       ["docs", "FORMAT-V2.md"]

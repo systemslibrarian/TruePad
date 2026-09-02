@@ -32,15 +32,15 @@ import { savePadFileButton } from "./courier.ts";
 import type { Ctx } from "./context.ts";
 import type { DeploymentView, DirectionMeters, PairSummary } from "../engine/protocol.ts";
 import type { PadDirection } from "../../core/pad.ts";
-import { DELIVERY_LABEL, SOURCE_LABEL } from "../../claims/shannon-deployment.ts";
+import { CREATION_LABEL, DELIVERY_LABEL, SOURCE_LABEL } from "../../claims/shannon-deployment.ts";
 
-/* A factual source/delivery classification for this pad, derived by the engine.
- * It is never a security score, and never a green "eligible" badge that could be
- * screenshot without its qualifier: the Browser Edition generates from a
- * software CSPRNG and delivers online by computational cryptography, so a
- * browser pad is always "Not eligible" or "Insufficient evidence" for the
- * physical-uniform-source, information-theoretic deployment path — which is the
- * honest thing to say, not a defect. */
+/* A factual creation/source/delivery classification for this pad, derived by the
+ * engine. It is never a security score, and never a green "eligible" badge that
+ * could be screenshot without its qualifier: a Browser Edition pad holds its
+ * live state in ordinary browser storage, so the shared evaluator can never rank
+ * it above "Not eligible" — whatever its origin. That is the honest thing to
+ * say, not a defect; the maximum-assurance path is the native ceremony, not the
+ * browser. */
 function deploymentBlock(d: DeploymentView): HTMLElement {
   const assessmentText =
     d.assessment === "not-eligible"
@@ -52,16 +52,17 @@ function deploymentBlock(d: DeploymentView): HTMLElement {
   return h(
     "div",
     { class: "deployment" },
-    h("h3", { class: "sub", text: "Pad source and delivery" }),
+    h("h3", { class: "sub", text: "Pad creation and delivery" }),
     kv([
+      { term: "Created by", value: CREATION_LABEL[d.creation] },
       { term: "Pad source", value: SOURCE_LABEL[d.source] },
       { term: "Delivery", value: DELIVERY_LABEL[d.delivery] },
-      { term: "Shannon deployment", value: assessmentText }
+      { term: "Deployment assessment", value: assessmentText }
     ]),
     reason ? h("p", { class: "save-note", text: `Why? ${reason}.` }) : null,
     h("p", {
       class: "faint small",
-      text: "A factual classification, not a security score. TruePad has not proved physical randomness, private delivery, or that no copy exists."
+      text: "A factual classification, not a security score. A browser pad's live state lives in ordinary browser storage; TruePad has not proved physical randomness, private delivery, or that no copy exists."
     })
   );
 }

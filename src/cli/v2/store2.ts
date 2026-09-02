@@ -221,8 +221,11 @@ function writeAll(fd: number, bytes: Uint8Array): void {
 }
 
 // Write `data` to <dir>/<name> atomically: per-process temp file (full write
-// verified), fsync, rename, fsync dir.
-function writeFileDurably(dir: string, name: string, data: string): void {
+// verified), fsync, rename, fsync dir. Exported so the provenance record shares
+// the same durability discipline as head.json (crash-safe: an incomplete write
+// leaves the old file or none, never a torn one — LOSS IS ACCEPTABLE, a
+// STRONGER-looking half-written provenance is not).
+export function writeFileDurably(dir: string, name: string, data: string): void {
   const tmp = join(dir, `${name}.tmp.${process.pid}`);
   const fd = openSync(tmp, "w", FILE_MODE);
   try {

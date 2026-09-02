@@ -1,13 +1,17 @@
 /* ============================================================================
- * Browser Shannon deployment assessment — derived per pad, and fail-closed
+ * Browser deployment assessment — derived per pad, fail-closed, never gold (§27)
  * ----------------------------------------------------------------------------
- * `status` derives an assessment from each pad's provenance and never promotes
- * the unknown:
+ * `status` assembles each pad's provenance and its live storage and hands them
+ * to the single evaluator. A Browser Edition pad ALWAYS holds live state in
+ * ordinary browser storage (OPFS), which is one rollback domain with no
+ * independent witness — a known disqualifier. So a browser pad is NEVER
+ * CONDITIONALLY ELIGIBLE, whatever its origin; the evaluator reports the most
+ * specific known reason:
  *   · a browser-generated pad is a software CSPRNG source → NOT ELIGIBLE;
  *   · a pad delivered by sealed .tps2 is computational delivery → NOT ELIGIBLE,
  *     and no ordinary use or reload upgrades it;
- *   · a raw courier import cannot be placed → INSUFFICIENT EVIDENCE;
- *   · a bare/legacy store with no provenance → INSUFFICIENT EVIDENCE.
+ *   · a raw courier import over browser storage → NOT ELIGIBLE (storage);
+ *   · a bare/legacy store with no provenance → NOT ELIGIBLE (storage).
  * ========================================================================= */
 
 import { describe, expect, it } from "vitest";
@@ -82,15 +86,18 @@ describe("browser deployment assessment (derived, fail-closed)", () => {
     const pairId = await makePad(alice.tab);
     const d = await statusOf(alice.tab, pairId);
     expect(d.assessment).toBe("not-eligible");
+    expect(d.creation).toBe("browser-generated");
     expect(d.source).toBe("software-csprng");
     expect(d.knownReason).toMatch(/CSPRNG/);
   });
 
-  it("(C) a sealed-delivered pad is NOT ELIGIBLE — computational delivery", async () => {
+  it("(C) a sealed-delivered pad is NOT ELIGIBLE — computational delivery, with a permanent sealed ancestor", async () => {
     const { bob, pairId } = await sealedDelivery();
     const d = await statusOf(bob.tab, pairId);
     expect(d.assessment).toBe("not-eligible");
-    expect(d.delivery).toBe("sealed-online");
+    expect(d.creation).toBe("imported");
+    expect(d.delivery).toBe("sealed-tps2");
+    expect(d.sealedAncestor).toBe(true);
     expect(d.knownReason).toMatch(/computational/);
   });
 
@@ -112,26 +119,46 @@ describe("browser deployment assessment (derived, fail-closed)", () => {
     expect((await statusOf(bob.tab, pairId)).assessment).toBe("not-eligible");
   });
 
-  it("(B) a raw courier import is INSUFFICIENT EVIDENCE", async () => {
+  it("(B) a raw courier import is NOT ELIGIBLE — its live state is browser storage", async () => {
     const alice = origin();
     const pairId = await makePad(alice.tab);
     const container = await buildLiveCourierContainer(alice.vfs, pairId);
     const charlie = origin();
     const imported = ok(await charlie.tab.send({ op: "import-pair", label: "raw", container }), "import-pair");
     const d = await statusOf(charlie.tab, imported.pair.pairId);
-    expect(d.assessment).toBe("insufficient-evidence");
+    expect(d.assessment).toBe("not-eligible");
+    expect(d.creation).toBe("imported");
     expect(d.delivery).toBe("raw-import-unknown");
+    expect(d.sealedAncestor).toBe(false);
+    expect(d.knownReason).toMatch(/browser storage/);
   });
 
-  it("(J) a bare store with no provenance is INSUFFICIENT EVIDENCE, and still usable", async () => {
+  it("(J) a bare store with no provenance is NOT ELIGIBLE (browser storage), and still usable", async () => {
     const alice = origin();
     const pairId = await makePad(alice.tab);
     // Remove the browser-only provenance file: a legacy/bare store.
     await alice.vfs.remove(`${pairId}/pair.json`);
     const d = await statusOf(alice.tab, pairId);
-    expect(d.assessment).toBe("insufficient-evidence");
+    expect(d.assessment).toBe("not-eligible");
+    expect(d.creation).toBe("unknown");
     expect(d.source).toBe("unknown");
+    expect(d.sealedAncestor).toBe("unknown");
+    expect(d.knownReason).toMatch(/browser storage/);
     // Ordinary use is unaffected — the classification is separate from usability.
     ok(await alice.tab.send({ op: "burn", pairId, as: "A", plaintext: new TextEncoder().encode("hi") }), "burn");
+  });
+
+  it("(§27) NO browser pad — generated, sealed-imported, raw-imported, or bare — is ever CONDITIONALLY ELIGIBLE", async () => {
+    const alice = origin();
+    const generated = await makePad(alice.tab);
+    expect((await statusOf(alice.tab, generated)).assessment).not.toBe("conditionally-eligible");
+
+    const { bob, pairId: sealed } = await sealedDelivery();
+    expect((await statusOf(bob.tab, sealed)).assessment).not.toBe("conditionally-eligible");
+
+    const container = await buildLiveCourierContainer(alice.vfs, generated);
+    const charlie = origin();
+    const raw = ok(await charlie.tab.send({ op: "import-pair", label: "raw", container }), "import-pair");
+    expect((await statusOf(charlie.tab, raw.pair.pairId)).assessment).not.toBe("conditionally-eligible");
   });
 });

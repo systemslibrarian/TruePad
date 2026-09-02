@@ -330,13 +330,16 @@ Never *"perfect secrecy achieved"*, *"true OTP verified"*, or
 *"information-theoretic security confirmed"*.
 
 **The Browser Edition never claims a Shannon-eligible pad.** Pad details shows a
-derived *Shannon deployment assessment*, and for a browser pad it is always
-`NOT ELIGIBLE` (a browser-generated pad is a software CSPRNG source, or a pad
-delivered by sealed `.tps2` is computational delivery) or `INSUFFICIENT EVIDENCE`
-(an import whose provenance the browser cannot establish). That is the honest
-result, not a defect: the browser cannot supply the physical-uniform-source
-premise. The assessment is derived from provenance every time and never stored.
-See [Shannon deployment](SHANNON-DEPLOYMENT.md).
+derived *deployment assessment*, and for a browser pad it is always `NOT
+ELIGIBLE`. A Browser Edition pad always holds its live state in ordinary browser
+storage (OPFS) — one rollback domain with no independent witness — which is a
+known disqualifier on its own; a browser-generated pad is additionally a software
+CSPRNG source, and a pad delivered by sealed `.tps2` carries a permanent sealed
+ancestor. So a browser pad is **never** CONDITIONALLY ELIGIBLE, whatever its
+origin. That is the honest result, not a defect: the maximum-assurance surface is
+the native ceremony, not the browser. One shared evaluator derives the assessment
+from provenance every time and never stores it. See
+[Shannon deployment](SHANNON-DEPLOYMENT.md).
 
 **Uniformity is not secrecy**, and the panel says so immediately after:
 

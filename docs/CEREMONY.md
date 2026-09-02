@@ -5,7 +5,7 @@ v2 pairs. `docs/FORMAT-V2.md` is the binding format specification; this
 document is the procedure the format expects around it — §12.4's closing
 paragraph places the workspace rules here on purpose, §8.5 places operator
 recovery here, and §14.2 L3 names what this phase may claim. The code half
-is `truepad2 ceremony create` and `truepad2 ceremony verify`
+is `truepad2 ceremony create`, `truepad2 ceremony accept`, and `truepad2 ceremony verify`
 (`src/cli/v2/ceremony.ts`); everything code cannot enforce is listed in §6
 below rather than implied away. Nothing in this document is a
 recommendation to use one-time pads for real traffic.
@@ -264,6 +264,39 @@ the good copy, and the next step destroys everything, not preserves it:
 
 The refusal message states this recovery inline, so the operator is never
 directed at a verb the tooling does not have.
+
+---
+
+## 4.2 Accepting the private handoff (one-way)
+
+`ceremony create` records that a pair was *made* by the ceremony, but it
+cannot record that the private courier handoff *happened* — that fact
+exists only after the two media reach their peers, and only the operator
+holds it. Until then the pad's delivery is `local-only`, and its deployment
+assessment is INSUFFICIENT EVIDENCE.
+
+Once a medium has reached its intended peer by a private handoff you
+performed or trust, record that fact on that medium:
+
+```
+node bin/truepad2.mjs ceremony accept <medium-dir> --as A|B \
+  --assert-private-handoff --assert-no-extra-copy
+```
+
+This is a one-way boundary. It refuses anything but a ceremony pad whose
+premises were recorded (a plain `gen` store, an imported or sealed lineage,
+or an unreadable provenance all fail closed and change nothing); it requires
+**both** operator assertions and names any that are missing; and it writes
+the durable `delivery = physical private handoff (operator premise)` fact
+before it reports. Its pad-book record says plainly that **TruePad recorded
+an operator assertion and did not observe the courier** — it cannot prove the
+handoff was private or that no other copy exists. A second `accept` refuses,
+and nothing moves the delivery back.
+
+Only after acceptance — and with an independent rollback witness configured
+at generation — does `truepad2 status` show the strongest label,
+CONDITIONALLY ELIGIBLE, always beside the physical premises TruePad did not
+prove. See [MAXIMUM-ASSURANCE.md](MAXIMUM-ASSURANCE.md).
 
 ---
 
