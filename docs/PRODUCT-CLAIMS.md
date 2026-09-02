@@ -209,6 +209,32 @@ EVIDENCE, and only an operator-declared external source is CONDITIONALLY ELIGIBL
 — with the physical premises still unproven. See
 [Shannon deployment](SHANNON-DEPLOYMENT.md).
 
+### Content confidentiality, length privacy, and traffic analysis are three claims
+
+These are kept apart on purpose:
+
+- **Content confidentiality** is the OTP theorem under its premises: given a
+  fresh, uniform, secret, one-time pad, the ciphertext reveals nothing about the
+  plaintext *content*. This holds for a **variable**-length record too — a
+  variable record does not weaken content secrecy; it simply lets the ciphertext
+  length equal the plaintext length.
+- **Length privacy** is a separate, metadata-hardening property. A **fixed**
+  record size (`recordPolicy.record = { kind: "fixed", bytes: F }`, §16) frames
+  every message to exactly F ciphertext bytes with the plaintext length carried
+  *inside* the OTP-encrypted, authenticated frame, so an observer sees a fixed
+  F-byte record and never the exact plaintext length (for plaintext up to F − 4).
+  Each record spends F fresh pad bytes and one auth record however short the
+  message. Fixed records are **required** for the CLI physical/Shannon ceremony
+  and recommended (e.g. F = 4096) elsewhere; a fixed record size is **not** what
+  makes the OTP theorem apply.
+- **Traffic analysis** is not addressed. Fixed records do **not** hide that a
+  message was sent, when, its direction, the **number of records**, the total
+  size across several records, communication frequency, endpoint identity, or
+  any network metadata. TruePad is not "metadata private", "traffic-analysis
+  resistant", "untraceable", or "anonymous". A stronger construction (fixed
+  records + fixed cadence + dummy records) would leak less, but it would consume
+  pad continuously and is a separate protocol; it is **not implemented**.
+
 ### Delivery is the other half
 
 A source claim is not an end-to-end claim. The pad **file** is the secret, and

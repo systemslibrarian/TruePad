@@ -354,13 +354,13 @@ export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
           "label",
           { class: "choice" },
           h("input", { type: "radio", name: "rec", checked: state.record === "variable", on: { change: () => { state.record = "variable"; fField.hidden = true; revalidate(); } } }),
-          h("span", { class: "choice-body" }, h("span", { class: "choice-title", text: "Variable length" }), h("span", { class: "choice-desc", text: "Default. The encrypted message is as long as the message." }))
+          h("span", { class: "choice-body" }, h("span", { class: "choice-title", text: "Variable length" }), h("span", { class: "choice-desc", text: "Default. The encrypted message is as long as the message, so its exact length is visible." }))
         ),
         h(
           "label",
           { class: "choice" },
           h("input", { type: "radio", name: "rec", checked: state.record === "fixed", on: { change: () => { state.record = "fixed"; fField.hidden = false; revalidate(); } } }),
-          h("span", { class: "choice-body" }, h("span", { class: "choice-title", text: "Fixed length" }), h("span", { class: "choice-desc", text: "Pad every message to one size, so its length reveals nothing." }))
+          h("span", { class: "choice-body" }, h("span", { class: "choice-title", text: "Fixed length (stronger length privacy)" }), h("span", { class: "choice-desc", text: "Every message uses the same record size, hiding its exact length. The cost: each message spends the full record size of pad, even a short one. Timing and the number of messages are still visible." }))
         )
       ),
       fField

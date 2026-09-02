@@ -70,9 +70,12 @@ afterEach(() => {
 
 const BUDGET_FLAGS = ["--encryption-bytes", String(E), "--auth-records", String(N)];
 const ALL_ASSERTIONS = ["--assert-offline", "--assert-distinct-physics", "--assert-tmpfs-workspace", "--assert-no-persistent-copy"];
+// The ceremony now REQUIRES a fixed record size (metadata hardening). 48 is a
+// valid F for these tiny budgets (multiple of 16, >= 32, <= E = 64).
+const RECORD_FLAGS = ["--record-bytes", "48"];
 
 function create(...extra: string[]): { code: number | null; stdout: string; stderr: string } {
-  return run("ceremony", "create", ws, "--medium-a", mediumA, "--medium-b", mediumB, ...extra);
+  return run("ceremony", "create", ws, "--medium-a", mediumA, "--medium-b", mediumB, ...RECORD_FLAGS, ...extra);
 }
 
 describe("ceremony create refuses an incomplete ceremony", () => {
@@ -210,6 +213,36 @@ describe("ceremony verify", () => {
     expect(refused.code).toBe(2);
     expect(refused.stderr).toContain("refused: half-pair");
     expect(refused.stderr).toContain("b-to-a/ is missing");
+  });
+});
+
+describe("the serious ceremony requires a fixed record size (metadata hardening)", () => {
+  it("without --record-bytes: ceremony-incomplete, nothing generated, and the reason names the fixed-record requirement", () => {
+    // Raw run() so --record-bytes is genuinely absent (create() adds it).
+    const result = run(
+      "ceremony", "create", ws,
+      "--medium-a", mediumA, "--medium-b", mediumB,
+      "--source", src1, "--source", src2,
+      ...BUDGET_FLAGS, ...ALL_ASSERTIONS
+    );
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain("refused: ceremony-incomplete");
+    expect(result.stderr).toMatch(/requires a fixed record size/);
+    expect(result.stderr).toContain("--record-bytes");
+    // It is honest about what fixed records are and are not.
+    expect(result.stderr).toMatch(/metadata-hardening policy, not what makes the one-time-pad theorem apply/);
+    expect(result.stderr).toContain("Nothing was generated");
+    expect(existsSync(join(ws, "pair"))).toBe(false);
+    expect(existsSync(mediumA)).toBe(false);
+  });
+
+  it("with --record-bytes: the provisioned pair is a FIXED store at that F, on both media", () => {
+    const result = create("--source", src1, "--source", src2, ...BUDGET_FLAGS, ...ALL_ASSERTIONS);
+    expect(result.code, result.stderr).toBe(0);
+    for (const medium of [mediumA, mediumB]) {
+      const head = JSON.parse(readFileSync(join(medium, "a-to-b", "head.json"), "utf8"));
+      expect(head.recordPolicy.record).toEqual({ kind: "fixed", bytes: 48 });
+    }
   });
 });
 

@@ -1448,6 +1448,35 @@ function printDeploymentClaims(head: HeadV2): void {
   err(`  ${CONDITIONAL_CAVEAT}`);
 }
 
+/**
+ * The MESSAGE LENGTH PRIVACY section (stderr). It is a metadata-hardening fact,
+ * separate from the Shannon assessment and the witness: a fixed record size
+ * hides the exact plaintext length of each message inside the OTP-encrypted
+ * frame, but record count and timing stay visible. It is NOT what makes the OTP
+ * theorem apply, and a variable record does not weaken message-content secrecy.
+ */
+function printLengthPrivacy(head: HeadV2): void {
+  const record = head.recordPolicy.record;
+  err("");
+  err("MESSAGE LENGTH PRIVACY");
+  if (record.kind === "fixed") {
+    err(claimRow("record policy", "FIXED"));
+    err(claimRow("record size", `${record.bytes} bytes`));
+    err(claimRow("max plaintext per record", `${frameCapacity(record.bytes)} bytes`));
+    err(claimRow("exact plaintext length", "hidden inside the OTP-encrypted frame"));
+  } else {
+    err(claimRow("record policy", "VARIABLE"));
+    err(claimRow("exact plaintext length", "exposed by ciphertext length"));
+  }
+  err(claimRow("record count", "visible"));
+  err(claimRow("timing", "visible"));
+  err("");
+  err("  Fixed records hide the exact plaintext length of each message; they do not");
+  err("  hide that a message was sent, when, its direction, the record count, or any");
+  err("  network metadata. Length privacy is metadata hardening, not what makes the");
+  err("  one-time-pad theorem apply.");
+}
+
 export function status(args: Args2): void {
   const dir = dirArg(args, "status");
   // §15.3: status reads and reports the witness state per direction but
@@ -1491,6 +1520,7 @@ export function status(args: Args2): void {
   // The deployment section is DERIVED and printed to stderr only; the machine
   // line on stdout is unchanged (its shape is a contract).
   printDeploymentClaims(snapshot.head);
+  printLengthPrivacy(snapshot.head);
   out(JSON.stringify(machine));
 }
 

@@ -270,3 +270,61 @@ describe("fixed-size records end to end", { timeout: 120_000 }, () => {
     expect(after).toBe(before + 1);
   });
 });
+
+describe("fixed records: length privacy and the exact consumption price", () => {
+  const BIG = 4096; // capacity 4092, big enough to hold a 2000-byte message
+
+  it("(§17) a 1-byte and a 2000-byte message produce identical ciphertext length — plaintext length does not determine it", () => {
+    // Two fresh, otherwise-equivalent stores at the same sequence/offset, so the
+    // WHOLE serialized envelope is comparable, not only the ciphertext field.
+    const one = join(dir, "one");
+    const two = join(dir, "two");
+    expect(genStore(one, 65536, 8, BIG).code).toBe(0);
+    expect(genStore(two, 65536, 8, BIG).code).toBe(0);
+
+    const shortMsg = join(dir, "short.bin");
+    const longMsg = join(dir, "long.bin");
+    writeFileSync(shortMsg, randomBytes(1));
+    writeFileSync(longMsg, randomBytes(2000));
+
+    const burnShort = run("burn", one, "--as", "A", "--in", shortMsg);
+    const burnLong = run("burn", two, "--as", "A", "--in", longMsg);
+    expect(burnShort.code).toBe(0);
+    expect(burnLong.code).toBe(0);
+
+    const envShort = JSON.parse(burnShort.stdout.trim());
+    const envLong = JSON.parse(burnLong.stdout.trim());
+    // The ciphertext portion is F for both — the plaintext length is invisible.
+    expect(envShort.ciphertextLength).toBe(BIG);
+    expect(envLong.ciphertextLength).toBe(BIG);
+    // Both are the first send on a fresh store (sequence 0, offset 0), so the
+    // full serialized envelope length is identical too: no field varies with
+    // plaintext length. (Across DIFFERENT sequences/offsets the outer envelope
+    // could differ by the DECIMAL WIDTH of the sequence/offset integers — a
+    // function of how many records preceded it, never of the plaintext length.)
+    expect(envShort.sequence).toBe(0);
+    expect(envLong.sequence).toBe(0);
+    expect(burnShort.stdout.trim().length).toBe(burnLong.stdout.trim().length);
+  });
+
+  it("one fixed send consumes exactly one auth record and exactly F encryption bytes", () => {
+    const a = join(dir, "a");
+    expect(genStore(a, 512, 4, F).code).toBe(0);
+    const before = JSON.parse(run("status", a).stdout)["A->B"];
+    expect(run("burn", a, "--as", "A", "hello").code).toBe(0);
+    const after = JSON.parse(run("status", a).stdout)["A->B"];
+    expect(after.authentication.nextSequence).toBe(before.authentication.nextSequence + 1); // one auth record
+    expect(after.encryption.nextOffset).toBe(before.encryption.nextOffset + F); // F encryption bytes
+  });
+
+  it("a fixed store stays fixed at the same F across reload (loadStore2 and a second status)", () => {
+    const a = join(dir, "a");
+    expect(genStore(a, 512, 4, F).code).toBe(0);
+    const loaded = loadStore2(join(a, "a-to-b"));
+    expect(loaded.ok).toBe(true);
+    if (loaded.ok) expect(loaded.head.recordPolicy.record).toEqual({ kind: "fixed", bytes: F });
+    // A burn, then a reload: still fixed at the same F, never silently variable.
+    expect(run("burn", a, "--as", "A", "x").code).toBe(0);
+    expect(JSON.parse(run("status", a).stdout)["A->B"].record).toEqual({ kind: "fixed", bytes: F });
+  });
+});

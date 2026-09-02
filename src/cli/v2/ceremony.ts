@@ -471,6 +471,22 @@ export function ceremonyCreate(args: Args2): void {
     );
   }
 
+  // The physical/Shannon ceremony is the serious deployment profile, and it
+  // must not silently expose exact plaintext length: it requires a FIXED record
+  // size. gen accepts variable records; a ceremony does not. This is a
+  // metadata-hardening policy — it is NOT what makes the one-time-pad theorem
+  // apply — and choosing it is explicit, never implied.
+  if (single(args, "record-bytes") === undefined) {
+    throw new Refused2(
+      "ceremony-incomplete",
+      "the physical/Shannon ceremony requires a fixed record size: pass --record-bytes F (F a multiple of 16, " +
+        "32 <= F <= 1048576; 4096 is recommended for ordinary messages). Fixed records hide the exact plaintext " +
+        "length of each message, so this profile does not expose it through the ciphertext length. This is a " +
+        "metadata-hardening policy, not what makes the one-time-pad theorem apply. Nothing was generated and " +
+        "nothing was written."
+    );
+  }
+
   if (existsSync(pairDir)) {
     throw new Error(`${pairDir} already exists; a ceremony starts from an empty workspace`);
   }
@@ -487,6 +503,7 @@ export function ceremonyCreate(args: Args2): void {
     "origin",
     "encryption-bytes",
     "auth-records",
+    "record-bytes",
     "verify-attempt-limit",
     "max-auth-lookahead",
     "freeze-threshold",

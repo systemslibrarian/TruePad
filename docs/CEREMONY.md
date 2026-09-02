@@ -63,12 +63,24 @@ Run once per pair, on a machine that will hold no copy afterwards.
      --source qrng.bin --source diode.bin \
      --origin "vendor QRNG, operator-asserted" --origin "avalanche diode, operator-asserted" \
      --encryption-bytes E --auth-records N \
+     --record-bytes 4096 \
      --assert-offline --assert-distinct-physics \
      --assert-tmpfs-workspace --assert-no-persistent-copy
    ```
 
    *Enforced:* every assertion flag is required — a missing one is the
-   typed refusal `ceremony-incomplete`, and nothing is generated. The
+   typed refusal `ceremony-incomplete`, and nothing is generated. **A fixed
+   record size is also required** (`--record-bytes F`): the serious profile
+   must not expose the exact plaintext length through the ciphertext length,
+   so the ceremony refuses without it. `--record-bytes 4096` fixes every
+   record at 4096 ciphertext bytes and hides the exact size of any message up
+   to 4092 bytes (F − 4); each record burns 4096 fresh pad bytes even if the
+   message is one byte, which is intentional. Fixed record size is a
+   metadata-hardening choice — it is **not** what makes the one-time-pad
+   theorem apply, and it changes nothing about the source or delivery claims.
+   4096 is a recommended default for ordinary human messages, not a magic
+   constant; a larger F hides size across a larger range and spends more pad,
+   a smaller F conserves pad and caps the message shorter. The
    generation itself is gen's own path: XOR combination and the exact §7
    partition, `secret.bin` durable before `head.json` and the `init`
    journal line exist (§12.4), and a manifest containing nothing derived
