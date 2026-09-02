@@ -163,3 +163,70 @@ describe("a legacy store with no provenance is UNKNOWN → INSUFFICIENT, and sta
     expect(readdirSync(g)).not.toContain("provenance.json");
   });
 });
+
+/* ---- §1 pair-bound provenance: transplantation cannot raise assurance ------ */
+
+// Provision an accepted ceremony pair; return its medium-A dir (strong, accepted
+// provenance) and the ceremony pairId.
+function acceptedCeremony(tag: string): { mediumA: string; pairId: string } {
+  const s1 = join(dir, `c1-${tag}.bin`);
+  const s2 = join(dir, `c2-${tag}.bin`);
+  writeFileSync(s1, new Uint8Array(2 * (8192 + 32 * 4)).fill(0x11));
+  writeFileSync(s2, new Uint8Array(2 * (8192 + 32 * 4)).fill(0x22));
+  const mA = join(dir, `mA-${tag}`);
+  expect(
+    run("ceremony", "create", join(dir, `ws-${tag}`), "--medium-a", mA, "--medium-b", join(dir, `mB-${tag}`),
+      "--source", s1, "--source", s2, "--record-bytes", "4096", "--encryption-bytes", "8192", "--auth-records", "4",
+      "--assert-offline", "--assert-distinct-physics", "--assert-tmpfs-workspace", "--assert-no-persistent-copy").code
+  ).toBe(0);
+  expect(run("ceremony", "accept", mA, "--as", "A", "--assert-private-handoff", "--assert-no-extra-copy").code).toBe(0);
+  const pairId = (JSON.parse(readFileSync(join(mA, "a-to-b", "head.json"), "utf8")) as { pairId: string }).pairId;
+  return { mediumA: mA, pairId };
+}
+
+describe("(§1) strong provenance cannot be transplanted to raise another pair", () => {
+  it("(A) an accepted-ceremony provenance copied beside a plain-gen pair does NOT raise it", () => {
+    const { mediumA } = acceptedCeremony("A");
+    const b = join(dir, "genB");
+    genStore(b);
+    // Transplant pair A's accepted provenance onto pair B.
+    cpSync(provenancePath(mediumA), provenancePath(b));
+    // B's provenance no longer matches B's heads → treated as UNKNOWN.
+    expect(deploymentLine(b)).toBe("INSUFFICIENT EVIDENCE");
+    expect(run("status", b).stderr).toMatch(/creation path .+ unknown/);
+  });
+
+  it("(C) a provenance whose pairId is edited to anything else fails closed to INSUFFICIENT", () => {
+    const g = join(dir, "gEdit");
+    genStore(g);
+    const rec = JSON.parse(readFileSync(provenancePath(g), "utf8")) as { pairId: string };
+    rec.pairId = "ffffffffffffffffffffffffffffffff"; // a syntactically valid but wrong pairId
+    writeFileSync(provenancePath(g), JSON.stringify(rec));
+    expect(deploymentLine(g)).toBe("INSUFFICIENT EVIDENCE");
+  });
+});
+
+/* ---- §5 irreversible downgrade: stale provenance cannot resurrect assurance - */
+
+describe("(§5) a withdrawal is permanent; stale provenance cannot raise the classification", () => {
+  it("(A/B) withdraw, then restore the pre-downgrade accepted provenance — status stays NOT ELIGIBLE", () => {
+    const { mediumA } = acceptedCeremony("W");
+    const accepted = readFileSync(provenancePath(mediumA), "utf8"); // the strong, accepted copy
+    expect(run("ceremony", "withdraw", mediumA, "--as", "A", "--reason", "compromise").code).toBe(0);
+    expect(deploymentLine(mediumA)).toBe("NOT ELIGIBLE");
+    // The attack: put the old accepted provenance.json back.
+    writeFileSync(provenancePath(mediumA), accepted);
+    // The withdrawal authority is independent and monotonic — still NOT ELIGIBLE.
+    expect(deploymentLine(mediumA)).toBe("NOT ELIGIBLE");
+    expect(run("status", mediumA).stderr).toMatch(/withdrew|withdrawn/i);
+  });
+
+  it("(C) cloning a stale accepted provenance beside a withdrawn store does not raise it", () => {
+    const { mediumA } = acceptedCeremony("C");
+    const accepted = readFileSync(provenancePath(mediumA), "utf8");
+    run("ceremony", "withdraw", mediumA, "--as", "A", "--reason", "rotate");
+    // Even overwriting with a byte-identical accepted record cannot help.
+    writeFileSync(provenancePath(mediumA), accepted);
+    expect(deploymentLine(mediumA)).toBe("NOT ELIGIBLE");
+  });
+});

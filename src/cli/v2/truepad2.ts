@@ -87,13 +87,22 @@ import {
   type WitnessCounters,
   type WitnessSnapshot
 } from "./witness.ts";
-import { ACCEPT_ASSERTIONS, ceremonyAccept, CEREMONY_ASSERTIONS, ceremonyCreate, ceremonyVerify } from "./ceremony.ts";
+import {
+  ACCEPT_ASSERTIONS,
+  ceremonyAccept,
+  CEREMONY_ASSERTIONS,
+  ceremonyCreate,
+  ceremonyVerify,
+  ceremonyWithdraw
+} from "./ceremony.ts";
 import {
   initPlatformWitness,
   platformAdvance,
+  platformHealth,
   platformPreflight,
   validatePlatformState,
-  type PlatformConfig
+  type PlatformConfig,
+  type PlatformHealth
 } from "./platform-witness.ts";
 import {
   ASSESSMENT_LABEL,
@@ -101,12 +110,15 @@ import {
   CONDITIONAL_CAVEAT,
   CREATION_LABEL,
   DELIVERY_LABEL,
+  rollbackAuthorityLabel,
   SOURCE_LABEL,
   UNPROVEN_PREMISES,
   type DeploymentFacts,
-  type RollbackWitness
+  type RollbackAuthority,
+  type WitnessHealth
 } from "../../claims/shannon-deployment.ts";
-import { genProvenance, readProvenance, writeProvenance } from "./provenance.ts";
+import { genProvenance, provenanceBoundTo, readProvenance, writeProvenance } from "./provenance.ts";
+import { isWithdrawn } from "./withdrawal.ts";
 
 export const BANNER2 =
   "truepad2: reuse-safe pad handling with authenticated envelopes (Store Format v2; docs/FORMAT-V2.md is the\n" +
@@ -315,7 +327,7 @@ function readInputText(args: Args2, index: number): string {
 
 /* ---- pair loading ---------------------------------------------------------- */
 
-type LoadedPair = { "A->B": LoadedStore2; "B->A": LoadedStore2 };
+export type LoadedPair = { "A->B": LoadedStore2; "B->A": LoadedStore2 };
 
 // A v1 pad.json where a v2 half should be is a v1 store, refused with no
 // bridge (§9.1). Shared by requirePair2 and destroy (§17.1): both refuse v1.
@@ -379,7 +391,7 @@ function requireNotDestroyed(dir: string): void {
   }
 }
 
-function withPair<T>(dir: string, fn: (pair: LoadedPair) => T): T {
+export function withPair<T>(dir: string, fn: (pair: LoadedPair) => T): T {
   const lock = acquireLock(dir);
   if (!lock.ok) {
     throw new Refused2("locked", lock.message);
@@ -944,7 +956,7 @@ export function gen(args: Args2): void {
   // ceremony, not yet distributed). ceremony create OVERWRITES this with
   // `cli-ceremony` before it copies to the two media. Written durably so a
   // crash cannot leave a record that looks more assured than the store is.
-  writeProvenance(dir, genProvenance(manifest.createdAt));
+  writeProvenance(dir, genProvenance(manifest.pairId, manifest.createdAt));
 
   err(`sources: ${sourcePaths.length} declared, XOR-combined over the first ${required} bytes of each.`);
   for (const source of manifest.sources) {
@@ -1410,69 +1422,123 @@ function claimRow(label: string, value: string): string {
   return `    ${label} ${dots} ${value}`;
 }
 
-/** The human witness-class name for the deployment section. */
-function witnessClassName(rollback: HeadV2["rollback"]): string {
-  switch (rollback.witnessClass) {
-    case "none":
-      return "NONE (no external rollback witness)";
-    case "separate-state-file":
-      return "SEPARATE-STATE-FILE";
-    case "platform-monotonic":
-      return `PLATFORM-MONOTONIC (${String((rollback.config as { provider?: unknown }).provider ?? "unknown provider")})`;
-    case "remote-monotonic":
-      return "REMOTE-MONOTONIC (unsupported in this build)";
-  }
+/** The LIVE separate-state-file health for one store, mapped from the read-only
+ *  witnessReport (which already compares the store's effective counters against
+ *  the witness entry). Reused so status derives from the same report it prints. */
+function separateHealthOf(store: LoadedStore2): WitnessHealth {
+  const report = witnessReport(store);
+  if (report.witnessClass !== "separate-state-file") return "inconsistent"; // caller guarantees the class
+  if (!report.reachable) return report.reason === "witness-inconsistent" ? "inconsistent" : "unreachable";
+  return report.comparison === "regressed" ? "regressed" : "healthy";
 }
 
-/** Map a store's live rollback witness class to the evaluator's axis. The store
- *  is the ONLY independent rollback authority a CLI pad has; `remote-monotonic`
- *  is unsupported in this build, so it is reported as `unknown` (never a
- *  witness the evaluator would trust). */
-function rollbackWitnessOf(rollback: HeadV2["rollback"]): RollbackWitness {
-  switch (rollback.witnessClass) {
-    case "none":
-      return "none";
-    case "separate-state-file":
-      return "separate-state-file";
-    case "platform-monotonic":
-      return "platform-monotonic";
-    case "remote-monotonic":
-      return "unknown";
+/** The LIVE platform-monotonic health for one store, via the read-only probe
+ *  (no TPM increment, no prepared-commit settle). Injectable `tpm` for tests. */
+function platformHealthOf(store: LoadedStore2, tpm?: Parameters<typeof platformHealth>[4]): WitnessHealth {
+  const config = store.head.rollback.config as unknown as PlatformConfig;
+  const h: PlatformHealth = platformHealth(
+    config,
+    store.head.pairId,
+    store.head.direction,
+    {
+      nextOffset: store.effective.nextOffset,
+      nextSequence: store.effective.nextSequence,
+      attemptsReserved: store.effective.attemptsReserved
+    },
+    tpm
+  );
+  return h;
+}
+
+// Worst-of two live healths across the pair's two directions: a positive
+// rollback/corruption signal on EITHER half governs, then an availability
+// failure, then healthy. Both halves must be live and clean to be healthy.
+const HEALTH_RANK: Record<WitnessHealth, number> = {
+  regressed: 0,
+  inconsistent: 1,
+  unreachable: 2,
+  unsupported: 3,
+  healthy: 4
+};
+function worstHealth(a: WitnessHealth, b: WitnessHealth): WitnessHealth {
+  return HEALTH_RANK[a] <= HEALTH_RANK[b] ? a : b;
+}
+
+/** Assemble the LIVE rollback authority for the whole pair — its class AND
+ *  current health, obtained under the pair lock the caller already holds. Both
+ *  directions are probed and the worst health governs (a rollback on either
+ *  half is a rollback). `remote-monotonic` cannot be generated (gen refuses it),
+ *  so anything unexpected is reported `unknown` — never trusted. */
+function rollbackAuthorityForPair(pair: LoadedPair, tpm?: Parameters<typeof platformHealth>[4]): RollbackAuthority {
+  const a = pair["A->B"].head.rollback.witnessClass;
+  const b = pair["B->A"].head.rollback.witnessClass;
+  if (a !== b) return { kind: "unknown" }; // the two halves disagree on the witness class
+  if (a === "none") return { kind: "none" };
+  if (a === "separate-state-file") {
+    return { kind: "separate-state-file", health: worstHealth(separateHealthOf(pair["A->B"]), separateHealthOf(pair["B->A"])) };
   }
+  if (a === "platform-monotonic") {
+    return { kind: "platform-monotonic", health: worstHealth(platformHealthOf(pair["A->B"], tpm), platformHealthOf(pair["B->A"], tpm)) };
+  }
+  return { kind: "unknown" };
 }
 
 /**
- * The DEPLOYMENT ASSESSMENT section (stderr). It ASSEMBLES the immutable
- * provenance facts (from the strict `provenance.json` next to the store) and the
- * live facts (native storage, the store's rollback witness) and hands them to
- * the ONE evaluator (`assessDeployment`). It never reads or writes a stored
- * verdict, and it never hardcodes a classification.
+ * Assemble the DeploymentFacts for a whole pair — the single point where the CLI
+ * turns durable records and live state into the evaluator's input. It NEVER
+ * decides a classification; it only gathers facts, conservatively:
  *
- * This is where §3/§26 bites: a plain `truepad2 gen` store carries `cli-gen`
- * provenance and is reported NOT ELIGIBLE ("plain gen, not the physical
- * ceremony"). A `ceremony create` store is INSUFFICIENT until its peer runs
- * `ceremony accept` — only a `cli-ceremony` pad whose private handoff was
- * accepted, with an independent rollback witness, reaches CONDITIONALLY
- * ELIGIBLE, and even then the physical premises TruePad did NOT prove are
- * printed alongside it (§40) so the label is never screenshot as "secure".
- * A store with no readable provenance is UNKNOWN → INSUFFICIENT, never promoted.
+ *  - provenance must be readable AND bound to BOTH heads' shared pairId (§1); a
+ *    transplanted record whose pairId does not match is treated as UNKNOWN, so
+ *    strong provenance from pair A can never raise pair B;
+ *  - a durable withdrawal for this pair forces `ceremonyPremises = withdrawn`
+ *    INDEPENDENTLY of provenance.json (§5), so restoring an older accepted
+ *    provenance cannot resurrect a stronger verdict;
+ *  - storage is native, and the rollback authority carries LIVE health (§2/§3).
  */
-function printDeploymentClaims(head: HeadV2, pairDir: string): void {
-  const sourceCount = head.sourceDeclarations.length;
-  const provenance = readProvenance(pairDir); // null ⇒ UNKNOWN, mapped conservatively below
+function assembleDeploymentFacts(pair: LoadedPair, pairDir: string, tpm?: Parameters<typeof platformHealth>[4]): DeploymentFacts {
+  const idA = pair["A->B"].head.pairId;
+  const idB = pair["B->A"].head.pairId;
+  // Contradictory identity between halves ⇒ we cannot bind provenance to a
+  // single pair; fail the provenance facts closed to UNKNOWN.
+  const sharedPairId = idA === idB ? idA : null;
 
-  const facts: DeploymentFacts = {
-    creation: provenance?.creation ?? "unknown",
-    source: provenance?.source ?? "unknown",
-    delivery: provenance?.delivery ?? "unknown",
-    // A CLI store is never sealed; when provenance is unreadable, we do not
-    // reconstruct that fact — it becomes "unknown" and cannot help the verdict.
-    sealedAncestor: provenance === null ? "unknown" : provenance.sealedAncestor,
-    ceremonyPremises: provenance?.ceremonyPremises ?? "unknown",
-    // The CLI edition holds live state on the native filesystem it locks.
+  const provenance = readProvenance(pairDir);
+  const bound = provenance !== null && sharedPairId !== null && provenanceBoundTo(provenance, sharedPairId);
+  const usable = bound ? provenance : null; // an unbound/mismatched record is UNKNOWN
+
+  // The withdrawal authority is independent of provenance.json and monotonic.
+  const withdrawn = sharedPairId !== null && isWithdrawn(pairDir, sharedPairId);
+  const ceremonyPremises = withdrawn ? "withdrawn" : (usable?.ceremonyPremises ?? "unknown");
+
+  return {
+    creation: usable?.creation ?? "unknown",
+    source: usable?.source ?? "unknown",
+    delivery: usable?.delivery ?? "unknown",
+    sealedAncestor: usable === null ? "unknown" : usable.sealedAncestor,
+    ceremonyPremises,
     storage: "native",
-    rollbackWitness: rollbackWitnessOf(head.rollback)
+    rollback: rollbackAuthorityForPair(pair, tpm)
   };
+}
+
+/**
+ * The DEPLOYMENT ASSESSMENT section (stderr). It assembles the pair's facts and
+ * hands them to the ONE evaluator (`assessDeployment`). It never reads or writes
+ * a stored verdict, and it never hardcodes a classification.
+ *
+ * §3/§26: a plain `gen` store is NOT ELIGIBLE ("plain gen, not the physical
+ * ceremony"). §1: a transplanted or wrong-pair provenance record reads UNKNOWN.
+ * §5: a durable withdrawal forces `withdrawn`, which stale provenance cannot
+ * undo. §2/§3: only a native ceremony pad whose handoff was accepted AND whose
+ * LIVE platform-monotonic rollback authority is healthy reaches CONDITIONALLY
+ * ELIGIBLE, and even then the physical premises TruePad did NOT prove are printed
+ * beside it (§40).
+ */
+function printDeploymentClaims(pair: LoadedPair, pairDir: string): void {
+  const head = pair["A->B"].head;
+  const sourceCount = head.sourceDeclarations.length;
+  const facts = assembleDeploymentFacts(pair, pairDir);
   const { assessment, knownReason } = assessDeployment(facts);
 
   err("");
@@ -1486,13 +1552,14 @@ function printDeploymentClaims(head: HeadV2, pairDir: string): void {
   err(claimRow("creation path", CREATION_LABEL[facts.creation]));
   err(claimRow("source material", SOURCE_LABEL[facts.source]));
   err(claimRow("delivery", DELIVERY_LABEL[facts.delivery]));
+  err(claimRow("ceremony premises", facts.ceremonyPremises.toUpperCase()));
   err(claimRow("external source declarations", String(sourceCount)));
   err(claimRow("physical uniformity proven by TruePad", "NO"));
   err(claimRow("source independence proven by TruePad", "NO"));
   err("  Reuse protection");
   err(claimRow("irreversible counters", "ACTIVE"));
   err(claimRow("live storage authority", "NATIVE"));
-  err(claimRow("witness class", witnessClassName(head.rollback)));
+  err(claimRow("rollback authority", rollbackAuthorityLabel(facts.rollback)));
   err("  Deployment assessment (derived)");
   err(`    ${ASSESSMENT_LABEL[assessment]}`);
   if (assessment === "conditionally-eligible") {
@@ -1540,48 +1607,44 @@ function printLengthPrivacy(head: HeadV2): void {
 
 export function status(args: Args2): void {
   const dir = dirArg(args, "status");
-  // §15.3: status reads and reports the witness state per direction but
-  // refuses nothing for witness reasons. The witness read happens under the
-  // pair lock alongside the meters.
-  const snapshot = withPair(dir, (pair) => ({
-    "A->B": { meters: meters(pair["A->B"]), witness: witnessReport(pair["A->B"]) },
-    "B->A": { meters: meters(pair["B->A"]), witness: witnessReport(pair["B->A"]) },
-    // The source provenance is a pair-level fact; both halves are generated
-    // together from the same declared sources, so A->B's head carries it.
-    head: pair["A->B"].head
-  }));
   const machine: Record<PadDirection, unknown> = { "A->B": undefined, "B->A": undefined };
-  for (const direction of ["A->B", "B->A"] as const) {
-    const m = snapshot[direction].meters;
-    const w = snapshot[direction].witness;
-    err(
-      `${direction}: encryption ${m.encryption.remainingBytes}/${m.encryption.capacity} bytes · authentication ` +
-        `${m.authentication.remainingRecords}/${m.authentication.capacityRecords} records · maximum remaining ` +
-        `sends ${m.maxRemainingSends}`
-    );
-    err(`${direction}: CHANNEL CAPACITY LIMITED BY: ${m.limitedBy}`);
-    if (m.verification.frozen) {
-      err(`${direction}: FROZEN (failureCount ${m.verification.failureCount}; clear with truepad2 clear-freeze)`);
-    }
-    if (w.witnessClass === "separate-state-file") {
-      if (!w.reachable) {
-        err(
-          `${direction}: WITNESS UNREACHABLE (${w.reason}) at ${w.path} — a configured witness that cannot be read ` +
-            "fails closed at burn/open/retire; status reports it but refuses nothing (§15.3)."
-        );
-      } else if (w.comparison === "regressed") {
-        err(
-          `${direction}: WITNESS REGRESSED — this store is behind its witness at ${w.path}; burn/open/retire will ` +
-            "refuse witness-regressed (a restored store, §9.4). status refuses nothing."
-        );
+  // §15.3: status reports the witness state per direction but refuses nothing
+  // for witness reasons. Everything — the meters, the witness reports, AND the
+  // DERIVED deployment assessment's LIVE witness probe (§2) — happens under the
+  // one pair lock, so the assessment sees the same state the meters do.
+  withPair(dir, (pair) => {
+    for (const direction of ["A->B", "B->A"] as const) {
+      const m = meters(pair[direction]);
+      const w = witnessReport(pair[direction]);
+      err(
+        `${direction}: encryption ${m.encryption.remainingBytes}/${m.encryption.capacity} bytes · authentication ` +
+          `${m.authentication.remainingRecords}/${m.authentication.capacityRecords} records · maximum remaining ` +
+          `sends ${m.maxRemainingSends}`
+      );
+      err(`${direction}: CHANNEL CAPACITY LIMITED BY: ${m.limitedBy}`);
+      if (m.verification.frozen) {
+        err(`${direction}: FROZEN (failureCount ${m.verification.failureCount}; clear with truepad2 clear-freeze)`);
       }
+      if (w.witnessClass === "separate-state-file") {
+        if (!w.reachable) {
+          err(
+            `${direction}: WITNESS UNREACHABLE (${w.reason}) at ${w.path} — a configured witness that cannot be read ` +
+              "fails closed at burn/open/retire; status reports it but refuses nothing (§15.3)."
+          );
+        } else if (w.comparison === "regressed") {
+          err(
+            `${direction}: WITNESS REGRESSED — this store is behind its witness at ${w.path}; burn/open/retire will ` +
+              "refuse witness-regressed (a restored store, §9.4). status refuses nothing."
+          );
+        }
+      }
+      machine[direction] = { ...m, witness: w };
     }
-    machine[direction] = { ...m, witness: w };
-  }
-  // The deployment section is DERIVED and printed to stderr only; the machine
-  // line on stdout is unchanged (its shape is a contract).
-  printDeploymentClaims(snapshot.head, dir);
-  printLengthPrivacy(snapshot.head);
+    // The deployment and length sections are DERIVED and printed to stderr only;
+    // the machine line on stdout is unchanged (its shape is a contract).
+    printDeploymentClaims(pair, dir);
+    printLengthPrivacy(pair["A->B"].head);
+  });
   out(JSON.stringify(machine));
 }
 
@@ -2116,7 +2179,11 @@ function ceremony(args: Args2): void {
     ceremonyAccept(args);
     return;
   }
-  throw new Error("ceremony needs a subcommand: create, accept, or verify");
+  if (sub === "withdraw") {
+    ceremonyWithdraw(args);
+    return;
+  }
+  throw new Error("ceremony needs a subcommand: create, accept, withdraw, or verify");
 }
 
 /* ---- entry ----------------------------------------------------------------- */
@@ -2149,6 +2216,7 @@ const ALLOWED_FLAGS: Record<string, readonly string[]> = {
     "medium-a",
     "medium-b",
     "as",
+    "reason",
     ...CEREMONY_ASSERTIONS.map((assertion) => assertion.flag),
     ...ACCEPT_ASSERTIONS.map((assertion) => assertion.flag)
   ]

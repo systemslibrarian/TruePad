@@ -37,38 +37,61 @@ edition assembles them from its own durable store:
 | **sealed-ancestor** | whether any sealed `.tps2` appears in the lineage — **permanent** once true |
 | **ceremony-premises** | the operator-premise state — `accepted`, `absent`, `withdrawn`, or `unknown` |
 | **storage** | where live state is held — `native` filesystem, or `browser-opfs` |
-| **rollback-witness** | the reuse/rollback authority — a separate state file, a platform-monotonic counter, a browser-local witness, or none |
+| **rollback-authority** | the LIVE reuse/rollback authority — its class AND current health (reachable, consistent, not behind the store), obtained under the pair lock |
+
+Every fact is bound to the exact pair by the public `pairId`: a strong provenance
+record transplanted beside another pair does not apply to it (see
+[SHANNON-DEPLOYMENT.md §13](SHANNON-DEPLOYMENT.md)).
 
 ## Reaching CONDITIONALLY ELIGIBLE
 
 Only this exact conjunction reaches the strongest label, and it exists only on the
 native CLI. Each step records a fact the previous one could not:
 
-1. **Generate by the physical ceremony.** `truepad2 ceremony create <workspace>
-   --medium-a A --medium-b B --source … --source … --record-bytes F
-   --encryption-bytes E --auth-records N --witness-class … --witness-path …
-   --assert-offline --assert-distinct-physics --assert-tmpfs-workspace
-   --assert-no-persistent-copy`. This records `creation = cli-ceremony`, external
-   source, ceremony premises **accepted**, and provisions two peer media, each a
-   full byte-verified pair copy. Delivery is still `local-only`, so the pad is
-   **INSUFFICIENT EVIDENCE** — the courier has not run yet.
+1. **Generate by the physical ceremony, anchored to a TPM.** `truepad2 ceremony
+   create <workspace> --medium-a A --medium-b B --source … --source …
+   --record-bytes F --encryption-bytes E --auth-records N --witness-class
+   platform-monotonic --witness-path … --assert-offline --assert-distinct-physics
+   --assert-tmpfs-workspace --assert-no-persistent-copy`. This records `creation =
+   cli-ceremony`, external source, ceremony premises **accepted**, and provisions
+   two peer media, each a full byte-verified pair copy. Delivery is still
+   `local-only`, so the pad is **INSUFFICIENT EVIDENCE** — the courier has not run.
 
-2. **Configure an independent rollback witness** at generation (a separate state
-   file, or a TPM platform-monotonic counter). A witness is about **reuse**, not
-   entropy or delivery; without one the pad stays INSUFFICIENT.
+2. **Use a live platform-monotonic (TPM) rollback authority.** A witness is about
+   **reuse**, not entropy or delivery. For the maximum-assurance profile the
+   rollback authority must be a live, reachable, consistent, non-regressed TPM NV
+   counter (`--witness-class platform-monotonic`). A `separate-state-file` witness
+   remains fully supported and strongly rollback-protected, **but it can be
+   restored together with the pair**, so it does *not* satisfy the maximum-
+   assurance requirement — an accepted ceremony pad backed only by one stays
+   INSUFFICIENT, and status says so in its rollback-authority detail line. Because
+   the authority is checked **live**, a TPM that is unreachable, regressed, or
+   inconsistent drops the verdict; the label never appears without a live TPM.
 
 3. **Accept the private handoff, once the media have reached their peers.**
    `truepad2 ceremony accept <medium> --as A|B --assert-private-handoff
    --assert-no-extra-copy`. This is the one-way boundary that records `delivery =
-   physical private handoff (operator premise)`. It refuses a non-ceremony store,
-   an unreadable-provenance store, or a missing assertion; it writes durable
-   provenance before it reports; and its pad-book record says plainly that
-   **TruePad recorded an operator assertion and did not observe the courier.**
+   physical private handoff (operator premise)`. It runs under the pair lock;
+   refuses a tombstoned, half, spliced, non-ceremony, sealed-lineage,
+   wrong-pair-bound, withdrawn, or unreadable-provenance store, or a missing
+   assertion; writes durable provenance before it reports; and its pad-book record
+   says plainly that **TruePad recorded an operator assertion and did not observe
+   the courier.**
 
 With `creation = cli-ceremony`, external-declared source, delivery accepted, no
-sealed ancestor, premises accepted, **native** storage, and an independent
-rollback witness, `truepad2 status` shows **CONDITIONALLY ELIGIBLE** — beside the
-six premises below.
+sealed ancestor, premises accepted, **native** storage, and a **live, healthy
+platform-monotonic** rollback authority, `truepad2 status` shows **CONDITIONALLY
+ELIGIBLE** — beside the six premises below.
+
+## Withdrawing a ceremony premise (a permanent downgrade)
+
+`truepad2 ceremony withdraw <medium> --as A|B [--reason …]` records a supported,
+one-way downgrade in a SEPARATE durable authority (`withdrawal.json`, pair-bound).
+The evaluator consults it independently of `provenance.json`, so once a
+withdrawal is durable the pad is NOT ELIGIBLE and **restoring an older, stronger
+`provenance.json` cannot raise it again** (see
+[SHANNON-DEPLOYMENT.md §14](SHANNON-DEPLOYMENT.md)). A withdrawn pair cannot
+re-accept a handoff.
 
 ## The six premises that remain yours
 
@@ -94,10 +117,15 @@ ceremony.
 
 ## What fails closed
 
-Malformed, torn, contradictory, or absent provenance is read as **UNKNOWN**, which
-maps to INSUFFICIENT EVIDENCE — never a stronger result. A crash during a
-provenance write leaves the old record or none, never a torn one and never one
-that looks more assured than what was durably established. A restored or cloned
-store keeps its recorded creation; relocating a `gen` store never makes it a
-ceremony store. Every one of these is exercised by the falsification and hostile-
-input guards under `tests/`.
+Malformed, torn, contradictory, absent, or **wrong-pair** provenance is read as
+**UNKNOWN**, which maps to INSUFFICIENT EVIDENCE — never a stronger result. A
+crash during a provenance write leaves the old record or none, never a torn one
+and never one that looks more assured than what was durably established. A
+restored or cloned store keeps its recorded creation; relocating a `gen` store
+never makes it a ceremony store; transplanting a strong record beside another
+pair never raises it. The rollback authority is checked **live** under the pair
+lock, so a witness that has gone unreachable, regressed, or inconsistent drops the
+verdict immediately rather than leaving a stale green. A durable withdrawal cannot
+be undone by restoring old provenance. Every one of these is exercised by the
+falsification, hostile-input, concurrency, and pair-substitution guards under
+`tests/`.

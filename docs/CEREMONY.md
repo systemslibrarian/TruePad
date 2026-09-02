@@ -5,7 +5,7 @@ v2 pairs. `docs/FORMAT-V2.md` is the binding format specification; this
 document is the procedure the format expects around it — §12.4's closing
 paragraph places the workspace rules here on purpose, §8.5 places operator
 recovery here, and §14.2 L3 names what this phase may claim. The code half
-is `truepad2 ceremony create`, `truepad2 ceremony accept`, and `truepad2 ceremony verify`
+is `truepad2 ceremony create`, `truepad2 ceremony accept`, `truepad2 ceremony withdraw`, and `truepad2 ceremony verify`
 (`src/cli/v2/ceremony.ts`); everything code cannot enforce is listed in §6
 below rather than implied away. Nothing in this document is a
 recommendation to use one-time pads for real traffic.
@@ -293,10 +293,33 @@ an operator assertion and did not observe the courier** — it cannot prove the
 handoff was private or that no other copy exists. A second `accept` refuses,
 and nothing moves the delivery back.
 
-Only after acceptance — and with an independent rollback witness configured
-at generation — does `truepad2 status` show the strongest label,
-CONDITIONALLY ELIGIBLE, always beside the physical premises TruePad did not
-prove. See [MAXIMUM-ASSURANCE.md](MAXIMUM-ASSURANCE.md).
+Only after acceptance — and with a **live platform-monotonic (TPM)** rollback
+authority configured at generation — does `truepad2 status` show the strongest
+label, CONDITIONALLY ELIGIBLE, always beside the physical premises TruePad did
+not prove. A separate-state-file witness is fully supported and strongly
+rollback-protected, but does not by itself meet the maximum-assurance
+rollback requirement (it can be restored with the pair), so such a pad stays
+INSUFFICIENT. See [MAXIMUM-ASSURANCE.md](MAXIMUM-ASSURANCE.md).
+
+Both `accept` and `withdraw` run under the pair lock and refuse a tombstoned,
+half, spliced, wrong-pair-bound, or non-ceremony pair — nothing changes on a
+refusal, and two concurrent accepts serialise so exactly one transition wins.
+
+## 4.3 Withdrawing a ceremony premise (a permanent downgrade)
+
+If a premise no longer holds — a suspected compromise, a lost medium — record a
+withdrawal:
+
+```
+node bin/truepad2.mjs ceremony withdraw <medium-dir> --as A|B [--reason TEXT]
+```
+
+This is a supported, one-way downgrade written to a SEPARATE durable authority,
+`withdrawal.json`, pair-bound by the public pairId. From then on the pair is
+NOT ELIGIBLE, and — crucially — restoring an older, stronger `provenance.json`
+cannot raise the classification again, because the evaluator consults the
+withdrawal independently and first. A withdrawn pair cannot re-accept a handoff.
+See [SHANNON-DEPLOYMENT.md §14](SHANNON-DEPLOYMENT.md).
 
 ---
 

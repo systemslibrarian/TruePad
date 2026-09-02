@@ -48,7 +48,7 @@ import {
   type CreationClass,
   type DeliveryClass,
   type DeploymentFacts,
-  type RollbackWitness,
+  type RollbackAuthority,
   type SourceClass
 } from "../../claims/shannon-deployment.ts";
 import {
@@ -667,18 +667,20 @@ async function deriveDeployment(vfs: Vfs, pairId: string): Promise<DeploymentVie
     ceremonyPremises: "absent",
     // A Browser Edition pad's live state lives in ordinary browser storage.
     storage: "browser-opfs",
-    rollbackWitness: browserRollbackWitness(meta.witness)
+    rollback: browserRollbackAuthority(meta.witness)
   };
   const { assessment, knownReason } = assessDeployment(facts);
   return { assessment, creation, source, delivery, sealedAncestor, knownReason: knownReason ?? null };
 }
 
-/** Map the browser-product witness kind to the evaluator's rollback axis. Named
- *  honestly: a browser-local witness is a second OPFS store under the same
- *  origin — one rollback domain, not an independent authority — and the
- *  evaluator never lets it lift a browser pad above NOT ELIGIBLE. */
-function browserRollbackWitness(kind: BrowserWitnessKind): RollbackWitness {
-  return kind === "browser-local-witness" ? "browser-local-witness" : "none";
+/** Map the browser-product witness kind to the evaluator's rollback authority.
+ *  Named honestly: a browser-local witness is a second OPFS store under the same
+ *  origin — one rollback domain, not an independent authority — so it is
+ *  `browser-local`, which the evaluator never lets lift a browser pad above NOT
+ *  ELIGIBLE. (Browser storage already disqualifies before the rollback axis is
+ *  even consulted; this stays honest for the detail view.) */
+function browserRollbackAuthority(kind: BrowserWitnessKind): RollbackAuthority {
+  return kind === "browser-local-witness" ? { kind: "browser-local" } : { kind: "none" };
 }
 
 async function statusImpl(vfs: Vfs, req: Req<"status">): Promise<StatusResult> {

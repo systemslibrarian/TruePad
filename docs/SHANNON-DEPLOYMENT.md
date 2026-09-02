@@ -159,29 +159,49 @@ that evaluator; no edition invents its own rule.
 The facts are the immutable provenance — **creation**, **source**, **delivery**,
 **sealed-ancestor** (permanent once a sealed `.tps2` appears in the lineage), and
 **ceremony-premises** — plus the live **storage authority** (native filesystem,
-or ordinary browser storage) and the **rollback witness** class.
+or ordinary browser storage) and the live **rollback authority**. The provenance
+is bound to the exact pair by the public `pairId` (see §13); a record whose
+`pairId` does not match the pair's heads is treated as UNKNOWN, so strong
+provenance transplanted from another pair can never raise this one.
+
+The rollback authority is a **live** fact, obtained under the pair lock — not
+merely the configured witness class. A configured witness is not an available
+one: the evaluator reads whether it is reachable, identity-verified, consistent,
+and not behind the store's high-water. A witness that is unreachable, regressed,
+inconsistent, or unsupported does not satisfy the strongest requirement, and a
+regressed or inconsistent one is disqualifying.
 
 The evaluator's ordering is load-bearing:
 
 1. A **known** disqualifier is **NOT ELIGIBLE** and can never be promoted: a
    software CSPRNG source; a sealed `.tps2` delivery or any sealed ancestor;
    ordinary browser storage as the live authority (one rollback domain, no
-   independent witness); a withdrawn ceremony premise; or plain-`gen` creation.
+   independent witness); a withdrawn ceremony premise (see §14); plain-`gen`
+   creation; or a configured rollback witness that is **regressed** (the store
+   sits below it — the restored-store signature) or **inconsistent**.
 2. The **one strongest path** — a native ceremony pad, external-declared source,
-   private handoff *accepted*, no sealed ancestor, premises accepted, and an
-   independent rollback witness — is **CONDITIONALLY ELIGIBLE**. Even then
-   TruePad has proved none of the physical premises, so the label always travels
-   with the six it did not prove and is never shown as a bare "secure" badge.
+   private handoff *accepted*, no sealed ancestor, premises accepted, and a
+   **live, healthy platform-monotonic (TPM) rollback authority** — is
+   **CONDITIONALLY ELIGIBLE**. A separate-state-file witness, however healthy,
+   does **not** satisfy this: it can be restored together with the pair, so it is
+   strong rollback protection but not the maximum-assurance authority. Even at the
+   strongest, TruePad has proved none of the physical premises, so the label
+   always travels with the six it did not prove and is never a bare "secure" badge.
 3. Everything else is **INSUFFICIENT EVIDENCE**: the strong premises are not all
-   recorded, and absence of evidence is never treated as an ideal ceremony.
+   recorded (or the required live platform authority is not confirmed), and
+   absence of evidence is never treated as an ideal ceremony.
 
 Where the facts come from:
 
-- **CLI (`truepad2 status`)** reads the strict `provenance.json` (fail-closed:
-  any malformation or self-contradiction is treated as UNKNOWN provenance), holds
-  live state on the native filesystem, and reports the witness class separately.
-  A `gen` store is NOT ELIGIBLE; a ceremony store is INSUFFICIENT until its
-  handoff is accepted, then CONDITIONALLY ELIGIBLE.
+- **CLI (`truepad2 status`)** reads the strict, pair-bound `provenance.json`
+  (fail-closed: any malformation, self-contradiction, or wrong-pair binding is
+  treated as UNKNOWN provenance), holds live state on the native filesystem, and
+  probes the live rollback authority under the same lock. A `gen` store is NOT
+  ELIGIBLE; a ceremony store is INSUFFICIENT until its handoff is accepted; an
+  accepted ceremony pad backed only by a separate-state-file witness stays
+  INSUFFICIENT (strong, but not the maximum-assurance authority); only an
+  accepted ceremony pad with a live, healthy platform-monotonic witness reaches
+  CONDITIONALLY ELIGIBLE.
 - **Browser Edition** reads the pad's `origin` (`generated-here` → software
   CSPRNG; `imported` → source unknown) and, for an imported pad, whether a durable
   sealed-receive marker (`consumed.json`) names it (→ `sealed-tps2`, a permanent
@@ -189,6 +209,28 @@ Where the facts come from:
   ordinary browser storage, which is itself a known disqualifier, so a browser
   pad is **never** CONDITIONALLY ELIGIBLE — whatever its origin. The maximum-
   assurance surface is the native ceremony, not the browser.
+
+## 13. Provenance is bound to the exact pair
+
+`provenance.json` records the public, non-secret `pairId` — the same identity as
+`head.json`, and never a pad-derived value. The evaluator uses a record only when
+its `pairId` matches BOTH of the pair's heads. So a syntactically valid, strong
+provenance record copied beside a different pair does not apply to it: the pairId
+no longer matches, the record reads as UNKNOWN, and the classification stays
+INSUFFICIENT. `ceremony accept` refuses outright on a wrong-pair record.
+
+## 14. Withdrawal is a permanent, independent downgrade
+
+A ceremony premise can be **withdrawn** — a supported, one-way downgrade recorded
+by `truepad2 ceremony withdraw`. Because `provenance.json` is a replaceable
+sibling file, the withdrawal is written to a SEPARATE durable authority,
+`withdrawal.json`, pair-bound by `pairId`. The evaluator consults it
+*independently* of `provenance.json` and, when it names the pair, forces the
+ceremony premise to `withdrawn` — NOT ELIGIBLE. So restoring an older, stronger
+`provenance.json` after a withdrawal cannot raise the classification: the
+withdrawal is a different file the evaluator checks first. (A whole-directory
+restore that also deletes the withdrawal is the general restore attack, caught by
+the live rollback witness — a restored store reads regressed.)
 
 The classification is a factual statement about what TruePad has and has not
 recorded. It is not a security score, and a NOT ELIGIBLE or INSUFFICIENT

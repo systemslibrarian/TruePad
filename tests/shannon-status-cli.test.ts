@@ -79,7 +79,7 @@ describe("status shows a derived DEPLOYMENT ASSESSMENT section", () => {
     expect(e).toMatch(/Why not stronger:.*plain gen/);
   });
 
-  it("(F) a ceremony pad whose handoff has been accepted is CONDITIONALLY ELIGIBLE, with the physical premises left unproven", () => {
+  it("(F/§3) an accepted ceremony pad with only a separate-state-file witness is INSUFFICIENT — not the maximum-assurance rollback authority", () => {
     const mA = ceremonyMediumA();
     // Before acceptance: the ceremony exists but the private handoff is not recorded.
     expect(run("status", mA).stderr).toContain("INSUFFICIENT EVIDENCE");
@@ -89,16 +89,18 @@ describe("status shows a derived DEPLOYMENT ASSESSMENT section", () => {
     ).toBe(0);
 
     const e = run("status", mA).stderr;
+    // Every provenance axis is maximal...
     expect(e).toMatch(/creation path .+ CLI physical ceremony/);
     expect(e).toMatch(/delivery .+ physical private handoff \(operator premise\)/);
+    expect(e).toMatch(/ceremony premises .+ ACCEPTED/);
     expect(e).toMatch(/live storage authority .+ NATIVE/);
-    expect(e).toMatch(/witness class .+ SEPARATE-STATE-FILE/);
-    expect(e).toContain("CONDITIONALLY ELIGIBLE");
-    expect(e).toMatch(/has not proved physical randomness/);
-    // §40 — the label never appears without the unproven physical premises beside it.
-    expect(e).toMatch(/did NOT prove these physical premises/);
-    expect(e).toMatch(/courier handoff was actually private/);
-    expect(e).toMatch(/physically erased on retirement/);
+    // ...but the rollback authority is a separate state file, which can be
+    // restored with the pair, so it does NOT satisfy the maximum-assurance
+    // requirement. The verdict is INSUFFICIENT, and the label is CONDITIONALLY-free.
+    expect(e).toMatch(/rollback authority .+ separate-state-file \(healthy\)/);
+    expect(e).toContain("INSUFFICIENT EVIDENCE");
+    expect(e).not.toContain("CONDITIONALLY ELIGIBLE");
+    expect(e).toMatch(/Why not stronger:.*platform-monotonic/);
   });
 
   it("does not add any field to the stdout machine line, and stores no verdict", () => {
@@ -113,12 +115,12 @@ describe("status shows a derived DEPLOYMENT ASSESSMENT section", () => {
     }
   });
 
-  it("(G) names witness class NONE truthfully when there is no witness", () => {
+  it("(G) names the rollback authority NONE truthfully when there is no witness", () => {
     gen("p", 16, 2);
-    expect(run("status", join(dir, "p")).stderr).toMatch(/witness class .+ NONE/);
+    expect(run("status", join(dir, "p")).stderr).toMatch(/rollback authority .+ NONE/);
   });
 
-  it("(H) names the SEPARATE-STATE-FILE witness class when one is configured", () => {
+  it("(H) names the separate-state-file rollback authority (with its live health) when one is configured", () => {
     const wpath = join(dir, "witness.json");
     expect(run("witness", "init", wpath).code).toBe(0);
     const s = join(dir, "s.bin");
@@ -127,6 +129,6 @@ describe("status shows a derived DEPLOYMENT ASSESSMENT section", () => {
       run("gen", join(dir, "p"), "--source", s, "--encryption-bytes", "16", "--auth-records", "2",
         "--witness-class", "separate-state-file", "--witness-path", wpath).code
     ).toBe(0);
-    expect(run("status", join(dir, "p")).stderr).toMatch(/witness class .+ SEPARATE-STATE-FILE/);
+    expect(run("status", join(dir, "p")).stderr).toMatch(/rollback authority .+ separate-state-file \((healthy|unreachable)\)/);
   });
 });

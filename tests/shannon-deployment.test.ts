@@ -3,11 +3,11 @@
  * ----------------------------------------------------------------------------
  * The single evaluator maps recorded FACTS to a classification, and never
  * launders an unknown, a software source, a computational delivery, a browser
- * store, or a plain-gen creation into a stronger claim. These tests pin the
- * table, the ORDERING (a known disqualifier dominates, and is checked before the
- * strongest conjunction), the one strongest path, the §40 unproven-premises
- * list, and the vocabulary (ELIGIBLE, never SECURE; no persisted-verdict
- * identifier; no overclaim word).
+ * store, a plain-gen creation, or a degraded rollback witness into a stronger
+ * claim. These tests pin the table, the ORDERING (a known disqualifier
+ * dominates, checked before the strongest conjunction), the one strongest path
+ * (which now requires a LIVE, healthy platform-monotonic rollback authority),
+ * the §40 unproven-premises list, and the vocabulary.
  * ========================================================================= */
 
 import { readFileSync } from "node:fs";
@@ -18,13 +18,14 @@ import {
   ASSESSMENT_LABEL,
   CONDITIONAL_CAVEAT,
   UNPROVEN_PREMISES,
-  type DeploymentFacts
+  type DeploymentFacts,
+  type WitnessHealth
 } from "../src/claims/shannon-deployment.ts";
 
 // The ONE facts tuple the evaluator ranks CONDITIONALLY ELIGIBLE: a native
 // ceremony pad, external-declared source, private handoff accepted, no sealed
-// ancestor, premises accepted, an independent rollback witness. Every test that
-// probes the ordering starts here and mutates ONE axis.
+// ancestor, premises accepted, AND a LIVE, healthy platform-monotonic rollback
+// authority. Every ordering test starts here and mutates ONE axis.
 const STRONGEST: DeploymentFacts = {
   creation: "cli-ceremony",
   source: "external-declared",
@@ -32,7 +33,7 @@ const STRONGEST: DeploymentFacts = {
   sealedAncestor: false,
   ceremonyPremises: "accepted",
   storage: "native",
-  rollbackWitness: "platform-monotonic"
+  rollback: { kind: "platform-monotonic", health: "healthy" }
 };
 
 const withFacts = (patch: Partial<DeploymentFacts>): DeploymentFacts => ({ ...STRONGEST, ...patch });
@@ -44,14 +45,7 @@ describe("the deployment evaluator maps facts, and never promotes the unknown", 
     expect(r.knownReason).toBeNull();
   });
 
-  it("a separate-state-file witness also reaches CONDITIONALLY ELIGIBLE", () => {
-    expect(assessDeployment(withFacts({ rollbackWitness: "separate-state-file" })).assessment).toBe(
-      "conditionally-eligible"
-    );
-  });
-
   it("a software CSPRNG source is NOT ELIGIBLE, and that reason dominates everything", () => {
-    // Even holding every other axis at its strongest, a software source disqualifies.
     const r = assessDeployment(withFacts({ source: "software-csprng" }));
     expect(r.assessment).toBe("not-eligible");
     expect(r.knownReason).toMatch(/CSPRNG/);
@@ -70,7 +64,7 @@ describe("the deployment evaluator maps facts, and never promotes the unknown", 
     expect(r.knownReason).toMatch(/browser storage/);
   });
 
-  it("a withdrawn ceremony premise is NOT ELIGIBLE — a one-way downgrade", () => {
+  it("a withdrawn ceremony premise is NOT ELIGIBLE — a permanent one-way downgrade", () => {
     const r = assessDeployment(withFacts({ ceremonyPremises: "withdrawn" }));
     expect(r.assessment).toBe("not-eligible");
     expect(r.knownReason).toMatch(/withdrew/);
@@ -83,15 +77,8 @@ describe("the deployment evaluator maps facts, and never promotes the unknown", 
   });
 
   it("a ceremony pad whose handoff is not yet accepted is INSUFFICIENT, not eligible", () => {
-    // delivery still local-only, premises accepted: the ceremony exists but the
-    // private-handoff acceptance (ceremony accept) has not happened.
     const r = assessDeployment(withFacts({ delivery: "local-only" }));
     expect(r.assessment).toBe("insufficient-evidence");
-  });
-
-  it("a missing rollback witness is INSUFFICIENT — no independent rollback authority", () => {
-    expect(assessDeployment(withFacts({ rollbackWitness: "none" })).assessment).toBe("insufficient-evidence");
-    expect(assessDeployment(withFacts({ rollbackWitness: "unknown" })).assessment).toBe("insufficient-evidence");
   });
 
   it("unknown provenance axes are INSUFFICIENT EVIDENCE, never reconstructed into an ideal ceremony", () => {
@@ -106,6 +93,53 @@ describe("the deployment evaluator maps facts, and never promotes the unknown", 
     for (const delivery of ["raw-import-unknown", "local-only", "unknown"] as DeploymentFacts["delivery"][]) {
       expect(assessDeployment(withFacts({ creation: "imported", delivery })).assessment).not.toBe(
         "conditionally-eligible"
+      );
+    }
+  });
+});
+
+describe("the strongest verdict requires a LIVE platform-monotonic rollback authority (§2/§3)", () => {
+  it("a healthy SEPARATE-STATE-FILE witness is INSUFFICIENT — strong, but not the maximum-assurance authority", () => {
+    const r = assessDeployment(withFacts({ rollback: { kind: "separate-state-file", health: "healthy" } }));
+    expect(r.assessment).toBe("insufficient-evidence");
+    expect(r.knownReason).toMatch(/platform-monotonic/);
+    expect(r.knownReason).toMatch(/separate state file/i);
+  });
+
+  it("a platform-monotonic witness that is UNREACHABLE is INSUFFICIENT — availability, not confirmed", () => {
+    const r = assessDeployment(withFacts({ rollback: { kind: "platform-monotonic", health: "unreachable" } }));
+    expect(r.assessment).toBe("insufficient-evidence");
+    expect(r.knownReason).toMatch(/unreachable/);
+  });
+
+  it("a platform-monotonic witness that is UNSUPPORTED is INSUFFICIENT", () => {
+    const r = assessDeployment(withFacts({ rollback: { kind: "platform-monotonic", health: "unsupported" } }));
+    expect(r.assessment).toBe("insufficient-evidence");
+    expect(r.knownReason).toMatch(/unsupported/);
+  });
+
+  it("NO rollback authority (none/unknown) is INSUFFICIENT on an otherwise-maximal pad", () => {
+    expect(assessDeployment(withFacts({ rollback: { kind: "none" } })).assessment).toBe("insufficient-evidence");
+    expect(assessDeployment(withFacts({ rollback: { kind: "unknown" } })).assessment).toBe("insufficient-evidence");
+  });
+
+  it("a REGRESSED or INCONSISTENT configured witness is NOT ELIGIBLE — a positive rollback/corruption signal", () => {
+    for (const kind of ["separate-state-file", "platform-monotonic"] as const) {
+      const regressed = assessDeployment(withFacts({ rollback: { kind, health: "regressed" } }));
+      expect(regressed.assessment).toBe("not-eligible");
+      expect(regressed.knownReason).toMatch(/restored|rolled-back|behind/i);
+      const inconsistent = assessDeployment(withFacts({ rollback: { kind, health: "inconsistent" } }));
+      expect(inconsistent.assessment).toBe("not-eligible");
+      expect(inconsistent.knownReason).toMatch(/inconsistent/i);
+    }
+  });
+
+  it("a regressed witness disqualifies even when it is the ONLY problem (the classification falls, not a warning)", () => {
+    // Every other axis is maximal; the live health alone drops it to NOT ELIGIBLE.
+    const healths: WitnessHealth[] = ["regressed", "inconsistent"];
+    for (const health of healths) {
+      expect(assessDeployment(withFacts({ rollback: { kind: "platform-monotonic", health } })).assessment).toBe(
+        "not-eligible"
       );
     }
   });
@@ -140,12 +174,10 @@ describe("the vocabulary says ELIGIBLE, never SECURE / TRUE OTP / PERFECT SECREC
 
 describe("the module stores no self-certifying verdict", () => {
   const SRC = readFileSync(resolve(__dirname, "..", "src/claims/shannon-deployment.ts"), "utf8");
-  // The banned persisted-verdict identifiers, in every spelling this project bans.
   const FORBIDDEN_FLAG =
     /\btrueRandom\b|\binformationTheoretic\b|\bverifiedRandom\b|\bphysicallyRandom\b|\bitCapable\b|\bperfectSecrecy\b|\bshannonSecure\b|\bcertifiedEntropy\b|\bmaximumSecurity\b|\bgoldStandard\b/;
 
   it("defines no trueRandom / informationTheoretic / itCapable / shannonSecure / goldStandard identifier", () => {
-    // Strip comments: prose may mention the words to forbid them.
     const code = SRC.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
     expect(code).not.toMatch(FORBIDDEN_FLAG);
   });

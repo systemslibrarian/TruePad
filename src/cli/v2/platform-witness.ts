@@ -396,6 +396,58 @@ export function platformPreflight(
   }
 }
 
+// HEALTH. A strictly READ-ONLY liveness probe for `status` and the deployment
+// evaluator: it NEVER increments the TPM and NEVER settles a prepared commit
+// (both are mutations). It answers one question — is this platform authority
+// currently a live, consistent, non-regressed witness for this pair/direction? —
+// using only read-only TPM operations and a read of the state file.
+//
+//   healthy      reachable, identity-verified, anchor consistent (normal or a
+//                recoverable prepared state), and the store is at or ahead of
+//                this pair/direction's witnessed high-water.
+//   unreachable  the TPM or the state file could not be read (availability).
+//   regressed    the store sits BELOW its witnessed high-water (restored store).
+//   inconsistent a substituted/foreign authority, a non-counter index, or an
+//                anchor relation that cannot proceed (the witness itself rolled
+//                back or is corrupt).
+export type PlatformHealth = "healthy" | "unreachable" | "regressed" | "inconsistent";
+
+export function platformHealth(
+  config: PlatformConfig,
+  pairId: string,
+  direction: PadDirection,
+  store: { nextOffset: number; nextSequence: number; attemptsReserved: number },
+  tpm: TpmProvider = tpm2ToolsProvider()
+): PlatformHealth {
+  if (config.provider !== PROVIDER_ID) return "inconsistent";
+  const ready = tpm.available();
+  if (!ready.ok) return "unreachable";
+  // A wrong Name, a non-COUNTER index, an orderly counter, or a wrong size all
+  // mean this is not the safe monotonic authority TruePad bound — fail closed.
+  if (!verifyAuthority(tpm, config).ok) return "inconsistent";
+  const state = readState(config.statePath);
+  if (!state.ok) return "unreachable";
+  if (state.value.authorityId !== config.authorityId) return "inconsistent";
+  if (state.value.nvName !== config.nvName || state.value.nvIndex !== config.nvIndex) return "inconsistent";
+  const counter = tpm.readCounter(config.nvIndex);
+  if (!counter.ok) return "unreachable";
+  const fileAnchor = parseAnchor(state.value.anchor);
+  if (fileAnchor === null) return "inconsistent";
+  // normal (F==T) and prepared (F==T+1) are consistent; behind (restored state
+  // file) and ahead-by-more-than-one (corrupt/foreign) fail closed.
+  if (!classifyAnchor(fileAnchor, counter.value).ok) return "inconsistent";
+  const entry = state.value.witness[keyOf(pairId, direction)];
+  if (entry === undefined) return "healthy"; // fresh witness: protection begins at the first witnessed commit (§15.2)
+  if (
+    store.nextOffset < entry.encryptionNextOffset ||
+    store.nextSequence < entry.authenticationNextSequence ||
+    store.attemptsReserved < entry.attemptsReserved
+  ) {
+    return "regressed";
+  }
+  return "healthy";
+}
+
 // ADVANCE. Runs after the §12 durable store commit and before the emit. The
 // state file is PREPARED at T+1 durably, then the TPM is incremented — the
 // hardware increment is the commit point of the external authority — then the

@@ -53,8 +53,9 @@ import { join, resolve, sep } from "node:path";
 import type { PadDirection } from "../../core/pad.ts";
 import { acquireLock, LOCK_FILE } from "../lock.ts";
 import { HEAD_FILE, JOURNAL_FILE, loadStore2, SECRET_FILE, type LoadedStore2 } from "./store2.ts";
-import { gen, Refused2, SUBDIR2, type Args2 } from "./truepad2.ts";
-import { ceremonyProvenance, PROVENANCE_FILE, readProvenance, writeProvenance } from "./provenance.ts";
+import { gen, Refused2, SUBDIR2, withPair, type Args2, type LoadedPair } from "./truepad2.ts";
+import { ceremonyProvenance, PROVENANCE_FILE, provenanceBoundTo, readProvenance, writeProvenance } from "./provenance.ts";
+import { isWithdrawn, withdrawalRecord, writeWithdrawal } from "./withdrawal.ts";
 
 /* ---- the operator assertions ----------------------------------------------
  * Presence flags (parseArgs2 consumes no value for them): the operator makes
@@ -530,7 +531,7 @@ export function ceremonyCreate(args: Args2): void {
   // ONLY by the one-way `ceremony accept` step on a peer medium, never here.
   // This is durable BEFORE the media are copied, so both peers carry it and it
   // is byte-verified.
-  writeProvenance(pairDir, ceremonyProvenance(manifest.createdAt));
+  writeProvenance(pairDir, ceremonyProvenance(manifest.pairId, manifest.createdAt));
 
   // Provision the two peer media: each receives the WHOLE pair — both
   // direction stores plus the manifest. Two full copies, one per peer,
@@ -737,6 +738,22 @@ export const ACCEPT_ASSERTIONS = [
   }
 ] as const;
 
+// The shared pairId of a whole, loaded pair — or a typed refusal when the two
+// halves disagree (a spliced pair cannot accept or withdraw). withPair has
+// already taken the lock, checked the tombstone, and loaded both halves.
+function requireSharedPairId(pair: LoadedPair): string {
+  const idA = pair["A->B"].head.pairId;
+  const idB = pair["B->A"].head.pairId;
+  if (idA !== idB) {
+    throw new Refused2(
+      "ceremony-incomplete",
+      `this pair's two halves disagree on their pairId (a-to-b ${idA}, b-to-a ${idB}) — a spliced pair is not a ` +
+        "single ceremony pair. Nothing was changed."
+    );
+  }
+  return idA;
+}
+
 export function ceremonyAccept(args: Args2): void {
   const mediumArg = args.positional[2];
   if (mediumArg === undefined) {
@@ -748,55 +765,149 @@ export function ceremonyAccept(args: Args2): void {
     throw new Error("ceremony accept needs --as A or --as B: your role on this medium");
   }
 
-  const record = readProvenance(medium);
-  if (record === null) {
-    throw new Refused2(
-      "ceremony-incomplete",
-      "this medium carries no readable ceremony provenance; only a pair created by `truepad2 ceremony create` can " +
-        "accept a private handoff. Nothing was changed."
-    );
-  }
-  if (record.creation !== "cli-ceremony" || record.ceremonyPremises !== "accepted") {
-    throw new Refused2(
-      "ceremony-incomplete",
-      "only a ceremony-created pair whose premises were recorded can accept a private handoff; this pair was not " +
-        "created by the physical ceremony. Nothing was changed."
-    );
-  }
-  if (record.delivery === "physical-private-operator-asserted") {
-    throw new Refused2(
-      "ceremony-incomplete",
-      "this pair's private handoff was already accepted; the delivery fact is one-way and does not change. " +
-        "Nothing was changed."
-    );
-  }
-  // record.delivery is "local-only" here (the only other value the schema and
-  // its self-consistency checks allow for a cli-ceremony record).
+  // §17/§4: acquire the pair lock, refuse a tombstoned or half/malformed pair,
+  // and load BOTH halves — all via withPair — BEFORE any provenance mutation.
+  // The whole check-and-transition runs under that one lock, so accept-vs-accept
+  // and accept-vs-destroy are serialised by the existing pair authority.
+  withPair(medium, (pair) => {
+    const pairId = requireSharedPairId(pair);
 
-  const missing = ACCEPT_ASSERTIONS.filter(({ flag }) => !args.flags.has(flag));
-  if (missing.length > 0) {
-    throw new Refused2(
-      "ceremony-incomplete",
-      `accepting a private handoff requires every operator assertion; missing: ` +
-        `${missing.map(({ flag }) => `--${flag}`).join(", ")}. Each is a statement TruePad cannot verify — it did ` +
-        "not observe the courier and cannot prove the handoff was private or that no other copy exists. Nothing " +
-        "was changed."
+    const record = readProvenance(medium);
+    if (record === null) {
+      throw new Refused2(
+        "ceremony-incomplete",
+        "this medium carries no readable ceremony provenance; only a pair created by `truepad2 ceremony create` can " +
+          "accept a private handoff. Nothing was changed."
+      );
+    }
+    // §1 pair binding: the provenance must be bound to THIS pair. A valid record
+    // transplanted from another pair is rejected outright.
+    if (!provenanceBoundTo(record, pairId)) {
+      throw new Refused2(
+        "ceremony-incomplete",
+        `this medium's provenance is bound to pair ${record.pairId}, not to this pair ${pairId} — it was written ` +
+          "for a different pair (or transplanted). Nothing was changed."
+      );
+    }
+    // §5: a durable withdrawal is a permanent downgrade; a withdrawn pair can
+    // never re-accept a handoff, whatever provenance.json says.
+    if (isWithdrawn(medium, pairId)) {
+      throw new Refused2(
+        "ceremony-incomplete",
+        "this pair's ceremony premises were withdrawn — a permanent downgrade. It cannot accept a private handoff. " +
+          "Nothing was changed."
+      );
+    }
+    if (record.creation !== "cli-ceremony" || record.ceremonyPremises !== "accepted") {
+      throw new Refused2(
+        "ceremony-incomplete",
+        "only a ceremony-created pair whose premises were recorded can accept a private handoff; this pair was not " +
+          "created by the physical ceremony. Nothing was changed."
+      );
+    }
+    if (record.sealedAncestor) {
+      throw new Refused2(
+        "ceremony-incomplete",
+        "this pair has a sealed ancestor — a computational-delivery lineage that a private handoff cannot override. " +
+          "Nothing was changed."
+      );
+    }
+    if (record.delivery === "physical-private-operator-asserted") {
+      throw new Refused2(
+        "ceremony-incomplete",
+        "this pair's private handoff was already accepted; the delivery fact is one-way and does not change. " +
+          "Nothing was changed."
+      );
+    }
+    // record.delivery is "local-only" here (the only other value the schema and
+    // its self-consistency checks allow for a cli-ceremony record).
+
+    const missing = ACCEPT_ASSERTIONS.filter(({ flag }) => !args.flags.has(flag));
+    if (missing.length > 0) {
+      throw new Refused2(
+        "ceremony-incomplete",
+        `accepting a private handoff requires every operator assertion; missing: ` +
+          `${missing.map(({ flag }) => `--${flag}`).join(", ")}. Each is a statement TruePad cannot verify — it did ` +
+          "not observe the courier and cannot prove the handoff was private or that no other copy exists. Nothing " +
+          "was changed."
+      );
+    }
+
+    // One-way transition, durable BEFORE anything is reported, under the lock.
+    writeProvenance(medium, { ...record, delivery: "physical-private-operator-asserted" });
+
+    err("CEREMONY HANDOFF ACCEPTED");
+    err(`  medium:  ${medium}`);
+    err(`  pairId:  ${pairId}`);
+    err(`  role:    ${as}`);
+    err(
+      "  TruePad recorded this OPERATOR ASSERTION. It did NOT observe the courier and cannot prove the handoff was " +
+        "private or that no other copy exists:"
     );
-  }
+    for (const { flag, statement } of ACCEPT_ASSERTIONS) {
+      err(`    --${flag}: ${statement}`);
+    }
+    err("  Delivery is now: physical private handoff (operator premise). This is one-way.");
+    out(JSON.stringify({ medium, as, pairId, delivery: "physical-private-operator-asserted" }));
+  });
+}
 
-  // One-way transition, durable before anything is reported.
-  writeProvenance(medium, { ...record, delivery: "physical-private-operator-asserted" });
+/* ============================================================================
+ * ceremony withdraw — the SUPPORTED, irreversible assurance downgrade (§5)
+ * ----------------------------------------------------------------------------
+ * `provenance.json` is a replaceable sibling file. To make a downgrade real and
+ * MONOTONIC, `withdraw` records the withdrawal in a SEPARATE durable authority,
+ * `withdrawal.json`, pair-bound by the public pairId. The evaluator consults it
+ * INDEPENDENTLY of provenance.json and, when it names this pair, forces the
+ * ceremony premise to `withdrawn` — NOT ELIGIBLE.
+ *
+ * So restoring an older, stronger `provenance.json` after a withdrawal cannot
+ * raise the classification: the withdrawal is a different file the evaluator
+ * checks first. (A whole-directory restore that also deletes the withdrawal is
+ * the general restore attack, caught by the live rollback witness.)
+ *
+ * Like accept, it runs entirely under the pair lock and refuses a tombstoned or
+ * spliced pair. It is one-way and idempotent: withdrawing an already-withdrawn
+ * pair reports that it is already withdrawn and changes nothing new.
+ * ========================================================================= */
 
-  err("CEREMONY HANDOFF ACCEPTED");
-  err(`  medium:  ${medium}`);
-  err(`  role:    ${as}`);
-  err(
-    "  TruePad recorded this OPERATOR ASSERTION. It did NOT observe the courier and cannot prove the handoff was " +
-      "private or that no other copy exists:"
-  );
-  for (const { flag, statement } of ACCEPT_ASSERTIONS) {
-    err(`    --${flag}: ${statement}`);
+export function ceremonyWithdraw(args: Args2): void {
+  const mediumArg = args.positional[2];
+  if (mediumArg === undefined) {
+    throw new Error("ceremony withdraw needs <medium-dir>: the pair whose ceremony premises you are withdrawing");
   }
-  err("  Delivery is now: physical private handoff (operator premise). This is one-way.");
-  out(JSON.stringify({ medium, as, delivery: "physical-private-operator-asserted" }));
+  const medium = resolve(mediumArg);
+  const as = single(args, "as");
+  if (as !== "A" && as !== "B") {
+    throw new Error("ceremony withdraw needs --as A or --as B: your role on this medium");
+  }
+  const reason = single(args, "reason") ?? "operator withdrawal (no reason given)";
+
+  withPair(medium, (pair) => {
+    const pairId = requireSharedPairId(pair);
+
+    if (isWithdrawn(medium, pairId)) {
+      // Idempotent: the downgrade is already durable and permanent.
+      err("CEREMONY PREMISES ALREADY WITHDRAWN");
+      err(`  medium:  ${medium}`);
+      err(`  pairId:  ${pairId}`);
+      err("  A withdrawal is one-way; nothing changed. This pair is NOT ELIGIBLE and cannot be re-accepted.");
+      out(JSON.stringify({ medium, as, pairId, ceremonyPremises: "withdrawn", changed: false }));
+      return;
+    }
+
+    // Durable, pair-bound, BEFORE anything is reported, under the lock.
+    writeWithdrawal(medium, withdrawalRecord(pairId, new Date().toISOString(), reason));
+
+    err("CEREMONY PREMISES WITHDRAWN");
+    err(`  medium:  ${medium}`);
+    err(`  pairId:  ${pairId}`);
+    err(`  role:    ${as}`);
+    err(`  reason:  ${reason}`);
+    err(
+      "  This is a PERMANENT downgrade recorded in a separate durable authority. Restoring an older provenance.json " +
+        "cannot raise the classification again. This pair is now NOT ELIGIBLE."
+    );
+    out(JSON.stringify({ medium, as, pairId, ceremonyPremises: "withdrawn", changed: true }));
+  });
 }

@@ -33,11 +33,16 @@ import type { CeremonyPremises, CreationClass, DeliveryClass, SourceClass } from
 export const PROVENANCE_FILE = "provenance.json";
 export const PROVENANCE_VERSION = 1;
 
-/** The durable CLI provenance record. `createdAt` is operational metadata, never
- *  load-bearing. `sealedAncestor` is always false for a CLI store (the CLI has
- *  no sealed path); the field exists so the schema is uniform across editions. */
+/** The durable CLI provenance record. `pairId` BINDS this record to its exact
+ *  pair (the public, non-secret pair identity — never a pad-derived value): a
+ *  valid record transplanted beside a different pair is rejected because its
+ *  `pairId` no longer matches the heads. `createdAt` is operational metadata,
+ *  never load-bearing. `sealedAncestor` is always false for a CLI store (the CLI
+ *  has no sealed path); the field exists so the schema is uniform across
+ *  editions. */
 export interface ProvenanceRecord {
   provenanceVersion: 1;
+  pairId: string;
   creation: CreationClass;
   source: SourceClass;
   delivery: DeliveryClass;
@@ -45,6 +50,10 @@ export interface ProvenanceRecord {
   ceremonyPremises: CeremonyPremises;
   createdAt: string;
 }
+
+/** The public pair identity shape: 32 lowercase hex, identical to `head.pairId`.
+ *  A record whose `pairId` is not this shape is malformed and fails closed. */
+const PAIR_ID_RE = /^[0-9a-f]{32}$/;
 
 // The exact values the CLI ever writes and accepts. A browser-only value
 // (e.g. "browser-generated") is not accepted here — a CLI store never carries
@@ -59,6 +68,7 @@ const EXPECTED_KEYS = [
   "createdAt",
   "creation",
   "delivery",
+  "pairId",
   "provenanceVersion",
   "sealedAncestor",
   "source"
@@ -91,6 +101,7 @@ export function readProvenance(pairDir: string): ProvenanceRecord | null {
   const keys = Object.keys(o).sort();
   if (keys.length !== EXPECTED_KEYS.length || !EXPECTED_KEYS.every((k, i) => keys[i] === k)) return null;
   if (o.provenanceVersion !== PROVENANCE_VERSION) return null;
+  if (typeof o.pairId !== "string" || !PAIR_ID_RE.test(o.pairId)) return null;
   if (!CLI_CREATIONS.has(o.creation as CreationClass)) return null;
   if (!CLI_SOURCES.has(o.source as SourceClass)) return null;
   if (!CLI_DELIVERIES.has(o.delivery as DeliveryClass)) return null;
@@ -110,11 +121,20 @@ export function readProvenance(pairDir: string): ProvenanceRecord | null {
   return rec;
 }
 
+/** True iff this record is bound to the given pair. The caller cross-checks the
+ *  record's `pairId` against the loaded heads' `pairId`; a mismatch means the
+ *  record was written for a DIFFERENT pair (or transplanted) and must not be
+ *  used to derive assurance. */
+export function provenanceBoundTo(record: ProvenanceRecord, pairId: string): boolean {
+  return record.pairId === pairId;
+}
+
 /** The provenance a plain `truepad2 gen` store records: external sources, no
- *  ceremony, not yet distributed. */
-export function genProvenance(createdAt: string): ProvenanceRecord {
+ *  ceremony, not yet distributed. Bound to `pairId`. */
+export function genProvenance(pairId: string, createdAt: string): ProvenanceRecord {
   return {
     provenanceVersion: PROVENANCE_VERSION,
+    pairId,
     creation: "cli-gen",
     source: "external-declared",
     delivery: "local-only",
@@ -126,10 +146,11 @@ export function genProvenance(createdAt: string): ProvenanceRecord {
 
 /** The provenance a `truepad2 ceremony create` store records: the physical
  *  ceremony path, premises accepted, delivery not yet accepted (that is the
- *  one-way `ceremony accept` step). */
-export function ceremonyProvenance(createdAt: string): ProvenanceRecord {
+ *  one-way `ceremony accept` step). Bound to `pairId`. */
+export function ceremonyProvenance(pairId: string, createdAt: string): ProvenanceRecord {
   return {
     provenanceVersion: PROVENANCE_VERSION,
+    pairId,
     creation: "cli-ceremony",
     source: "external-declared",
     delivery: "local-only",

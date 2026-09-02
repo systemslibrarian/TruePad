@@ -538,6 +538,9 @@ describe("(13, 15) the store format is unchanged and carries no randomness claim
       // The durable CLI provenance record stores FACTS, never a verdict: its
       // source (comments aside) must carry none of these identifiers.
       ["src", "cli", "v2", "provenance.ts"],
+      // The durable withdrawal authority records an irreversible downgrade FACT,
+      // never a verdict flag either.
+      ["src", "cli", "v2", "withdrawal.ts"],
       // The single deployment evaluator DERIVES, it never persists a verdict:
       // its source (comments aside) must carry none of these identifiers either.
       ["src", "claims", "shannon-deployment.ts"],
