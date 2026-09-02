@@ -289,10 +289,13 @@ describe("the Browser home stays simple", () => {
     expect(line, "must not be a primary button").not.toMatch(/class: "btn primary/);
   });
 
-  it("keeps the hero free of cryptography", () => {
+  it("keeps the hero free of cryptography, and makes no unconditional privacy promise", () => {
     expect(HOME).not.toMatch(/X-Wing|ML-KEM|PQC|post-quantum|information-theoretic|Wegman/i);
-    // The two original actions, and no third.
-    expect(HOME).toMatch(/Private messages using a pad you share with one other person/);
+    // The hero names the system for what it is — an educational OTP messaging
+    // system — rather than promising unconditional privacy.
+    expect(HOME).toMatch(/An educational one-time-pad messaging system, shared with one other person/);
+    // The old unconditional "Private messages ..." promise is gone.
+    expect(HOME).not.toMatch(/Private messages using a pad you share with one other person/);
     expect((HOME.match(/createBtn\("primary lg"\)/g) ?? []).length).toBe(1);
   });
 });

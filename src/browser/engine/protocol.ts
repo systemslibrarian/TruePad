@@ -16,6 +16,18 @@
  * ========================================================================= */
 
 import type { PadDirection } from "../../core/pad.ts";
+import type { DeliveryClass, ShannonAssessment, SourceClass } from "../../claims/shannon-deployment.ts";
+
+/** A DERIVED Shannon deployment classification for one pad — never a stored
+ *  verdict. The worker computes it from provenance (`origin` + whether the pad
+ *  arrived by sealed delivery) each time `status` is asked; the page renders it.
+ *  It carries no secret and nothing pad-derived. */
+export type DeploymentView = {
+  assessment: ShannonAssessment;
+  source: SourceClass;
+  delivery: DeliveryClass;
+  knownReason: string | null;
+};
 
 export type RecordPolicy = { kind: "variable" } | { kind: "fixed"; bytes: number };
 
@@ -117,7 +129,7 @@ export type EngineRequest =
 export type EngineOk =
   | { id: number; ok: true; op: "list-pairs"; pairs: PairSummary[] }
   | { id: number; ok: true; op: "gen"; pair: PairSummary; verdict: string; manifest: ManifestView }
-  | { id: number; ok: true; op: "status"; pair: PairSummary }
+  | { id: number; ok: true; op: "status"; pair: PairSummary; deployment: DeploymentView }
   | { id: number; ok: true; op: "burn"; envelope: EnvelopeLine; consumed: { encryptionBytes: number; authRecords: 1 }; meters: PairSummary }
   | { id: number; ok: true; op: "open"; plaintext: Uint8Array; skipped: { encryptionBytes: number; authRecords: number }; meters: PairSummary }
   | { id: number; ok: true; op: "retire"; meters: PairSummary }

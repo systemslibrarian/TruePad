@@ -77,6 +77,7 @@ why reuse fails, secrecy versus integrity, and the DeckBook comparison.
 - **[How online pad delivery works](docs/HOW-ONLINE-PAD-DELIVERY-WORKS.md)** — plain English, no cryptography required
 - **[Security Policy](SECURITY.md)** — what is in scope, and how to report
 - **[Product claims](docs/PRODUCT-CLAIMS.md)** — every claim, and what proves it
+- **[Shannon deployment](docs/SHANNON-DEPLOYMENT.md)** — why the OTP combiner is not the OTP deployment, and how the assessment is derived
 - **[Browser security](docs/BROWSER-SECURITY.md)** — the Browser Edition's model and limits
 - **[Store Format v2](docs/FORMAT-V2.md)** — the normative message format
 - **[Sealed Pad Transfer](docs/SEALED-PAD-TRANSFER.md)** — the normative transfer specification
@@ -109,7 +110,9 @@ integrity. It is **not** the current system, and not a co-equal product.
 > undetectably; a forged `startOffset` makes the receiver burn pad material it
 > should have kept. That hazard is the lesson. **Format v2 — the Browser Edition
 > and `truepad2` — is the authenticated path.** Do not mistake v1 for the secure
-> one.
+> one. This legacy v1 CLI is intentionally unauthenticated teaching material; do
+> not use it for anything you care about. It plays no part in the Shannon
+> deployment assessment.
 
 Its full documentation is in [the `truepad-pad` section](#the-pad-cli-truepad-pad--reuse-safe-pad-handling-not-secure-messaging)
 below.
@@ -758,7 +761,11 @@ TruePad is licensed under the GNU Affero General Public License v3.0 only
 
 You may inspect, use, modify and redistribute TruePad under the AGPL;
 redistribution and covered network use are subject to the AGPL's source-code
-obligations. Third-party components — such as the vendored BIP-39 wordlist
+obligations. In plain terms, the practical intent is that anyone who ships a
+modified TruePad — including as a hosted service people use over a network —
+must make their corresponding source available under the same terms, so an
+educational security tool cannot be quietly forked into a closed one.
+Third-party components — such as the vendored BIP-39 wordlist
 ([provenance and notice](src/browser/ui/wordlist/PROVENANCE.md)) and the
 `@noble/post-quantum` dependency — remain under their own licenses.
 

@@ -579,6 +579,12 @@ The created pad's statement stays conditional: the verbatim §7 verdict, then
 true, the pad material satisfies the information-theoretic randomness
 requirement of a one-time pad."*
 
+A CLI ceremony store carries operator-declared external sources and no recorded
+disqualifying path, so `truepad2 status` reports its **Shannon deployment
+assessment** as `CONDITIONALLY ELIGIBLE` — with physical randomness, source
+independence, private courier behaviour, and erasure left, honestly, as things
+TruePad did not prove. See [Shannon deployment](SHANNON-DEPLOYMENT.md).
+
 **Uniformity is not secrecy**, and the panel then says what the verdict is not:
 
 *"The verdict above is about uniformity only. An information-theoretic secrecy

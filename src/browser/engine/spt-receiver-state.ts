@@ -261,6 +261,42 @@ export async function namespaceOccupied(vfs: Vfs, requestIdHex: string): Promise
   return entries.length > 0;
 }
 
+/** Did this pad arrive by SEALED ONLINE DELIVERY? A committed sealed receive
+ *  writes a durable `consumed.json` recording the imported pad's `pairId`
+ *  (§10.1). This scans those terminal markers for `pairId`, so a Shannon
+ *  deployment assessment can DERIVE "computational delivery" from a fact that
+ *  already persists — no new stored provenance field, no Format-v2 change.
+ *
+ *  It fails safe: an unreadable or unparseable marker is skipped, so a pad that
+ *  cannot be confirmed sealed is simply not reported sealed (which classifies it
+ *  as an unknown import, never as eligible). */
+export async function pairArrivedSealed(vfs: Vfs, pairId: string): Promise<boolean> {
+  let requestDirs: string[];
+  try {
+    requestDirs = await vfs.list(RECEIVE_ROOT);
+  } catch {
+    return false;
+  }
+  for (const requestIdHex of requestDirs) {
+    if (!HEX_32.test(requestIdHex)) continue;
+    const path = consumedPath(requestIdHex);
+    let bytes: Uint8Array | null;
+    try {
+      bytes = await vfs.readFile(path);
+    } catch {
+      continue;
+    }
+    if (!bytes) continue;
+    try {
+      if (parseConsumed(bytes, requestIdHex).pairId === pairId) return true;
+    } catch {
+      // A torn/unparseable terminal marker is not a confirmation of sealed
+      // delivery; skip it. The pad falls to "unknown import" — never eligible.
+    }
+  }
+  return false;
+}
+
 /* ---- reading state -------------------------------------------------------- */
 
 function terminalUnreadable(detail: string): ReceiverState {

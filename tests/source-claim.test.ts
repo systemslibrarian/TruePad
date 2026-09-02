@@ -522,17 +522,26 @@ describe("(20) pad delivery distinguishes physical handoff from computational tr
  * ======================================================================== */
 
 describe("(13, 15) the store format is unchanged and carries no randomness claim flag", () => {
-  const FLAG = /\btrueRandom\b|\binformationTheoretic\b|\bverifiedRandom\b|\bphysicallyRandom\b/;
+  // Every spelling of a self-certifying security verdict this project bans.
+  const FLAG =
+    /\btrueRandom\b|\binformationTheoretic\b|\bverifiedRandom\b|\bphysicallyRandom\b|\bitCapable\b|\bperfectSecrecy\b|\bshannonSecure\b|\bcertifiedEntropy\b/;
 
-  it("no claim flag exists in the store, the protocol, or the spec", () => {
+  it("no claim flag exists in the store, the protocol, the deployment classifier, or the spec", () => {
     for (const file of [
       ["src", "browser", "engine", "store.ts"],
       ["src", "browser", "engine", "protocol.ts"],
       ["src", "browser", "engine", "verbs.ts"],
       ["src", "cli", "v2", "store2.ts"],
+      ["src", "cli", "v2", "truepad2.ts"],
+      // The Shannon deployment classifier DERIVES, it never persists a verdict:
+      // its source (comments aside) must carry none of these identifiers either.
+      ["src", "claims", "shannon-deployment.ts"],
       ["docs", "FORMAT-V2.md"]
     ]) {
-      expect(read(...file), `${file.join("/")} must carry no randomness claim flag`).not.toMatch(FLAG);
+      // Strip block/line comments: the classifier's prose forbids these words by
+      // naming them, which is not the same as defining a flag.
+      const src = read(...file).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+      expect(src, `${file.join("/")} must carry no randomness/verdict claim flag`).not.toMatch(FLAG);
     }
   });
 

@@ -95,6 +95,11 @@ import {
   validatePlatformState,
   type PlatformConfig
 } from "./platform-witness.ts";
+import {
+  ASSESSMENT_LABEL,
+  assessShannonDeployment,
+  CONDITIONAL_CAVEAT
+} from "../../claims/shannon-deployment.ts";
 
 export const BANNER2 =
   "truepad2: reuse-safe pad handling with authenticated envelopes (Store Format v2; docs/FORMAT-V2.md is the\n" +
@@ -1381,6 +1386,68 @@ function meters(store: LoadedStore2): Meters {
   };
 }
 
+/** A dotted-leader row for the DEPLOYMENT CLAIMS section. */
+function claimRow(label: string, value: string): string {
+  const dots = ".".repeat(Math.max(3, 46 - label.length));
+  return `    ${label} ${dots} ${value}`;
+}
+
+/** The human witness-class name for the deployment section. */
+function witnessClassName(rollback: HeadV2["rollback"]): string {
+  switch (rollback.witnessClass) {
+    case "none":
+      return "NONE (no external rollback witness)";
+    case "separate-state-file":
+      return "SEPARATE-STATE-FILE";
+    case "platform-monotonic":
+      return `PLATFORM-MONOTONIC (${String((rollback.config as { provider?: unknown }).provider ?? "unknown provider")})`;
+    case "remote-monotonic":
+      return "REMOTE-MONOTONIC (unsupported in this build)";
+  }
+}
+
+/**
+ * The DEPLOYMENT CLAIMS section (stderr). It DERIVES a Shannon deployment
+ * assessment from recorded facts — it never reads or writes a stored verdict.
+ * A CLI store always carries operator-declared external sources (gen requires a
+ * `--source`; there is no CSPRNG path here) and is delivered by a private
+ * courier the tool cannot observe, so it is CONDITIONALLY ELIGIBLE — with the
+ * physical premises left, honestly, as things TruePad did not prove.
+ */
+function printDeploymentClaims(head: HeadV2): void {
+  const sourceCount = head.sourceDeclarations.length;
+  const facts = {
+    // A CLI store's material is always an operator-supplied external source.
+    sourceClass: "external-declared" as const,
+    // Distribution to the peer is a private courier — an operator premise.
+    deliveryClass: "private-handoff-operator-asserted" as const
+  };
+  const { assessment } = assessShannonDeployment(facts);
+
+  err("");
+  err("DEPLOYMENT CLAIMS");
+  err("  OTP combiner");
+  err(claimRow("literal one-time-pad XOR", "YES"));
+  err("  Authentication");
+  err(claimRow("one-time Wegman-Carter", "YES"));
+  err(claimRow("theorem scope", "conditional on fresh one-time auth material"));
+  err("  Source provenance");
+  err(claimRow("creation path", "CLI (external sources declared)"));
+  err(claimRow("external source declarations", String(sourceCount)));
+  err(claimRow("physical uniformity proven by TruePad", "NO"));
+  err(claimRow("source independence proven by TruePad", "NO"));
+  err("  Distribution");
+  err(claimRow("sealed computational delivery used", "NO"));
+  err(claimRow("private handoff", "OPERATOR PREMISE"));
+  err("  Reuse protection");
+  err(claimRow("irreversible counters", "ACTIVE"));
+  err(claimRow("witness class", witnessClassName(head.rollback)));
+  err("  Shannon deployment assessment");
+  err(`    ${ASSESSMENT_LABEL[assessment]}`);
+  err("");
+  err(`  ${CONDITIONAL_CAVEAT}`);
+}
+
 export function status(args: Args2): void {
   const dir = dirArg(args, "status");
   // §15.3: status reads and reports the witness state per direction but
@@ -1388,7 +1455,10 @@ export function status(args: Args2): void {
   // pair lock alongside the meters.
   const snapshot = withPair(dir, (pair) => ({
     "A->B": { meters: meters(pair["A->B"]), witness: witnessReport(pair["A->B"]) },
-    "B->A": { meters: meters(pair["B->A"]), witness: witnessReport(pair["B->A"]) }
+    "B->A": { meters: meters(pair["B->A"]), witness: witnessReport(pair["B->A"]) },
+    // The source provenance is a pair-level fact; both halves are generated
+    // together from the same declared sources, so A->B's head carries it.
+    head: pair["A->B"].head
   }));
   const machine: Record<PadDirection, unknown> = { "A->B": undefined, "B->A": undefined };
   for (const direction of ["A->B", "B->A"] as const) {
@@ -1418,6 +1488,9 @@ export function status(args: Args2): void {
     }
     machine[direction] = { ...m, witness: w };
   }
+  // The deployment section is DERIVED and printed to stderr only; the machine
+  // line on stdout is unchanged (its shape is a contract).
+  printDeploymentClaims(snapshot.head);
   out(JSON.stringify(machine));
 }
 

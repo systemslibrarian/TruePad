@@ -91,7 +91,7 @@ test("removing a disabled pad erases it from the product and never revives it", 
   await page.getByRole("button", { name: "Remove from TruePad" }).click();
 
   // --- 5-8. home is a pristine fresh install -------------------------------
-  await expect(page.getByText("Private messages using a pad you share with one other person.")).toBeVisible();
+  await expect(page.getByText("An educational one-time-pad messaging system, shared with one other person.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Create a pad" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Add a shared pad" })).toBeVisible();
   await expect(page.getByText("How does this work?")).toBeVisible();
@@ -120,7 +120,7 @@ test("removing a disabled pad erases it from the product and never revives it", 
     await expect(page.locator("body")).not.toContainText(deadId);
   }
   await page.getByRole("button", { name: "Back to home" }).click();
-  await expect(page.getByText("Private messages using a pad you share with one other person.")).toBeVisible();
+  await expect(page.getByText("An educational one-time-pad messaging system, shared with one other person.")).toBeVisible();
 
   // --- 11. the old pad file is still refused: no resurrection --------------
   await page.getByRole("button", { name: "Add a shared pad" }).click();
@@ -136,7 +136,7 @@ test("removing a disabled pad erases it from the product and never revives it", 
   // ...and no pad entry was recreated.
   await page.goto("/");
   await expect(page.locator(".pad-card")).toHaveCount(0);
-  await expect(page.getByText("Private messages using a pad you share with one other person.")).toBeVisible();
+  await expect(page.getByText("An educational one-time-pad messaging system, shared with one other person.")).toBeVisible();
 
   // --- 12. the internal tombstone survived removal -------------------------
   expect(await tombstoneExists(page, deadId)).toBe(true);
@@ -257,7 +257,7 @@ const LANDING_PARTS = [
 
 async function expectCenteredLanding(page: Page): Promise<void> {
   await page.goto("/");
-  await expect(page.getByText("Private messages using a pad you share with one other person.")).toBeVisible();
+  await expect(page.getByText("An educational one-time-pad messaging system, shared with one other person.")).toBeVisible();
 
   const screen = await page.locator(".screen.landing").boundingBox();
   expect(screen, "expected a landing screen").not.toBeNull();

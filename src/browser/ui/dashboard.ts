@@ -30,8 +30,41 @@ import { removePair } from "./removed.ts";
 import { PARTY_NAME } from "./format.ts";
 import { savePadFileButton } from "./courier.ts";
 import type { Ctx } from "./context.ts";
-import type { DirectionMeters, PairSummary } from "../engine/protocol.ts";
+import type { DeploymentView, DirectionMeters, PairSummary } from "../engine/protocol.ts";
 import type { PadDirection } from "../../core/pad.ts";
+import { DELIVERY_LABEL, SOURCE_LABEL } from "../../claims/shannon-deployment.ts";
+
+/* A factual source/delivery classification for this pad, derived by the engine.
+ * It is never a security score, and never a green "eligible" badge that could be
+ * screenshot without its qualifier: the Browser Edition generates from a
+ * software CSPRNG and delivers online by computational cryptography, so a
+ * browser pad is always "Not eligible" or "Insufficient evidence" for the
+ * physical-uniform-source, information-theoretic deployment path — which is the
+ * honest thing to say, not a defect. */
+function deploymentBlock(d: DeploymentView): HTMLElement {
+  const assessmentText =
+    d.assessment === "not-eligible"
+      ? "Not eligible"
+      : d.assessment === "insufficient-evidence"
+        ? "Insufficient evidence"
+        : "Conditionally eligible";
+  const reason = d.knownReason ? d.knownReason.charAt(0).toUpperCase() + d.knownReason.slice(1) : null;
+  return h(
+    "div",
+    { class: "deployment" },
+    h("h3", { class: "sub", text: "Pad source and delivery" }),
+    kv([
+      { term: "Pad source", value: SOURCE_LABEL[d.source] },
+      { term: "Delivery", value: DELIVERY_LABEL[d.delivery] },
+      { term: "Shannon deployment", value: assessmentText }
+    ]),
+    reason ? h("p", { class: "save-note", text: `Why? ${reason}.` }) : null,
+    h("p", {
+      class: "faint small",
+      text: "A factual classification, not a security score. TruePad has not proved physical randomness, private delivery, or that no copy exists."
+    })
+  );
+}
 
 function directionCard(m: DirectionMeters): HTMLElement {
   return h(
@@ -250,6 +283,7 @@ export async function renderDashboard(ctx: Ctx, root: HTMLElement, pairId: strin
       { term: "Messages you can still send", value: fmtInt(sendable) },
       { term: "Created", value: pair.createdAt ? new Date(pair.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : "—" }
     ]),
+    deploymentBlock(reply.deployment),
     // Sharing lives HERE, in details — not as a fifth tile beside the four
     // things this screen is actually for. Handing a pad over is provisioning,
     // and it happens once.

@@ -329,6 +329,15 @@ satisfies the information-theoretic randomness requirement of a one-time pad."*
 Never *"perfect secrecy achieved"*, *"true OTP verified"*, or
 *"information-theoretic security confirmed"*.
 
+**The Browser Edition never claims a Shannon-eligible pad.** Pad details shows a
+derived *Shannon deployment assessment*, and for a browser pad it is always
+`NOT ELIGIBLE` (a browser-generated pad is a software CSPRNG source, or a pad
+delivered by sealed `.tps2` is computational delivery) or `INSUFFICIENT EVIDENCE`
+(an import whose provenance the browser cannot establish). That is the honest
+result, not a defect: the browser cannot supply the physical-uniform-source
+premise. The assessment is derived from provenance every time and never stored.
+See [Shannon deployment](SHANNON-DEPLOYMENT.md).
+
 **Uniformity is not secrecy**, and the panel says so immediately after:
 
 *"The verdict above is about uniformity only. An information-theoretic secrecy

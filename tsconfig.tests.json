@@ -9,6 +9,7 @@
   },
   "include": [
     "src/core",
+    "src/claims",
     "src/spt",
     "src/cli",
     "tests",

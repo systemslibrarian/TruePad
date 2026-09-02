@@ -128,7 +128,7 @@ export async function renderHome(ctx: Ctx, root: HTMLElement): Promise<void> {
           "header",
           { class: "hero" },
           wordmark(),
-          h("p", { class: "hero-sub", text: "Private messages using a pad you share with one other person." })
+          h("p", { class: "hero-sub", text: "An educational one-time-pad messaging system, shared with one other person." })
         ),
         h("div", { class: "hero-cta" }, createBtn("primary lg")),
         h(

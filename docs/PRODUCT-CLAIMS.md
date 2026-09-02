@@ -193,11 +193,21 @@ can be created:
 
 This is an **OPERATOR declaration and never a verification result**. Ticking it
 changes nothing about the material, and nothing about it is written to the
-store: **no `trueRandom`, no `informationTheoretic`, no `verifiedRandom` flag
-exists in Store Format v2, and none may be added** — software cannot establish
-those facts. The only persisted record is the existing
-`head.json → sourceDeclarations[]`: each source's name, the operator's own
-origin note, and its length. Nothing pad-derived (N14).
+store: **no `trueRandom`, no `informationTheoretic`, no `verifiedRandom`,
+`itCapable`, `perfectSecrecy`, `shannonSecure` or `certifiedEntropy` flag exists
+in Store Format v2, and none may be added** — software cannot establish those
+facts. The only persisted record is the existing `head.json →
+sourceDeclarations[]`: each source's name, the operator's own origin note, and
+its length. Nothing pad-derived (N14).
+
+TruePad turns these facts into a **derived** *Shannon deployment assessment* —
+`CONDITIONALLY ELIGIBLE`, `NOT ELIGIBLE`, or `INSUFFICIENT EVIDENCE` — shown by
+`truepad2 status` and on the Browser Edition's Pad details. It is computed from
+provenance every time and never stored; a software CSPRNG source or sealed
+computational delivery is NOT ELIGIBLE, an unknown import is INSUFFICIENT
+EVIDENCE, and only an operator-declared external source is CONDITIONALLY ELIGIBLE
+— with the physical premises still unproven. See
+[Shannon deployment](SHANNON-DEPLOYMENT.md).
 
 ### Delivery is the other half
 

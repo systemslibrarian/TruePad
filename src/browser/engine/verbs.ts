@@ -35,6 +35,7 @@ import { decodeEnvelopeTransport2 } from "../../core/compact-envelope2.ts";
 import { buildFrame, frameCapacity, parseFrame } from "../../core/frame2.ts";
 import { combineSources, partition, requiredSourceLength } from "../../core/partition2.ts";
 import type {
+  DeploymentView,
   DirectionMeters,
   EngineRequest,
   EngineResponse,
@@ -42,6 +43,7 @@ import type {
   ManifestView,
   PairSummary
 } from "./protocol.ts";
+import { assessShannonDeployment, type DeliveryClass, type SourceClass } from "../../claims/shannon-deployment.ts";
 import {
   EngineRefused,
   HEAD_FILE,
@@ -69,7 +71,7 @@ import {
   REFUSE_ALREADY_SEALED,
   REFUSE_UNREADABLE
 } from "./handoff.ts";
-import { readReceiverState, type ReceiverState } from "./spt-receiver-state.ts";
+import { pairArrivedSealed, readReceiverState, type ReceiverState } from "./spt-receiver-state.ts";
 import type { SptRuntime } from "./spt-runtime.ts";
 import {
   abandonImpl,
@@ -129,7 +131,7 @@ function directionFor(role: "A" | "B", op: "burn" | "open"): PadDirection {
 type Req<K extends EngineRequest["op"]> = Extract<EngineRequest, { op: K }>;
 
 type GenResult = { ok: true; op: "gen"; pair: PairSummary; verdict: string; manifest: ManifestView };
-type StatusResult = { ok: true; op: "status"; pair: PairSummary };
+type StatusResult = { ok: true; op: "status"; pair: PairSummary; deployment: DeploymentView };
 type BurnResult = { ok: true; op: "burn"; envelope: EnvelopeLine; consumed: { encryptionBytes: number; authRecords: 1 }; meters: PairSummary };
 type OpenResult = { ok: true; op: "open"; plaintext: Uint8Array; skipped: { encryptionBytes: number; authRecords: number }; meters: PairSummary };
 type RetireResult = { ok: true; op: "retire"; meters: PairSummary };
@@ -602,10 +604,44 @@ async function genImpl(vfs: Vfs, req: Req<"gen">): Promise<GenResult> {
 
 /* ---- status --------------------------------------------------------------- */
 
+/**
+ * DERIVE a Shannon deployment classification for one pad from its provenance.
+ * It reads facts that already persist — the pad's `origin` and, for an imported
+ * pad, whether a durable sealed-receive marker names it — and classifies them.
+ * It writes nothing and stores no verdict; the assessment is recomputed each
+ * time. The ordering is the classifier's (a known computational path dominates):
+ *
+ *   generated-here → software CSPRNG source → NOT ELIGIBLE
+ *   imported + a sealed-receive marker → computational delivery → NOT ELIGIBLE
+ *   imported, no marker → unknown import → INSUFFICIENT EVIDENCE
+ *   no provenance (bare/legacy) → INSUFFICIENT EVIDENCE
+ */
+async function deriveDeployment(vfs: Vfs, pairId: string): Promise<DeploymentView> {
+  const origin = await readPairOrigin(vfs, pairId);
+  let source: SourceClass;
+  let delivery: DeliveryClass;
+  if (origin === "generated-here") {
+    // Browser generation is a software CSPRNG — real, and computational.
+    source = "software-csprng";
+    delivery = "local-generation";
+  } else if (origin === "imported") {
+    // TruePad did not make an imported pad's bytes, so their source is unknown;
+    // the delivery is sealed (computational) only if a durable marker says so.
+    source = "unknown";
+    delivery = (await pairArrivedSealed(vfs, pairId)) ? "sealed-online" : "raw-import-unknown";
+  } else {
+    source = "unknown";
+    delivery = "unknown";
+  }
+  const { assessment, knownReason } = assessShannonDeployment({ sourceClass: source, deliveryClass: delivery });
+  return { assessment, source, delivery, knownReason: knownReason ?? null };
+}
+
 async function statusImpl(vfs: Vfs, req: Req<"status">): Promise<StatusResult> {
   return vfs.withLock(req.pairId, async (): Promise<StatusResult> => {
     const pair = await buildSummary(vfs, req.pairId);
-    return { ok: true, op: "status", pair };
+    const deployment = await deriveDeployment(vfs, req.pairId);
+    return { ok: true, op: "status", pair, deployment };
   });
 }
 

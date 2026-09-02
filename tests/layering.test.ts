@@ -24,7 +24,7 @@ const SRC = resolve(__dirname, "..", "src");
 // src/browser is the Browser Edition (the OPFS-worker product). Like exhibit,
 // it may import core; it may NOT import cli (node-only) or exhibit, and it
 // runs in the browser/worker so it uses no node: builtins.
-const LAYERS = ["core", "exhibit", "cli", "browser", "spt"] as const;
+const LAYERS = ["core", "claims", "cli", "exhibit", "browser", "spt"] as const;
 type Layer = (typeof LAYERS)[number];
 
 // Every static or dynamic import specifier in a TS source file:
@@ -112,10 +112,17 @@ describe("layering: import direction is one-way into src/core", () => {
     expect(importsOf("cli").some((i) => i.target === "core")).toBe(true);
   });
 
-  it("src/browser (Browser Edition) imports only core and spt — never cli, exhibit, or node: builtins", () => {
+  it("src/browser (Browser Edition) imports only core, spt and claims — never cli, exhibit, or node: builtins", () => {
     const bad = importsOf("browser").filter(
       (i) => i.target === "cli" || i.target === "exhibit" || i.target === "node"
     );
+    expect(describeViolations(bad)).toBe("");
+  });
+
+  it("src/claims is self-contained — the deployment classifier imports nothing but src/claims", () => {
+    // A pure derivation shared by both editions: no core, no spt, no node, no
+    // package. It cannot pull a KEM or a Node builtin into either edition.
+    const bad = importsOf("claims").filter((i) => i.target !== "claims");
     expect(describeViolations(bad)).toBe("");
   });
 
