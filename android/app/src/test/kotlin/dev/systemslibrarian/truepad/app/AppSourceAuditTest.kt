@@ -393,10 +393,24 @@ class AppSourceAuditTest {
      */
     @Test
     fun noPadDerivedFingerprintIsComputedOrPersisted() {
-        val banned = listOf("MessageDigest", ".digest(", "fingerprint", "sha256", "sha-256", "SHA-256", "SHA256")
+        // The OTP+WC construction hashes nothing: no general-purpose digest
+        // primitive appears in core, storage, or the app UI. This ban stays
+        // GLOBAL — even the sealed-transfer bridge delegates all hashing to
+        // :truepad-spt and calls no digest itself.
+        val hashPrimitives = listOf("MessageDigest", ".digest(", "sha256", "sha-256", "SHA-256", "SHA256")
+        // The word "fingerprint" is additionally banned everywhere EXCEPT the
+        // sealed-transfer bridge and its screen. There it names the TPR2 REQUEST
+        // fingerprint — a SHA3-256 over the PUBLIC receive request (the recipient
+        // key and a request id), computed inside :truepad-spt as part of the
+        // X-Wing/SPT protocol, and never over pad or secret material. The spt
+        // module carries its own KAT/vector conformance and is not scanned here.
+        val sptBridgeOrUi = setOf("SptEngine.kt", "SptScreens.kt")
         for ((path, code) in allModuleCode()) {
-            for (b in banned) {
-                assertFalse("$path must not compute/persist a pad-derived fingerprint ($b)", code.contains(b))
+            for (b in hashPrimitives) {
+                assertFalse("$path must not compute a digest ($b)", code.contains(b))
+            }
+            if (File(path).name !in sptBridgeOrUi) {
+                assertFalse("$path must not compute/persist a pad-derived fingerprint", code.contains("fingerprint"))
             }
         }
     }

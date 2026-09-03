@@ -71,6 +71,7 @@ fun HomeScreen(state: UiState, vm: PadViewModel) {
             vm.navigate(Screen.CreatePad)
         }
         SecondaryButton("Add a shared pad", Modifier.testTag("btn-add-pad")) { vm.navigate(Screen.AddPad) }
+        SecondaryButton("Receive a pad", Modifier.testTag("btn-receive-pad")) { vm.startReceive() }
     }
 
     Details("How does this work?") {
@@ -117,6 +118,8 @@ fun CreatePadScreen(state: UiState, vm: PadViewModel) {
     var declared by remember { mutableStateOf(false) }
     var origin by remember { mutableStateOf("") }
     var picked by remember { mutableStateOf(listOf<PickedSource>()) }
+    var fixedLength by remember { mutableStateOf(false) }
+    var fixedSize by remember { mutableStateOf("256") }
 
     val pickSources = rememberOpenDocuments { uris ->
         val existing = picked.map { it.uri.toString() }.toSet()
@@ -230,18 +233,58 @@ fun CreatePadScreen(state: UiState, vm: PadViewModel) {
         }
     }
 
+    // ADVANCED — length privacy. Off by default; the daily flow never sees it.
+    // Fixed-size records hide a message's exact length by padding every message
+    // to the same ciphertext size (§16). The cost is real and stated plainly.
+    Rule()
+    Details("Advanced") {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .toggleable(value = fixedLength, role = Role.Checkbox, onValueChange = { fixedLength = it })
+                .testTag("checkbox-fixed-length"),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Checkbox(checked = fixedLength, onCheckedChange = null)
+            Body("Hide exact message lengths", Modifier.padding(start = 4.dp))
+        }
+        Faint(
+            "Every message uses the same size, so its exact length is hidden. The cost: each message spends the " +
+                "full size from the pad, even a short one. The number of messages and their timing are still visible.",
+        )
+        if (fixedLength) {
+            OutlinedTextField(
+                value = fixedSize,
+                onValueChange = { new -> fixedSize = new.filter { it.isDigit() }.take(7) },
+                label = { Text("Message size (bytes)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag("field-fixed-size"),
+            )
+        }
+    }
+
+    val parsedF = fixedSize.toIntOrNull()
+    val recordBytes: Int? = if (fixedLength) parsedF else null
+    val recordValid = !fixedLength ||
+        (parsedF != null && parsedF >= 32 && parsedF.toLong() <= size.encryptionBytes && parsedF % 16 == 0)
+
     Spacer(Modifier.height(4.dp))
-    val ready = if (external) declared && picked.isNotEmpty() else true
+    val ready = (if (external) declared && picked.isNotEmpty() else true) && recordValid
     PrimaryButton(
         text = if (state.busy) "Creating…" else "Create pad",
         modifier = Modifier.testTag("btn-submit-create"),
         enabled = ready,
         busy = state.busy,
     ) {
-        if (external) vm.createPadFromFiles(label, size, picked) else vm.createPadFromDevice(label, size)
+        if (external) vm.createPadFromFiles(label, size, picked, recordBytes)
+        else vm.createPadFromDevice(label, size, recordBytes)
     }
-    if (external && !ready) {
+    if (external && (!declared || picked.isEmpty())) {
         Faint("Choose at least one file and confirm the statement above.")
+    }
+    if (fixedLength && !recordValid) {
+        Faint("Message size must be a multiple of 16, at least 32, and no more than the capacity (${size.encryptionBytes} bytes).")
     }
     Faint("Nothing leaves this device. Creating a pad makes no network connection.")
 }
@@ -323,11 +366,8 @@ fun PadScreen(state: UiState, vm: PadViewModel) {
     Rule()
     SectionTitle("Share this pad")
     Muted("Give the other person their copy. Until they have it, neither of you can read anything the other sends.")
-    val save = rememberCreateDocument("application/json") { uri -> vm.exportPad(pairId, uri) }
-    SecondaryButton("Save pad file", Modifier.testTag("btn-save-pad-file")) {
-        save.launch("truepad-pad.json")
-    }
-    Faint("Keep the pad file secret — anyone who has it can read these messages.")
+    SecondaryButton("Give this pad to someone", Modifier.testTag("btn-give-pad")) { vm.startGive() }
+    Faint("You can hand it over as a file in person, or send it securely to a receive code.")
 
     Rule()
     SecondaryButton("Security", Modifier.testTag("btn-security")) { vm.navigate(Screen.Details) }

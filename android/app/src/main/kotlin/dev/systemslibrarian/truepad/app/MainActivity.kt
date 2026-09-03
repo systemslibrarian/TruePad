@@ -131,3 +131,21 @@ fun Context.shareEncryptedMessage(text: String) {
     }
     startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
+
+/**
+ * Hand a receive code to the share sheet as TEXT.
+ *
+ * A TPR2 receive code is PUBLIC by design — it is only a recipient key and a
+ * request id, and it is what the sender must be given to seal a pad. So it is
+ * safe on the same open channels an envelope is, and like an envelope it travels
+ * as text (this app has no content provider). No EXTRA_IS_SENSITIVE: nothing
+ * here is secret, and marking it so would be a false claim.
+ */
+fun Context.shareReceiveCode(text: String) {
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, text)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+}

@@ -1,5 +1,6 @@
 package dev.systemslibrarian.truepad.app
 
+import dev.systemslibrarian.truepad.spt.SptRefused
 import dev.systemslibrarian.truepad.storage.EngineRefused
 
 /*
@@ -44,8 +45,51 @@ data class UserFacingRefusal(
             "pair-destroyed", "import-incomplete", "pair-exists", "malformed-bundle",
             "imported-pair-cannot-export", "source-too-short", "destroy-unconfirmed",
             "no-store", "half-pair", "v1-store",
+            // Sealed transfer: every refusal EXCEPT spt-receive-loss happens
+            // before anything is consumed, so a retry costs nothing.
+            "spt-request-unavailable", "spt-request-expired", "spt-request-cancelled",
+            "spt-request-consumed", "spt-package-malformed", "spt-package-open-failed",
+            "spt-package-not-importable", "spt-pad-ineligible", "pad-already-sealed",
+            "pad-already-handed-off", "handoff-state-unreadable",
         )
     }
+}
+
+/**
+ * The sealed-transfer verbs raise [SptRefused] with the same discipline as the
+ * engine: the reason is the contract, the message carries no secret, and this
+ * layer only ever makes the sentence SHORTER. An unmapped reason falls through
+ * to the verb's own words.
+ */
+fun SptRefused.toUserFacing(): UserFacingRefusal {
+    val detail = message ?: ""
+    val headline = when (reason) {
+        "spt-request-unavailable" ->
+            "This receive code can't be used. Ask the other person for a fresh one."
+        "spt-request-expired" ->
+            "This receive code has expired. Create a new one and try again."
+        "spt-request-cancelled" ->
+            "This receive code was cancelled and can't be used."
+        "spt-request-consumed" ->
+            "This receive code has already received a pad. Each one works only once — create a new one."
+        "spt-package-malformed", "spt-package-not-importable" ->
+            "This sealed file isn't a usable pad. Ask the sender to make a new one."
+        "spt-package-open-failed" ->
+            "This sealed file could not be opened for this receive code. It may be for a different code."
+        "spt-pad-ineligible" ->
+            "This pad can't be sent securely — a sealed transfer sends a whole, unused pad you made yourself. " +
+                "Create a fresh pad to share."
+        "pad-already-sealed", "handoff-state-unreadable" ->
+            "TruePad can't tell whether this pad was already given to someone, so it won't make another copy. " +
+                "Create a new pad for any further sharing."
+        "pad-already-handed-off" ->
+            "This pad was already handed over as a file, so it can't also be sent securely. Create a new pad."
+        "spt-receive-loss" ->
+            "The receive code was used, but the pad did not finish saving. It can't be used again — ask the " +
+                "sender to create a new pad and start a new transfer."
+        else -> "TruePad refused this action."
+    }
+    return UserFacingRefusal(reason, headline, detail)
 }
 
 fun EngineRefused.toUserFacing(): UserFacingRefusal {

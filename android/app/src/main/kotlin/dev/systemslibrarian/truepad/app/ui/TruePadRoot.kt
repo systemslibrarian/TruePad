@@ -73,6 +73,9 @@ fun TruePadRoot(state: UiState, vm: PadViewModel) {
                     Screen.Open -> OpenScreen(state, vm)
                     Screen.Details -> DetailsScreen(state, vm)
                     Screen.Remove -> RemoveScreen(state, vm)
+                    Screen.ReceivePad -> ReceivePadScreen(state, vm)
+                    Screen.GivePad -> GivePadScreen(state, vm)
+                    Screen.SendSealed -> SendSealedScreen(state, vm)
                 }
                 Spacer(Modifier.height(40.dp))
             }
@@ -117,6 +120,13 @@ fun BannerArea(state: UiState, vm: PadViewModel) {
             Body(dev.systemslibrarian.truepad.app.Claims.DELIVERY_ESSENTIAL)
         }
         Banner.Removed -> Callout(Tone.Good, "Removed from TruePad.", Modifier.testTag("banner-removed")) {}
+        Banner.SealedSaved -> Callout(Tone.Good, "Sealed pad file saved", Modifier.testTag("banner-sealed-saved")) {
+            Body(
+                "Give this file to the other person over any channel — nearby (Quick Share, a cable, a drive) or " +
+                    "online. Only their device can open it. Then read them the confirmation words so they can check " +
+                    "the file is really from you.",
+            )
+        }
     }
     Spacer(Modifier.height(2.dp))
     // 48dp like every other target. Found by the accessibility sweep, which

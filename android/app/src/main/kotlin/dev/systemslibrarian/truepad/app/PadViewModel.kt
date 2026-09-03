@@ -5,12 +5,23 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.systemslibrarian.truepad.core.Direction
+import dev.systemslibrarian.truepad.spt.SptRefused
 import dev.systemslibrarian.truepad.storage.EngineRefused
 import dev.systemslibrarian.truepad.storage.PairListEntry
 import dev.systemslibrarian.truepad.storage.PairSummary
 import dev.systemslibrarian.truepad.storage.Party2
 import dev.systemslibrarian.truepad.storage.SourceInput
+import dev.systemslibrarian.truepad.storage.SptCreateResult
+import dev.systemslibrarian.truepad.storage.SptOpenResult
+import dev.systemslibrarian.truepad.storage.SptReviewResult
+import dev.systemslibrarian.truepad.storage.SptSealResult
 import dev.systemslibrarian.truepad.storage.WitnessKind
+import dev.systemslibrarian.truepad.storage.sptCommitReceive
+import dev.systemslibrarian.truepad.storage.sptConfirmRequest
+import dev.systemslibrarian.truepad.storage.sptCreateReceiveRequest
+import dev.systemslibrarian.truepad.storage.sptOpen
+import dev.systemslibrarian.truepad.storage.sptReviewRequest
+import dev.systemslibrarian.truepad.storage.sptSeal
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -77,12 +88,26 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.let { it.copy(backStack = it.backStack + screen, banner = null) }
     }
 
-    /** True when the back press was consumed by the in-app stack. */
+    /** True when the back press was consumed by the in-app stack. Leaving any
+     *  screen drops the transient sealed-transfer session — it may hold a
+     *  decrypted pad, and it must never outlive the flow that produced it. */
     fun back(): Boolean {
         val stack = _state.value.backStack
         if (stack.size <= 1) return false
-        _state.value = _state.value.copy(backStack = stack.dropLast(1), banner = null, lastResult = null)
+        _state.value = _state.value.copy(
+            backStack = stack.dropLast(1), banner = null, lastResult = null, spt = SptUi(),
+        )
         return true
+    }
+
+    /** Discard any in-flight sealed-transfer session and return to the given
+     *  screen. Used by the flows' own Cancel controls. */
+    fun cancelSpt(to: Screen) {
+        _state.value = _state.value.copy(
+            backStack = if (to == Screen.Home) listOf(Screen.Home) else _state.value.backStack.dropLastWhile { it != to },
+            banner = null,
+            spt = SptUi(),
+        )
     }
 
     fun dismissBanner() {
@@ -127,6 +152,12 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
                 block()
             } catch (e: EngineRefused) {
                 _state.value = _state.value.copy(banner = Banner.Refused(e.toUserFacing()))
+            } catch (e: SptRefused) {
+                // The sealed-transfer verbs raise their OWN typed refusal, with the
+                // same discipline as the engine's: the reason is the contract, the
+                // message carries no secret. It is mapped to a plain sentence the
+                // same way, and an unmapped reason falls through to its own words.
+                _state.value = _state.value.copy(banner = Banner.Refused(e.toUserFacing()))
             } catch (e: AndroidStorage.PickedFileTooLarge) {
                 _state.value = _state.value.copy(banner = Banner.Problem(e.message ?: "That file is too large."))
             } catch (e: Exception) {
@@ -151,7 +182,7 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
 
     /* ---- create ------------------------------------------------------------ */
 
-    fun createPadFromDevice(label: String, size: PadSize) {
+    fun createPadFromDevice(label: String, size: PadSize, recordBytes: Int? = null) {
         operate {
             val required = size.requiredSourceLength()
             val summary = withContext(Dispatchers.IO) {
@@ -165,6 +196,7 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
                         ),
                         encryptionBytes = size.encryptionBytes,
                         authRecords = size.authRecords,
+                        recordBytes = recordBytes,
                         witnessKind = WitnessKind.LOCAL,
                     ).pair
                 } finally {
@@ -178,7 +210,7 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun createPadFromFiles(label: String, size: PadSize, sources: List<PickedSource>) {
+    fun createPadFromFiles(label: String, size: PadSize, sources: List<PickedSource>, recordBytes: Int? = null) {
         operate {
             val required = size.requiredSourceLength()
             val summary = withContext(Dispatchers.IO) {
@@ -193,6 +225,7 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
                         sources = inputs,
                         encryptionBytes = size.encryptionBytes,
                         authRecords = size.authRecords,
+                        recordBytes = recordBytes,
                         witnessKind = WitnessKind.LOCAL,
                     ).pair
                 } finally {
@@ -260,6 +293,101 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /* ---- sealed transfer: RECEIVE a pad ------------------------------------- */
+
+    /** Begin the receive flow with a clean slate. The engine holds no state yet;
+     *  a receive request is only created when the operator asks for one. */
+    fun startReceive() {
+        _state.value = _state.value.copy(
+            backStack = _state.value.backStack + Screen.ReceivePad, banner = null, spt = SptUi(),
+        )
+    }
+
+    /** RECEIVER — publish a one-time receive request. The TPR2 code and the
+     *  twelve request words come back for the operator to share and compare. */
+    fun createReceiveRequest() {
+        operate {
+            val created = withContext(Dispatchers.IO) { engine.sptCreateReceiveRequest() }
+            _state.value = _state.value.copy(spt = _state.value.spt.copy(receiveRequest = created))
+        }
+    }
+
+    /** RECEIVER — open a sealed pad file the sender delivered, into a transient
+     *  session. No pad byte is saved yet; the confirmation ceremony comes first. */
+    fun openReceivedPackage(uri: Uri) {
+        operate {
+            val session = withContext(Dispatchers.IO) {
+                val bytes = AndroidStorage.readPicked(getApplication<Application>().contentResolver, uri)
+                engine.sptOpen(bytes)
+            }
+            _state.value = _state.value.copy(spt = _state.value.spt.copy(openSession = session))
+        }
+    }
+
+    /** RECEIVER — after the words match, CONSUME the request and import the pad.
+     *  On success the new pad is opened; the transient session is dropped. */
+    fun commitReceive(label: String) {
+        operate {
+            val session = _state.value.spt.openSession ?: return@operate
+            val summary = withContext(Dispatchers.IO) { engine.sptCommitReceive(session, label.ifBlank { "Pad" }) }
+            openPad(summary.pairId)
+            _state.value = _state.value.copy(banner = Banner.Added)
+        }
+    }
+
+    /* ---- sealed transfer: GIVE a pad ---------------------------------------- */
+
+    /** From a pad, choose how to hand it over (a file, or a sealed transfer). */
+    fun startGive() {
+        _state.value = _state.value.copy(
+            backStack = _state.value.backStack + Screen.GivePad, banner = null, spt = SptUi(),
+        )
+    }
+
+    /** Enter the sealed-transfer sender flow. */
+    fun startSendSealed() {
+        _state.value = _state.value.copy(
+            backStack = _state.value.backStack + Screen.SendSealed, banner = null, spt = SptUi(),
+        )
+    }
+
+    /** SENDER — decode the receiver's TPR2 code and return the twelve words to
+     *  compare. The canonical body is held for the seal step, never re-derived. */
+    fun reviewSealRequest(tpr2Text: String) {
+        operate {
+            val review = withContext(Dispatchers.IO) { engine.sptReviewRequest(tpr2Text.trim()) }
+            _state.value = _state.value.copy(spt = _state.value.spt.copy(sendReview = review))
+        }
+    }
+
+    /** SENDER — record the twelve-word match, then seal this pad to the request.
+     *  Returns the sealed package and the eight confirmation words to read aloud. */
+    fun sealPad(pairId: String) {
+        operate {
+            val review = _state.value.spt.sendReview ?: return@operate
+            val sealed = withContext(Dispatchers.IO) {
+                engine.sptConfirmRequest(review.canonicalBody)
+                engine.sptSeal(review.requestHashHex, pairId)
+            }
+            _state.value = _state.value.copy(spt = _state.value.spt.copy(sealed = sealed))
+        }
+    }
+
+    /** SENDER — write the sealed .tps2 to a location the operator chose. It is a
+     *  package sealed to the receiver's one-time key, safe to move over any
+     *  channel; only the intended receiver can open it. */
+    fun saveSealedPackage(uri: Uri) {
+        operate {
+            val sealed = _state.value.spt.sealed ?: return@operate
+            withContext(Dispatchers.IO) {
+                AndroidStorage.writePicked(getApplication<Application>().contentResolver, uri, sealed.packageBytes)
+            }
+            _state.value = _state.value.copy(
+                spt = _state.value.spt.copy(savedPackage = true), banner = Banner.SealedSaved,
+            )
+        }
+    }
+
     fun clearFreeze(pairId: String) {
         operate {
             val cleared = withContext(Dispatchers.IO) { engine.clearFreeze(pairId) }
@@ -308,6 +436,7 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
             backStack = listOf(Screen.Home, Screen.Pad),
             banner = null,
             lastResult = null,
+            spt = SptUi(),
         )
         refresh()
     }
@@ -320,7 +449,11 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
 
 /* ---- the UI's view of the world ------------------------------------------- */
 
-enum class Screen { Home, CreatePad, AddPad, Pad, Send, Open, Details, Remove }
+enum class Screen {
+    Home, CreatePad, AddPad, Pad, Send, Open, Details, Remove,
+    // Sealed Pad Transfer — the same SPT protocol the Browser Edition speaks.
+    ReceivePad, GivePad, SendSealed,
+}
 
 data class PickedSource(val uri: Uri, val name: String, val declaredOrigin: String)
 
@@ -361,7 +494,34 @@ sealed interface Banner {
     data object Added : Banner
     data object Exported : Banner
     data object Removed : Banner
+    data object SealedSaved : Banner
 }
+
+/**
+ * The transient state of ONE sealed-transfer flow, held in memory only.
+ *
+ * These carry secrets and one-shot cryptographic material — [SptOpenResult]
+ * holds the decrypted pad bytes before import — so they live here and nowhere
+ * durable, are never written to the saved-instance bundle, and are dropped the
+ * moment the flow ends or the operator navigates away. Every AUTHORITY (the
+ * durable receiver/claim/handoff/confirmed records) lives in the engine; this is
+ * only what the current screen needs to draw and to complete the next step.
+ */
+data class SptUi(
+    /** RECEIVER: the published receive request — its TPR2 code and the twelve
+     *  request words to compare aloud. */
+    val receiveRequest: SptCreateResult? = null,
+    /** RECEIVER: a sealed package opened into a transient session — carries the
+     *  eight confirmation words and, in memory only, the decrypted pad. */
+    val openSession: SptOpenResult? = null,
+    /** SENDER: a reviewed receive request — its twelve request words and the
+     *  canonical body to seal against. */
+    val sendReview: SptReviewResult? = null,
+    /** SENDER: the sealed package to hand over, plus its eight confirmation words. */
+    val sealed: SptSealResult? = null,
+    /** SENDER: true once the sealed .tps2 has been saved to a chosen location. */
+    val savedPackage: Boolean = false,
+)
 
 data class UiState(
     val loaded: Boolean = false,
@@ -373,6 +533,7 @@ data class UiState(
     val role: Party2 = Party2.A,
     val banner: Banner? = null,
     val lastResult: OpResult? = null,
+    val spt: SptUi = SptUi(),
 ) {
     val screen: Screen get() = backStack.last()
 
