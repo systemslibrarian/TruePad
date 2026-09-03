@@ -137,8 +137,22 @@ if echo "$requested" | grep -q 'android.permission.INTERNET'; then
 else
   ok "no INTERNET permission"
 fi
-unexpected="$(echo "$requested" | grep -v "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" | grep -v '^$' || true)"
-[ -z "$unexpected" ] && ok "no capability-granting permission requested" || bad "unexpected permissions: $unexpected"
+# CAMERA is the ONE intentional capability permission: the QR receive-code scan
+# (AndroidManifest, enforced by verifyReleaseManifest and ManifestHardeningTest).
+# It must be PRESENT — a QR scanner with no camera grant is a silent regression —
+# and it is the only capability grant allowed. The androidx.core self-permission
+# guards that library's own un-exported receivers and is not a capability. Any
+# other permission — above all INTERNET, checked separately above — is unexpected.
+if echo "$requested" | grep -q 'android.permission.CAMERA'; then
+  ok "the one intentional capability permission (CAMERA, for QR receive-code scanning) is present"
+else
+  bad "the CAMERA permission the QR scanner needs is missing"
+fi
+unexpected="$(echo "$requested" \
+  | grep -v 'DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION' \
+  | grep -v 'android.permission.CAMERA' \
+  | grep -v '^$' || true)"
+[ -z "$unexpected" ] && ok "no capability-granting permission beyond CAMERA" || bad "unexpected permissions: $unexpected"
 
 # What another app can actually resolve in this package.
 resolved="$("$ADB" shell cmd package query-activities --brief -a android.intent.action.SEND -t 'text/plain' 2>/dev/null | grep "$PKG" || true)"
