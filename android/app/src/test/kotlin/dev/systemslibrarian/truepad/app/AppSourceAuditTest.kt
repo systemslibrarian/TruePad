@@ -285,6 +285,13 @@ class AppSourceAuditTest {
             "physically proven", "proven random", "information-theoretically verified",
             "perfect secrecy achieved", "true otp verified", "information-theoretic security confirmed",
             "verified", "certified", "proven", "confirmed",
+            // 3.0 deployment overclaims. An Android pad is never the maximum-
+            // assurance profile, so any POSITIVE assertion of these is a lie; the
+            // honest deployment text asserts them only to DENY them, which the
+            // sentence-scoped negation check below allows.
+            "maximum assurance", "maximum-assurance", "gold standard", "gold-standard",
+            "perfect secrecy", "verified random", "certified entropy", "maximum security",
+            "shannon secure", "shannon-secure",
         )
         val negation = Regex(
             "\\bnever\\b|\\bnot\\b|\\bno\\b|\\bcannot\\b|\\bcan't\\b|\\bwithout\\b|\\bunverified\\b|\\bonly if\\b|\\bwould\\b",
@@ -324,5 +331,100 @@ class AppSourceAuditTest {
         assertTrue(Claims.OPERATOR_DECLARATION.contains("about this pad's material"))
         assertTrue(Claims.EXTERNAL_NOT_VERIFIED == "TruePad did not verify that assumption.")
         assertTrue(Claims.CEREMONY_COMBINER == "TruePad combines every selected source byte-for-byte using XOR.")
+    }
+
+    /* ---- 3.0 deployment-assurance guards ------------------------------------ */
+
+    /** The .kt sources of all three modules, comments stripped. */
+    private fun allModuleCode(): List<Pair<String, String>> {
+        val roots = listOf(File("src/main/kotlin"), File("../truepad-core/src/main"), File("../truepad-storage/src/main"))
+        return roots.flatMap { r -> r.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList() }
+            .map { it.path to it.code() }
+    }
+
+    /**
+     * NO PERSISTED VERDICT. The deployment classification is DERIVED on every
+     * summary from live facts (src/claims/shannon-deployment.ts's rule, ported to
+     * core/Deployment.kt) and is never written to any store. A self-certifying
+     * boolean would be exactly the overclaim the whole design refuses — software
+     * cannot establish the physical facts it would assert — so none may exist as
+     * an identifier anywhere in the shipped code.
+     */
+    @Test
+    fun noSelfCertifyingVerdictIdentifierExistsInShippedCode() {
+        val forbidden = listOf(
+            "shannonEligible", "goldStandard", "perfectSecrecy", "shannonSecure",
+            "maximumSecurity", "maximumAssurance", "trueRandom", "verifiedRandom",
+            "itCapable", "informationTheoretic",
+        )
+        for ((path, code) in allModuleCode()) {
+            for (id in forbidden) {
+                assertFalse("$path must not define/use the self-certifying identifier `$id`", code.contains(id))
+            }
+        }
+    }
+
+    /**
+     * THE WIRE KNOWS NOTHING ABOUT THE VERDICT. The two persisted formats —
+     * head.json (Store.serializeHead) and pair.json (writePairMeta) — must not
+     * serialize any deployment assessment. If a verdict ever leaked into a stored
+     * file it could be RESTORED to look stronger than the live facts warrant,
+     * which is the entire failure the derive-don't-store rule prevents.
+     */
+    @Test
+    fun theStoredFormatsSerializeNoDeploymentVerdict() {
+        val store = File("../truepad-storage/src/main/kotlin/dev/systemslibrarian/truepad/storage/Store.kt").code()
+        val meta = File("../truepad-storage/src/main/kotlin/dev/systemslibrarian/truepad/storage/Meta.kt").code()
+        // The serializers live in these files; neither may mention the verdict.
+        for (token in listOf("assessDeployment", "DeploymentAssessment", "Assessment", "eligible", "CONDITIONALLY")) {
+            assertFalse("Store.kt must not serialize a deployment verdict ($token)", store.contains(token))
+            assertFalse("Meta.kt must not serialize a deployment verdict ($token)", meta.contains(token))
+        }
+    }
+
+    /**
+     * NO PAD-DERIVED FINGERPRINT. TruePad never hashes pad/secret material into a
+     * persisted or displayed fingerprint: a fingerprint is a value derived from
+     * the secret, and storing one both leaks about the material and invites a
+     * "matched, therefore trusted" misreading. The OTP+WC construction needs no
+     * digest at all (authentication is POLYVAL over GF(2^128), in Gf128.kt), so a
+     * general-purpose hash has no legitimate place in these modules.
+     */
+    @Test
+    fun noPadDerivedFingerprintIsComputedOrPersisted() {
+        val banned = listOf("MessageDigest", ".digest(", "fingerprint", "sha256", "sha-256", "SHA-256", "SHA256")
+        for ((path, code) in allModuleCode()) {
+            for (b in banned) {
+                assertFalse("$path must not compute/persist a pad-derived fingerprint ($b)", code.contains(b))
+            }
+        }
+    }
+
+    /**
+     * THE UI SHOWS ONLY THE EVALUATOR'S LABEL. The security screen must render the
+     * deployment assessment from the engine's DERIVED result (core ASSESSMENT_LABEL
+     * over the value assessDeployment produced), never a hand-typed stronger label.
+     * In particular an Android pad can NEVER be CONDITIONALLY ELIGIBLE, so that
+     * exact string must not appear as a literal anywhere in the app UI, and the
+     * screen must go through ASSESSMENT_LABEL.
+     */
+    @Test
+    fun theUiNeverHardCodesAStrongerAssessmentThanTheEvaluatorProduces() {
+        for (f in appSources) {
+            val code = f.code()
+            assertFalse(
+                "${f.name} must not hard-code the CONDITIONALLY ELIGIBLE label (an Android pad never earns it)",
+                code.contains("CONDITIONALLY ELIGIBLE"),
+            )
+        }
+        val screens = appSources.single { it.name == "Screens.kt" }.code()
+        assertTrue(
+            "the security screen must render the assessment via the evaluator's ASSESSMENT_LABEL",
+            screens.contains("ASSESSMENT_LABEL"),
+        )
+        // And it must show the honest per-label reason and the ceiling text, so the
+        // label is never displayed alone.
+        assertTrue("the security screen must show the assessment reason", screens.contains("knownReason"))
+        assertTrue("the security screen must show the Android ceiling text", screens.contains("DEPLOYMENT_CONTEXT"))
     }
 }
