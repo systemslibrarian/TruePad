@@ -1,0 +1,120 @@
+# CodeQL — ADVANCED setup.
+#
+# This replaces GitHub's default (dynamic) CodeQL setup, which analyzed
+# JavaScript/TypeScript and Actions fine but FAILED on Java/Kotlin: default setup
+# analyses Kotlin with build-mode `none` (buildless), and CodeQL cannot extract an
+# Android Gradle project that way —
+#
+#   "Detected 57 Kotlin files in your project that could not be processed without
+#    a build."
+#
+# That was a CI extraction/configuration failure, not a security finding: it
+# failed at `codeql database init`, before any query ran. The fix is to analyze
+# Java/Kotlin with a REAL build. Default setup is disabled (one configuration, no
+# overlapping/contradictory scans); this workflow reproduces the Android CI's
+# proven build so the Kotlin is genuinely compiled and extracted.
+#
+# actions + javascript-typescript keep build-mode `none` (they need no build and
+# succeeded under default setup); only java-kotlin gets the explicit build.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    # Weekly baseline scan (Mondays), independent of pushes.
+    - cron: '27 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      # Upload the analysis results.
+      security-events: write
+      # java-kotlin extraction may resolve GitHub-hosted packages.
+      packages: read
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: java-kotlin
+            build-mode: manual
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---- Java/Kotlin manual-build prerequisites (Android Gradle) ----
+      # Reuse exactly what the Android CI (`.github/workflows/android.yml`) does,
+      # so CodeQL builds the project the same proven way.
+
+      - name: Set up JDK 21 (Temurin) — matches Android CI
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        if: matrix.language == 'java-kotlin'
+        uses: gradle/actions/setup-gradle@v4
+
+      # gradle.properties pins org.gradle.java.home to a macOS Android Studio JBR
+      # so local Mac builds need no registered system JDK. That path does not
+      # exist on the Linux runner, so point Gradle at the JDK setup-java installed
+      # — the identical mechanism android.yml uses. The useful local pin is left
+      # in the repo; only this Linux checkout's copy is rewritten.
+      - name: Use the CI JDK instead of the local Android Studio JBR
+        if: matrix.language == 'java-kotlin'
+        working-directory: android
+        run: sed -i "s|^org.gradle.java.home=.*|org.gradle.java.home=${JAVA_HOME}|" gradle.properties
+
+      - name: Set up the Android SDK
+        if: matrix.language == 'java-kotlin'
+        uses: android-actions/setup-android@v3
+
+      - name: Install the pinned SDK components
+        if: matrix.language == 'java-kotlin'
+        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0" > /dev/null
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      # Compile EVERY Kotlin source set (main + test + androidTest, all three
+      # modules) so CodeQL's build tracer extracts all of it. --no-daemon keeps
+      # the compiler in a traced process; --rerun-tasks --no-build-cache force a
+      # fresh compile so nothing is silently UP-TO-DATE and therefore un-extracted.
+      - name: Build Android Kotlin for CodeQL extraction
+        if: matrix.build-mode == 'manual'
+        working-directory: android
+        run: |
+          ./gradlew --no-daemon --no-build-cache --rerun-tasks \
+            :truepad-core:compileKotlin :truepad-core:compileTestKotlin \
+            :truepad-storage:compileKotlin :truepad-storage:compileTestKotlin \
+            :app:compileDebugKotlin :app:compileDebugUnitTestKotlin :app:compileDebugAndroidTestKotlin \
+            --console=plain --stacktrace
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
