@@ -1,5 +1,6 @@
 package dev.systemslibrarian.truepad.app
 
+import dev.systemslibrarian.truepad.storage.DEVICE_SOURCE_NAME_WIRE
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -426,5 +427,35 @@ class AppSourceAuditTest {
         // label is never displayed alone.
         assertTrue("the security screen must show the assessment reason", screens.contains("knownReason"))
         assertTrue("the security screen must show the Android ceiling text", screens.contains("DEPLOYMENT_CONTEXT"))
+    }
+
+    /**
+     * THE DEVICE-SOURCE NAME IS ONE FACT IN TWO PLACES, AND THEY MUST AGREE.
+     *
+     * The deployment source class is `software-csprng` (a hard NOT ELIGIBLE) iff
+     * every declared source is named with the platform-CSPRNG wire name. That name
+     * is declared twice — `Claims.DEVICE_SOURCE_NAME` (what the generator writes)
+     * and `DEVICE_SOURCE_NAME_WIRE` (what the fact assembly matches). If those two
+     * ever diverged, or if the device generator stopped using the constant, a
+     * device-CSPRNG pad would silently launder from NOT ELIGIBLE up to INSUFFICIENT
+     * EVIDENCE with no other test noticing. Pin both here.
+     */
+    @Test
+    fun theDeviceSourceNameIsPinnedAcrossModulesAndUsedByTheGenerator() {
+        assertEquals(
+            "the classifier's device-source name must equal the name the generator writes",
+            DEVICE_SOURCE_NAME_WIRE,
+            Claims.DEVICE_SOURCE_NAME,
+        )
+        val vm = appSources.single { it.name == "PadViewModel.kt" }.code()
+        val deviceFn = vm.substringAfter("fun createPadFromDevice").substringBefore("fun createPadFromFiles")
+        assertTrue(
+            "createPadFromDevice must name its source with the shared constant, not a literal or operator-supplied string",
+            deviceFn.contains("SourceInput(Claims.DEVICE_SOURCE_NAME"),
+        )
+        assertFalse(
+            "createPadFromDevice must not name its device source with a raw string literal",
+            deviceFn.contains("SourceInput(\"device-random\""),
+        )
     }
 }

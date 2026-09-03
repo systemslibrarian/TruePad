@@ -50,3 +50,20 @@ else
   diff -ru "$android/vectors" "$out" -x deployment-evaluator-v3.json >&2 || true
   exit 1
 fi
+
+# The deployment-evaluator corpus is not a wire vector, but the Android JVM
+# conformance test reads the android/vectors/ copy while the canonical copy the
+# TS derives lives at repo-root test-vectors/. Pin them byte-identical here too,
+# so the Android side proves its own corpus is the canonical one rather than
+# leaning entirely on the TS suite to notice a drift.
+canonical="$repo/test-vectors/deployment-evaluator-v3.json"
+androidcopy="$android/vectors/deployment-evaluator-v3.json"
+if [[ -f "$canonical" && -f "$androidcopy" ]]; then
+  if cmp -s "$canonical" "$androidcopy"; then
+    echo "deployment-evaluator corpus is byte-identical to the canonical test-vectors/ copy"
+  else
+    echo "DEPLOYMENT CORPUS DRIFT: android/vectors/ copy differs from test-vectors/ canonical:" >&2
+    diff -u "$canonical" "$androidcopy" >&2 || true
+    exit 1
+  fi
+fi

@@ -8,3 +8,8 @@ local.properties
 .kotlin/
 captures/
 .cxx/
+# Signing material must never be committed. The release build is unsigned and no
+# signing config exists; these keep a local keystore from ever being added by name.
+*.keystore
+*.jks
+keystore.properties
