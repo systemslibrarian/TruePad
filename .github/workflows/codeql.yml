@@ -110,6 +110,7 @@ jobs:
         run: |
           ./gradlew --no-daemon --no-build-cache --rerun-tasks \
             :truepad-core:compileKotlin :truepad-core:compileTestKotlin \
+            :truepad-spt:compileKotlin :truepad-spt:compileTestKotlin \
             :truepad-storage:compileKotlin :truepad-storage:compileTestKotlin \
             :app:compileDebugKotlin :app:compileDebugUnitTestKotlin :app:compileDebugAndroidTestKotlin \
             --console=plain --stacktrace
