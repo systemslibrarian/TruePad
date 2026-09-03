@@ -161,6 +161,11 @@ fun ReceivePadScreen(state: UiState, vm: PadViewModel) {
             context.shareReceiveCode(request.tpr2Text)
         }
     }
+    // If the sender is nearby, they can scan this instead of pasting it.
+    Details("Show as a QR code") {
+        Muted("Hold this up for the sender to scan with their camera.")
+        TprQrCode(request.tpr2Text)
+    }
 
     ComparisonWords(request.requestIndices, "Compare these words", "receive-request-words")
     Muted("When the sender reviews your code, these twelve words appear on their device too. Read them to each other to be sure the code arrived unchanged.")
@@ -255,20 +260,20 @@ fun SendSealedScreen(state: UiState, vm: PadViewModel) {
     if (review == null) {
         // Stage 1 — paste the receiver's code.
         var code by remember { mutableStateOf("") }
-        Body("Ask the other person for their receive code and paste it here.")
+        Body("Ask the other person for their receive code. If they are nearby, scan their QR code; otherwise paste the code they sent you.")
+        PrimaryButton("Scan QR code", Modifier.testTag("btn-scan-qr"), busy = state.busy) { vm.scanReceiveCode() }
         OutlinedTextField(
             value = code,
             onValueChange = { code = it },
-            label = { Text("Receive code") },
+            label = { Text("…or paste the receive code") },
             placeholder = { Text("Paste the TPR2: code here…") },
             minLines = 3,
             modifier = Modifier.fillMaxWidth().testTag("field-receive-code"),
         )
-        PrimaryButton(
-            text = "Review this code",
+        SecondaryButton(
+            text = "Review pasted code",
             modifier = Modifier.testTag("btn-review-code"),
             enabled = code.isNotBlank(),
-            busy = state.busy,
         ) {
             vm.reviewSealRequest(code)
         }

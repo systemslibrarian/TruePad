@@ -165,7 +165,22 @@ class AppSourceAuditTest {
         }
         val manifestText = xmlCode(manifest)
         assertFalse("no INTERNET permission", manifestText.contains("android.permission.INTERNET"))
-        assertFalse("no permission of any kind", manifestText.contains("<uses-permission"))
+        assertFalse(
+            "no network-state permission",
+            manifestText.contains("android.permission.ACCESS_NETWORK_STATE"),
+        )
+        // Exactly one capability-granting permission is allowed — CAMERA, to scan
+        // a receive-code QR — and nothing else. Enumerate every uses-permission in
+        // the source manifest and require each to be that one; a second permission
+        // (or a sneaked-in INTERNET) fails here, in a plain JVM test, before any
+        // device is involved.
+        val permissions = Regex("<uses-permission[^>]*android:name=\"([^\"]+)\"")
+            .findAll(manifestText).map { it.groupValues[1] }.toList()
+        assertEquals(
+            "the source manifest declares only CAMERA",
+            listOf("android.permission.CAMERA"),
+            permissions,
+        )
         assertTrue("cleartext traffic is off", manifestText.contains("android:usesCleartextTraffic=\"false\""))
     }
 

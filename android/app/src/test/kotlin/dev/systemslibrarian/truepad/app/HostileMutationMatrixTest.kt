@@ -152,9 +152,13 @@ class HostileMutationMatrixTest {
             add(posture("allowBackup flipped to true",
                 manifest.contains("android:allowBackup=\"false\""),
                 !manifest.replace("android:allowBackup=\"false\"", "android:allowBackup=\"true\"").contains("android:allowBackup=\"false\"")))
+            // The posture is no longer "no permission at all" — CAMERA is allowed,
+            // to scan a receive-code QR — but INTERNET must never appear. The guard
+            // (AppSourceAuditTest / verifyReleaseManifest) permits only CAMERA, so
+            // an added INTERNET is caught; this pins that specific mutation.
             add(posture("INTERNET permission added",
-                !manifest.contains("<uses-permission"),
-                (manifest.replace("<application", "<uses-permission android:name=\"android.permission.INTERNET\"/>\n    <application")).contains("<uses-permission")))
+                !manifest.contains("android.permission.INTERNET") && manifest.contains("android.permission.CAMERA"),
+                (manifest.replace("<application", "<uses-permission android:name=\"android.permission.INTERNET\"/>\n    <application")).contains("android.permission.INTERNET")))
             add(posture("FLAG_SECURE removed from the window",
                 mainActivity.contains("WindowManager.LayoutParams.FLAG_SECURE"),
                 !mainActivity.replace("WindowManager.LayoutParams.FLAG_SECURE", "0 /* removed */").contains("WindowManager.LayoutParams.FLAG_SECURE")))

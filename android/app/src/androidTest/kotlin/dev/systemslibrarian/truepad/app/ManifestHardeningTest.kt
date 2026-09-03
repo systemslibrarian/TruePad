@@ -44,7 +44,14 @@ class ManifestHardeningTest {
     @Test
     fun theAppRequestsNoCapabilityGrantingPermission() {
         val requested = info(PackageManager.GET_PERMISSIONS).requestedPermissions?.toList() ?: emptyList()
-        val allowed = setOf("$pkg.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION")
+        // CAMERA is allowed — and only CAMERA — because scanning a receive-code
+        // QR needs it. It grants no network and no storage; the frames are
+        // decoded in-process and discarded. The self-permission androidx.core
+        // adds is a hardening measure, not a capability.
+        val allowed = setOf(
+            android.Manifest.permission.CAMERA,
+            "$pkg.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+        )
         val unexpected = requested.filterNot { it in allowed }
         assertTrue("unexpected permissions in the merged manifest: $unexpected", unexpected.isEmpty())
 

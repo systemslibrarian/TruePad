@@ -76,6 +76,7 @@ fun TruePadRoot(state: UiState, vm: PadViewModel) {
                     Screen.ReceivePad -> ReceivePadScreen(state, vm)
                     Screen.GivePad -> GivePadScreen(state, vm)
                     Screen.SendSealed -> SendSealedScreen(state, vm)
+                    Screen.ScanQr -> QrScanScreen(state, vm)
                 }
                 Spacer(Modifier.height(40.dp))
             }

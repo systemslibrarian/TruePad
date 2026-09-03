@@ -175,12 +175,18 @@ val verifyReleaseManifest = tasks.register("verifyReleaseManifest") {
             }
         }
 
-        // No permission at all, except the signature-level self-permission
-        // androidx.core defines to keep its own dynamic receivers un-exported.
+        // Only two permissions may appear: CAMERA (to scan a receive-code QR),
+        // and the signature-level self-permission androidx.core defines to keep
+        // its own dynamic receivers un-exported. Anything else — above all
+        // INTERNET — fails the build.
+        val allowedPermissions = setOf(
+            "android.permission.CAMERA",
+            "dev.systemslibrarian.truepad.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+        )
         val uses = xml.getElementsByTagName("uses-permission")
         for (i in 0 until uses.length) {
             val name = attr(uses.item(i), "name") ?: continue
-            if (name != "dev.systemslibrarian.truepad.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION") {
+            if (name !in allowedPermissions) {
                 problems += "uses-permission: $name"
             }
         }
@@ -193,7 +199,7 @@ val verifyReleaseManifest = tasks.register("verifyReleaseManifest") {
         if (problems.isNotEmpty()) {
             throw GradleException("release manifest hardening failed:\n  " + problems.joinToString("\n  "))
         }
-        logger.lifecycle("release manifest: one exported component, no permissions, backup off")
+        logger.lifecycle("release manifest: one exported component, only CAMERA, no INTERNET, backup off")
     }
 }
 
@@ -205,6 +211,16 @@ afterEvaluate {
 dependencies {
     // THE ENGINE. Everything security-bearing comes from here.
     implementation(project(":truepad-storage"))
+
+    // TPR2 QR — encode the PUBLIC receive code to a symbol, decode a scanned
+    // frame back to text (ZXing core, pure Java, no network, no Play Services),
+    // with CameraX for the preview and frame analysis. Reached only by the
+    // sealed-transfer screens; the strict TPR2 parser validates every scan.
+    implementation(libs.zxing.core)
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

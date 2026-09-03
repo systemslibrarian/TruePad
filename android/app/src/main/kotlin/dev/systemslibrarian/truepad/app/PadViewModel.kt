@@ -351,6 +351,22 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /** Open the camera scanner from the send flow. */
+    fun scanReceiveCode() {
+        _state.value = _state.value.copy(backStack = _state.value.backStack + Screen.ScanQr, banner = null)
+    }
+
+    /** SENDER — a receive code arrived from the QR scanner: leave the scanner and
+     *  review it through the SAME strict path a pasted code takes. A QR that is
+     *  not a canonical receive code is refused by the review, exactly like a bad
+     *  paste. */
+    fun reviewFromScan(tpr2Text: String) {
+        val stack = _state.value.backStack
+        val popped = if (stack.lastOrNull() == Screen.ScanQr) stack.dropLast(1) else stack
+        _state.value = _state.value.copy(backStack = popped, banner = null)
+        reviewSealRequest(tpr2Text)
+    }
+
     /** SENDER — decode the receiver's TPR2 code and return the twelve words to
      *  compare. The canonical body is held for the seal step, never re-derived. */
     fun reviewSealRequest(tpr2Text: String) {
@@ -452,7 +468,7 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
 enum class Screen {
     Home, CreatePad, AddPad, Pad, Send, Open, Details, Remove,
     // Sealed Pad Transfer — the same SPT protocol the Browser Edition speaks.
-    ReceivePad, GivePad, SendSealed,
+    ReceivePad, GivePad, SendSealed, ScanQr,
 }
 
 data class PickedSource(val uri: Uri, val name: String, val declaredOrigin: String)

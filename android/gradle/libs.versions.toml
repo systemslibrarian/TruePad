@@ -32,6 +32,15 @@ uiautomator = "2.3.0"
 # never clashes with Android's bundled org.bouncycastle. Bouncy Castle Licence
 # (MIT/X11 adaptation) — AGPL-3.0-only compatible.
 bouncycastle = "1.85.2"
+# ZXing core — the TPR2 QR encoder/decoder. Pure Java, Apache-2.0, no transitive
+# dependencies, no network, no Google Play Services. Encodes the PUBLIC receive
+# code to a symbol and decodes a scanned frame back to text; the strict TPR2
+# parser validates whatever it returns, so a mis-scan is refused, never trusted.
+zxing = "3.5.3"
+# CameraX (AndroidX Jetpack) — the camera preview + frame analysis for scanning
+# the receive-code QR. No Play Services. Bound to the single existing activity's
+# lifecycle so the camera is released when the scan screen leaves.
+camerax = "1.4.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -58,6 +67,11 @@ androidx-test-rules = { group = "androidx.test", name = "rules", version.ref = "
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso" }
 androidx-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "uiautomator" }
 bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
+androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
+androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
+androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
+androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

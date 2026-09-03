@@ -3,11 +3,14 @@
   TruePad Android — the whole attack surface this app offers the rest of the
   device. Read it as a list of what is deliberately ABSENT.
 
-  NO <uses-permission> AT ALL. Not INTERNET, not storage. The app has no
-  backend, and every file it touches is either app-private or one the operator
-  picked in the system file picker, which grants access per-URI without a
-  permission. A permission added later is a visible diff and a failing test
-  (ManifestHardeningTest).
+  ONE capability-granting permission, and only one: CAMERA. It exists solely to
+  scan a receive-code QR (Sealed Pad Transfer) — a QR the other person shows,
+  read in-process and discarded. NOT INTERNET, not storage, not network state.
+  The app still has no backend; every file it touches is either app-private or
+  one the operator picked in the system file picker, which grants access per-URI
+  without a permission. Any OTHER permission added later is a visible diff and a
+  failing test (ManifestHardeningTest / verifyReleaseManifest), which allow only
+  CAMERA and the signature-level self-permission — never INTERNET.
 
   NO exported component except the launcher activity, which must be exported to
   appear in the launcher at all. No service, no receiver, NO PROVIDER.
@@ -24,6 +27,17 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      CAMERA — the ONLY capability-granting permission. It is used exclusively to
+      scan a receive-code QR: the camera frames are analysed in-process by ZXing
+      and discarded, they never leave the device (there is no INTERNET to carry
+      them), and the camera is bound to the scan screen's own lifecycle so it is
+      released the instant that screen leaves. The feature is NOT required, so a
+      device with no camera still installs and uses the paste path.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <application
         android:name=".TruePadApp"

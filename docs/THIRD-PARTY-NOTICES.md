@@ -194,3 +194,34 @@ Browser Edition, byte-for-byte, at
 provenance and MIT notice at
 `android/truepad-spt/src/main/resources/COMPARISON-WORDS-PROVENANCE.md` and its
 SHA-256 pinned by `ComparisonWordsTest`.
+
+### TPR2 QR — encode and scan (Android)
+
+The Android Edition offers the same TPR2 QR workflow as the Browser Edition: the
+receiver can show the PUBLIC receive code as a QR, and the sender can scan it.
+Where the browser uses `qrcode-generator` + `jsQR`, the Android app uses ZXing
+for both encode and decode and AndroidX CameraX for the camera. Both are
+reached ONLY through Sealed Pad Transfer. A scanned string is handed to the same
+strict TPR2 parser a pasted code is, so a mis-scan is refused, never trusted, and
+the camera frames are analysed in-process and discarded — the app has no
+INTERNET permission for them to leave by.
+
+#### ZXing core
+
+- **Package:** `com.google.zxing:core` **3.5.3** (exact pin). Pure Java, no
+  transitive dependencies, no network, no Google Play Services.
+- **Repository:** https://github.com/zxing/zxing
+- **License:** Apache-2.0.
+
+#### AndroidX CameraX
+
+- **Packages:** `androidx.camera:camera-core`, `camera-camera2`,
+  `camera-lifecycle`, `camera-view` — all **1.4.1** (exact pin). Standard Jetpack
+  libraries; the camera2 backend uses the platform Camera2 API, not Google Play
+  Services.
+- **Repository:** https://android.googlesource.com/platform/frameworks/support
+- **License:** Apache-2.0.
+
+Both are licensed under the Apache License, Version 2.0. The full license text is
+reproduced above (see jsQR) and is available at
+`http://www.apache.org/licenses/LICENSE-2.0`.
