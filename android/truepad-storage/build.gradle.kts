@@ -24,6 +24,11 @@ kotlin {
 
 dependencies {
     api(project(":truepad-core"))
+    // The SPT crypto + durable protocol (X-Wing via Bouncy Castle). The frozen
+    // OTP crypto/verbs in this module are untouched; only the added SPT
+    // orchestration (SptEngine.kt) composes this module's store with the SPT
+    // layer, exactly as the browser's spt-verbs sits beside its store.
+    api(project(":truepad-spt"))
     testImplementation(libs.junit)
 }
 

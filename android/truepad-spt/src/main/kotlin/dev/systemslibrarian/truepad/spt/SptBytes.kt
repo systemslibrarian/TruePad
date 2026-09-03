@@ -66,13 +66,13 @@ private val B64URL_ALPHABET = Regex("^[A-Za-z0-9_-]*$")
 internal fun isBase64UrlAlphabet(text: String): Boolean = B64URL_ALPHABET.matches(text)
 
 /** Canonical UNPADDED base64url (RFC 4648 §5), matching src/spt/bytes.ts. */
-internal fun toBase64Url(bytes: ByteArray): String =
+fun toBase64Url(bytes: ByteArray): String =
     Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 
 /** Decode canonical unpadded base64url. Returns null on any non-alphabet input
  *  or a decode failure. The CANONICAL check (re-encode and compare) is the
  *  caller's, exactly as in the TS decoder. */
-internal fun fromBase64Url(text: String): ByteArray? {
+fun fromBase64Url(text: String): ByteArray? {
     if (!isBase64UrlAlphabet(text)) return null
     return try {
         Base64.getUrlDecoder().decode(text)

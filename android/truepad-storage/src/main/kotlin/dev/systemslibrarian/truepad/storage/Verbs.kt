@@ -160,20 +160,20 @@ class ExportResult(val container: ByteArray, val fileCount: Int)
  *   the engine never manufactures a pad byte.
  */
 class Engine(
-    private val fs: Fs,
+    internal val fs: Fs,
     private val witnessFs: Fs = fs,
-    private val clock: () -> Instant = { Instant.now() },
+    internal val clock: () -> Instant = { Instant.now() },
     private val pairIdSource: () -> ByteArray = { ByteArray(16).also { SECURE_RANDOM.nextBytes(it) } },
 ) {
     private companion object {
         val SECURE_RANDOM = SecureRandom()
     }
 
-    private fun now(): String = isoNow(clock())
+    internal fun now(): String = isoNow(clock())
 
     /* ---- pair gates & metadata ---------------------------------------------- */
 
-    private fun requireNotDestroyed(pairId: String) {
+    internal fun requireNotDestroyed(pairId: String) {
         if (fs.exists(tombstonePath(pairId))) {
             throw EngineRefused(
                 "pair-destroyed",
@@ -184,7 +184,7 @@ class Engine(
         }
     }
 
-    private fun requireImportComplete(pairId: String) {
+    internal fun requireImportComplete(pairId: String) {
         if (fs.exists(importMarkerPath(pairId))) {
             throw EngineRefused(
                 "import-incomplete",
@@ -207,7 +207,7 @@ class Engine(
         }
     }
 
-    private fun requirePair(pairId: String) {
+    internal fun requirePair(pairId: String) {
         refuseIfV1(pairId)
         val abHead = fs.exists(filePath(storeDir(pairId, Direction.A_TO_B), HEAD_FILE))
         val baHead = fs.exists(filePath(storeDir(pairId, Direction.B_TO_A), HEAD_FILE))
@@ -234,7 +234,7 @@ class Engine(
      * anything else, then v1/wholeness, then both halves load. Both halves are
      * loaded even for single-direction verbs because the freeze is pair-wide.
      */
-    private fun loadPair(pairId: String): Map<Direction, LoadedStore> {
+    internal fun loadPair(pairId: String): Map<Direction, LoadedStore> {
         requireNotDestroyed(pairId)
         requireImportComplete(pairId)
         requirePair(pairId)
@@ -280,7 +280,7 @@ class Engine(
 
     /* ---- meters & summaries -------------------------------------------------- */
 
-    private fun directionMeters(store: LoadedStore, kind: WitnessKind, origin: PairOrigin): DirectionMeters {
+    private fun directionMeters(store: LoadedStore, kind: WitnessKind, origin: PairOrigin, sealedAncestor: Boolean): DirectionMeters {
         val h = store.head
         val e = store.effective
         val remainingBytes = h.capacity - e.nextOffset
@@ -296,7 +296,7 @@ class Engine(
         // the live facts assembled under this same lock (source declarations,
         // provenance, witness kind/state). The evaluator is core.assessDeployment,
         // the ONE authority; the Android facts can never reach the strongest verdict.
-        val facts = deploymentFactsFor(h.sourceDeclarations, origin, kind, state)
+        val facts = deploymentFactsFor(h.sourceDeclarations, origin, kind, state, sealedAncestor)
         return DirectionMeters(
             direction = h.direction,
             capacity = h.capacity, nextOffset = e.nextOffset, remainingBytes = remainingBytes,
@@ -314,12 +314,16 @@ class Engine(
     private fun buildSummary(pairId: String): PairSummary {
         val pair = loadPair(pairId)
         val meta = readPairMeta(fs, pairId)
+        // The sealed-ancestry fact, read once under this lock: a pad whose durable
+        // consumed.json marker names it arrived by sealed transfer (computational
+        // delivery => NOT ELIGIBLE, permanently). Same value for both directions.
+        val sealedAncestor = sptPairArrivedSealed(pairId)
         return PairSummary(
             pairId = pairId, label = meta.label, createdAt = meta.createdAt, destroyed = false,
             origin = meta.origin,
             meters = mapOf(
-                Direction.A_TO_B to directionMeters(pair.getValue(Direction.A_TO_B), meta.witness, meta.origin),
-                Direction.B_TO_A to directionMeters(pair.getValue(Direction.B_TO_A), meta.witness, meta.origin),
+                Direction.A_TO_B to directionMeters(pair.getValue(Direction.A_TO_B), meta.witness, meta.origin, sealedAncestor),
+                Direction.B_TO_A to directionMeters(pair.getValue(Direction.B_TO_A), meta.witness, meta.origin, sealedAncestor),
             ),
         )
     }
@@ -969,7 +973,7 @@ class Engine(
     /** The EXACT six-file courier container, read from the LIVE store. It mutates
      *  NO handoff state, and carries exactly the six FORMAT-V2 files — never
      *  pair.json, never the handoff record, never provenance, never witness data. */
-    private fun buildLiveCourierContainer(pairId: String): ByteArray {
+    internal fun buildLiveCourierContainer(pairId: String): ByteArray {
         val files = BUNDLE_FILES.map { rel ->
             val bytes = fs.readFile("$pairId/$rel")
                 ?: throw EngineRefused("corrupt-store", "$rel is missing; the pair is not whole. Nothing was exported.")

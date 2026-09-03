@@ -217,7 +217,13 @@ class DestructionAndSecretsTest {
      */
     @Test
     fun theEngineHasNoLoggingTelemetryOrNetworkSurface() {
-        val roots = listOf(File("src/main/kotlin"), File("../truepad-core/src/main/kotlin"))
+        // The SPT module (truepad-spt) is part of the engine now, so it is scanned
+        // too. It uses X-Wing via Bouncy Castle and JCA — crypto, never network.
+        val roots = listOf(
+            File("src/main/kotlin"),
+            File("../truepad-core/src/main/kotlin"),
+            File("../truepad-spt/src/main/kotlin"),
+        )
         val sources = roots.flatMap { it.walkTopDown().filter { f -> f.extension == "kt" }.toList() }
         assertTrue("the audit must actually find sources", sources.size >= 10)
 
@@ -230,18 +236,28 @@ class DestructionAndSecretsTest {
         for (f in sources) {
             val text = f.readText()
             for (b in banned) {
-                assertFalse("${f.name} must not reference $b", text.contains(b))
+                // Word-boundary match: `print(` must not match the legitimate
+                // `requestFingerprint(`, only a real print statement.
+                val re = Regex("(?<![A-Za-z0-9_.])" + Regex.escape(b))
+                assertFalse("${f.name} must not reference $b", re.containsMatchIn(text))
             }
         }
 
-        // And no production dependency can bring one in: both modules depend on
-        // the Kotlin stdlib and each other, and nothing else.
-        for (g in listOf(File("build.gradle.kts"), File("../truepad-core/build.gradle.kts"))) {
+        // And no production dependency can bring one in. The intended graph:
+        //   core    -> (nothing)
+        //   spt     -> core + Bouncy Castle (the X-Wing/ML-KEM provider)
+        //   storage -> core + spt
+        val allowed = setOf(
+            "api(project(\":truepad-core\"))",
+            "api(project(\":truepad-spt\"))",
+            "implementation(libs.bouncycastle.bcprov)",
+        )
+        for (g in listOf(File("build.gradle.kts"), File("../truepad-core/build.gradle.kts"), File("../truepad-spt/build.gradle.kts"))) {
             val deps = g.readText().substringAfter("dependencies {").substringBefore("}")
             for (line in deps.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("//") }) {
                 assertTrue(
                     "unexpected production dependency in ${g.path}: $line",
-                    line.startsWith("testImplementation") || line == "api(project(\":truepad-core\"))",
+                    line.startsWith("testImplementation") || line in allowed,
                 )
             }
         }

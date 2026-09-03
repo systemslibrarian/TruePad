@@ -58,12 +58,16 @@ private fun healthOf(state: WitnessState): WitnessHealth = when (state) {
  * @param origin the pair's recorded provenance (pair.json), never inferred.
  * @param witnessKind the live witness kind (pair.json), never the frozen head.
  * @param witnessState the live witness comparison for this direction.
+ * @param sealedAncestor true iff this pad arrived by sealed transfer (a durable
+ *   consumed.json marker names it) — a PERMANENT, computational-delivery fact that
+ *   forces NOT ELIGIBLE and can never be laundered away by re-import/QR/wording.
  */
 fun deploymentFactsFor(
     sourceDeclarations: List<SourceDeclaration>,
     origin: PairOrigin,
     witnessKind: WitnessKind,
     witnessState: WitnessState,
+    sealedAncestor: Boolean = false,
 ): DeploymentFacts {
     // Source premise B/C. Derived from HOW the pad was actually made: every source
     // is the platform CSPRNG -> software-csprng (a hard disqualifier); at least one
@@ -83,28 +87,34 @@ fun deploymentFactsFor(
     // no sealed .tps2 delivery) and never claims a private-handoff ceremony premise.
     val creation: CreationClass
     val delivery: DeliveryClass
-    val sealed: SealedAncestor
+    val originSealed: SealedAncestor
     val premises: CeremonyPremises
     when (origin) {
         PairOrigin.GENERATED_HERE -> {
             creation = CreationClass.UNKNOWN
             delivery = DeliveryClass.LOCAL_ONLY
-            sealed = SealedAncestor.NO
+            originSealed = SealedAncestor.NO
             premises = CeremonyPremises.ABSENT
         }
         PairOrigin.IMPORTED -> {
             creation = CreationClass.IMPORTED
             delivery = DeliveryClass.RAW_IMPORT_UNKNOWN
-            sealed = SealedAncestor.UNKNOWN
+            originSealed = SealedAncestor.UNKNOWN
             premises = CeremonyPremises.UNKNOWN
         }
         PairOrigin.UNKNOWN -> {
             creation = CreationClass.UNKNOWN
             delivery = DeliveryClass.UNKNOWN
-            sealed = SealedAncestor.UNKNOWN
+            originSealed = SealedAncestor.UNKNOWN
             premises = CeremonyPremises.UNKNOWN
         }
     }
+    // A durable sealed-delivery marker is a HARD, permanent fact: a pad received by
+    // .tps2 is computationally delivered and NOT ELIGIBLE, and that can never be
+    // laundered upward. When present it forces sealedAncestor YES and the delivery
+    // class to sealed-tps2, both of which the evaluator treats as disqualifying.
+    val sealed = if (sealedAncestor) SealedAncestor.YES else originSealed
+    val effectiveDelivery = if (sealedAncestor) DeliveryClass.SEALED_TPS2 else delivery
 
     // Rollback authority — the LIVE fact. The android-local-witness is a genuine
     // separate-state-file (its journal lives outside the backed-up tree), but it
@@ -119,7 +129,7 @@ fun deploymentFactsFor(
     return DeploymentFacts(
         creation = creation,
         source = source,
-        delivery = delivery,
+        delivery = effectiveDelivery,
         sealedAncestor = sealed,
         ceremonyPremises = premises,
         storage = StorageAuthority.NATIVE,
