@@ -26,6 +26,12 @@ androidxTestRunner = "1.6.2"
 androidxTestRules = "1.6.1"
 espresso = "3.6.1"
 uiautomator = "2.3.0"
+# Bouncy Castle — the SPT/X-Wing (ML-KEM-768 + X25519) provider. Pinned exactly
+# (Decision 18); do not bump without re-running the SPT KAT corpus. Java-8
+# bytecode, used via BC's low-level API (no JCA provider registration), so it
+# never clashes with Android's bundled org.bouncycastle. Bouncy Castle Licence
+# (MIT/X11 adaptation) — AGPL-3.0-only compatible.
+bouncycastle = "1.85.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -51,6 +57,7 @@ androidx-test-runner = { group = "androidx.test", name = "runner", version.ref =
 androidx-test-rules = { group = "androidx.test", name = "rules", version.ref = "androidxTestRules" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso" }
 androidx-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "uiautomator" }
+bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

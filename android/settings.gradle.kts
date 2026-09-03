@@ -42,6 +42,12 @@ rootProject.name = "truepad-android"
 // Gradle 9.0 turns into a hard error. Listing the intended modules here and
 // filtering keeps the roadmap visible without configuring a project that is not
 // there.
-listOf("truepad-core", "truepad-storage", "app")
+//   truepad-spt      the Sealed Pad Transfer crypto + protocol port — pure
+//                    Kotlin/JVM, isolated from the OTP kernel (truepad-core),
+//                    depends on Bouncy Castle for X-Wing/ML-KEM-768. Kept
+//                    SEPARATE so the frozen authenticated-OTP path stays
+//                    untouched (Decision 19). Byte-checked against the released
+//                    SPT wire on any JVM.
+listOf("truepad-core", "truepad-storage", "truepad-spt", "app")
     .filter { file("$rootDir/$it/build.gradle.kts").isFile }
     .forEach { include(":$it") }
