@@ -29,6 +29,20 @@ A reused pad cannot be fixed at all.
 **This is not a recommendation to use one-time pads for real traffic.** It is a
 working, audited implementation that states on every screen what it does not do.
 
+> **Development status.** The latest *formal release* is **TruePad 2.0.0**;
+> `master` carries **TruePad 3.0 development** (`3.0.0-dev.0`), which adds the
+> maximum-assurance architecture (TPM-anchored monotonic authority, an
+> operator-pinned root of trust, the ceremony state machine) and is not tagged,
+> released, or published. **TruePad does NOT guarantee perfect secrecy as a
+> product claim.**
+>
+> **Reviewing the cryptography?** Start at
+> [`docs/REVIEWER-START-HERE.md`](docs/REVIEWER-START-HERE.md) — a two-hour path,
+> the security-critical code map, the normative
+> [3.0 spec](docs/TRUEPAD-3-SPEC.md), and the questions we want challenged in the
+> [independent-review brief](docs/INDEPENDENT-REVIEW-BRIEF.md). Internal AI
+> adversarial audits are engineering evidence, **not** an independent human review.
+
 ## Three guarantees, deliberately not merged
 
 The most common mistake about one-time pads is treating "the cipher is
@@ -83,6 +97,34 @@ why reuse fails, secrecy versus integrity, and the DeckBook comparison.
 - **[Sealed Pad Transfer](docs/SEALED-PAD-TRANSFER.md)** — the normative transfer specification
 - **[Release audit](docs/SEALED-PAD-TRANSFER-RELEASE-AUDIT.md)** — how the shipped product was verified against it
 - **[Changelog](CHANGELOG.md)**
+
+## Related work
+
+TruePad implements well-known constructions rather than inventing new ones, and
+makes no claim to be the best, first, or most secure OTP tool. The primary
+references it builds on:
+
+- **One-time pad / Vernam cipher** — G. Vernam's telegraph cipher (1919) and the
+  one-time-pad idea.
+- **Perfect secrecy** — C. E. Shannon, *Communication Theory of Secrecy Systems*
+  (1949): the OTP's unconditional secrecy holds only under its premises.
+- **Wegman–Carter authentication** — M. Wegman & L. Carter, *New hash functions
+  and their use in authentication and set equality* (1981): information-theoretic
+  one-time authentication, the basis of `wc-one-time-v1`.
+- **POLYVAL** — the field-arithmetic hash from AES-GCM-SIV,
+  [RFC 8452](https://www.rfc-editor.org/rfc/rfc8452), used here as the WC hash.
+- **TPM 2.0 monotonic NV counters** — the TCG TPM 2.0 Library (ISO/IEC 11889); the
+  hardware non-restorable counter that anchors the platform authority.
+- **ML-KEM** — [NIST FIPS 203](https://csrc.nist.gov/pubs/fips/203/final), the
+  standardized module-lattice KEM (ML-KEM-768) used in sealed delivery.
+- **X-Wing hybrid KEM** — the IETF CFRG Internet-Draft
+  [`draft-connolly-cfrg-xwing-kem`](https://datatracker.ietf.org/doc/draft-connolly-cfrg-xwing-kem/)
+  (a PQ/T hybrid of ML-KEM-768 + X25519). **This is a draft, not an RFC**; TruePad
+  pins **draft-10** and treats sealed delivery as computational, not
+  information-theoretic.
+
+Sealed delivery is therefore a **hybrid post-quantum / traditional** construction;
+"post-quantum" here refers to the delivery KEM, not to the OTP messages.
 
 ## Release status
 

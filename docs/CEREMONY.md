@@ -654,11 +654,16 @@ The created pad's statement stays conditional: the verbatim §7 verdict, then
 true, the pad material satisfies the information-theoretic randomness
 requirement of a one-time pad."*
 
-A CLI ceremony store carries operator-declared external sources and no recorded
-disqualifying path, so `truepad2 status` reports its **Shannon deployment
-assessment** as `CONDITIONALLY ELIGIBLE` — with physical randomness, source
-independence, private courier behaviour, and erasure left, honestly, as things
-TruePad did not prove. See [Shannon deployment](SHANNON-DEPLOYMENT.md).
+On the 3.0 line, operator-declared external sources are necessary but **not
+sufficient** for the strongest verdict. A plain `truepad2 gen` store is `NOT
+ELIGIBLE` ("plain gen, not the physical ceremony"); a `ceremony create` store is
+`INSUFFICIENT EVIDENCE` until its private handoff is accepted; and `CONDITIONALLY
+ELIGIBLE` is reached only by the full path in §4.2 — an accepted ceremony pad
+whose live rollback authority is this installation's **pinned platform-monotonic
+(TPM)** authority attesting `handoff-accepted`. Even then, physical randomness,
+source independence, private courier behaviour, and erasure are left, honestly, as
+things TruePad did not prove. See [Shannon deployment](SHANNON-DEPLOYMENT.md) and
+[Maximum assurance](MAXIMUM-ASSURANCE.md).
 
 **Uniformity is not secrecy**, and the panel then says what the verdict is not:
 

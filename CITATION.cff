@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: >-
+  If you reference TruePad, please cite the repository and the exact commit or
+  release you used. TruePad 3.0 is DEVELOPMENT software; the latest FORMAL release
+  is TruePad 2.0.0.
+title: "TruePad — authenticated one-time-pad key management (educational/research)"
+abstract: >-
+  TruePad is an educational and research implementation of authenticated
+  one-time-pad key management. It enforces the software-enforceable one-time-use
+  requirements (literal XOR OTP confidentiality, one-time Wegman-Carter
+  authentication, durable burn-before-output consumption, attempt reservation,
+  rollback witnesses, a TPM-anchored monotonic authority, and an operator-pinned
+  root of trust) while explicitly separating the physical premises software cannot
+  prove. It does NOT guarantee perfect secrecy as a product claim.
+type: software
+authors:
+  - name: "The TruePad project"
+    website: "https://github.com/systemslibrarian/TruePad"
+repository-code: "https://github.com/systemslibrarian/TruePad"
+url: "https://github.com/systemslibrarian/TruePad"
+license: AGPL-3.0-only
+version: "3.0.0-dev.0"
+keywords:
+  - one-time pad
+  - authenticated one-time pad
+  - Wegman-Carter authentication
+  - cryptography education
+  - TPM rollback protection
+  - post-quantum pad delivery
+# No DOI, journal, conference, peer review, or external audit is claimed. This
+# metadata is repository-level only; a formal citation may be issued at a formal
+# 3.0.0 release after independent review and physical validation (see
+# docs/RELEASE-CHECKLIST-3.0.md).

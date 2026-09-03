@@ -264,7 +264,7 @@ beside *Save pad file*, neither presented as better. Where it stands, precisely:
 | Cryptographic / transport core — suite `0x0001`, TPR2 and TPS2 codecs, key schedule, reference vectors | **implemented** (`src/spt/**`) |
 | Storage / provenance foundation — pad origin, the one-handoff record, its crash behaviour | **implemented** (`src/browser/engine/**`) |
 | The product transfer flow — receive requests, both word ceremonies, sealing, opening, import | **implemented** (Browser Edition, `src/browser/ui/**`) |
-| QR transport for the receive code | **implemented** (Browser Edition, `src/browser/ui/qr/**`) — optional convenience carrying the same public TPR2; copy/paste remains the normative channel and the twelve words still authenticate |
+| QR transport for the receive code | **implemented in the 3.0 development line** (Browser Edition, `src/browser/ui/qr/**`); it was **deferred at the 2.0.0 release** (see the sealed-transfer release audit). An optional convenience carrying the same public TPR2; copy/paste remains the normative channel and the twelve words still authenticate |
 | Any CLI sealed-transfer command | **not implemented** — `truepad-pad` and `truepad2` have no such verb |
 
 **The CLI offers none of it.** The distinction that matters is not whether the

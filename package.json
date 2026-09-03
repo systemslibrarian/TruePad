@@ -16,6 +16,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "audit:security": "npm run typecheck && npm run test && npm run build",
+    "test:tpm-interop": "bash scripts/tpm-interop.sh",
     "cli": "node bin/truepad-pad.mjs",
     "cli2": "node bin/truepad2.mjs"
   },
