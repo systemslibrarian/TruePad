@@ -1,10 +1,20 @@
 # TruePad 2 Android Edition — security & durability claims
 
-**Status: Phase 2 — engine and application both present.** This document covers
-`truepad-core`, `truepad-storage` and the `:app` module under `android/`. The app
-launches, creates, adds, sends, opens and disables pads over the same frozen
-engine the CLI and Browser Edition use. Section 9 states what is still NOT
-claimed, and Section 10 what remains.
+**Status: 3.0-ported in software; physical-handset and human validation still
+outstanding.** This document covers `truepad-core`, `truepad-storage` and the
+`:app` module under `android/`. The app launches, creates, adds, sends, opens and
+disables pads over the same frozen v2.0.0 engine the CLI and Browser Edition use.
+It now ALSO carries the TruePad 3.0 assurance line **in software**: the single
+deployment evaluator, the honest Android fact assembly, the extended claims
+guards, and an Android hostile-mutation matrix (§4a). What is NOT yet in hand is
+evidence software cannot manufacture — **physical-handset validation and a human
+TalkBack pass are both still OUTSTANDING** (§10) — and Sealed Pad Transfer and
+native iOS are **deferred by design**, not merely unfinished. **No formal 3.0
+release is claimed.** Section 9 states what is still NOT claimed, and Section 10
+what remains. The companion `docs/ANDROID-3.0-DELTA-AUDIT.md` is the delta record —
+what the `android-phase-2` merge brought and what the 3.0 port added on top — and
+this document is the client's own security document; where the two overlap, the
+delta audit is the finer-grained account and this one must not contradict it.
 
 The Android edition is not a new TruePad. It is the same frozen protocol
 (`docs/FORMAT-V2.md`) on a different substrate, and where this document differs
@@ -279,6 +289,76 @@ This is a real, deliberate consequence: **Android refuses a strictly larger
 population of real CLI stores than the CLI itself accepts.** A pad generated with
 `truepad2 gen --witness separate-state-file` cannot be imported here. Generate the
 pad with the default `none` class to courier it to Android.
+
+**Terminology — one collision to name before it trips you.** The string
+`separate-state-file` appears at two different layers and means two different
+things. Here (§rollback), it is a FROZEN-HEAD value: `Store.kt` refuses any
+`head.json` whose `rollback.witnessClass` is the literal `"separate-state-file"`
+(it insists on `"none"`). In the deployment evaluator (§4a), by contrast,
+`RollbackAuthority.separate-state-file` is a LIVE, DERIVED CLASS that the honest
+fact-assembly applies to the android-local-witness — the correct, honest label for
+a real-but-restorable-with-the-pair journal. A frozen-head validation and a live
+derived fact, sharing one spelling; not a contradiction. The frozen head still
+always reads `witnessClass: "none"` (above), while the witness's honest live class
+is `separate-state-file`.
+
+---
+
+## 4a. The deployment assessment — one derived evaluator, and the Android ceiling
+
+TruePad 3.0 asks a question the v2 protocol did not surface: whether a PARTICULAR
+deployment can still support Shannon confidentiality, given only the facts the
+client has actually recorded. The Android edition answers it exactly as the CLI
+and Browser editions do — through the ONE authority — and adds no rule of its own.
+`docs/ANDROID-3.0-DELTA-AUDIT.md` is the delta record for how this landed on top of
+the `android-phase-2` engine; this section states the resulting security property.
+
+**One evaluator, and Android only feeds it.** `core/Deployment.kt` is a byte-exact
+DECISION twin of `src/claims/shannon-deployment.ts` — the same enums, the same
+load-bearing ordering, the same three verdicts (NOT ELIGIBLE, INSUFFICIENT
+EVIDENCE, CONDITIONALLY ELIGIBLE). `storage/DeploymentAssembly.kt` maps an Android
+pad's reality onto the frozen `DeploymentFacts` axes and calls `assessDeployment`.
+It invents no eligibility rule; it can only assemble facts, and it assembles them
+honestly.
+
+**Derived on every summary, never stored.** The classification is recomputed under
+the pair lock on EVERY summary, from live facts. It is never serialized — not into
+`head.json`, not into the Android-only `pair.json`, not anywhere. That is the
+property that makes it safe: a restore cannot re-present a stronger verdict than
+the live facts warrant, because there is no stored verdict to restore. No
+self-certifying verdict identifier and no pad-derived fingerprint exist in the
+shipped code, and the machine guards below enforce it.
+
+**The Android ceiling — derived from the platform, not hard-coded.** An Android
+device has no TPM-anchored platform authority and no operator-pinned root of trust.
+It therefore cannot ATTEST a ceremony, so the honest fact-assembly reports
+`assuranceAuthority = unavailable` ALWAYS, and it holds no platform-monotonic
+counter, so `rollback` is NEVER `platform-monotonic` (the android-local-witness is
+the `separate-state-file` class — see the terminology note in §4). The single
+strongest path in the evaluator requires BOTH of those facts, so **an Android pad
+can NEVER be CONDITIONALLY ELIGIBLE.** The strongest verdict it can reach is
+INSUFFICIENT EVIDENCE. Two outcomes are mandated and tested end to end: a pad whose
+every source is the platform CSPRNG is a hard **NOT ELIGIBLE**; an
+external-declared native pad is **INSUFFICIENT EVIDENCE**, never eligible. A
+regressed or inconsistent witness is a positive disqualifier (NOT ELIGIBLE), not
+merely unproven. None of this is a hard-coded "Android is insecure" flag: it is the
+ordinary output of the shared evaluator over facts the platform genuinely
+constrains.
+
+**Where it is proven.** The pure decision is held to the canonical TypeScript by
+`DeploymentCorpusTest` against the shared cross-language corpus
+`android/vectors/deployment-evaluator-v3.json` (including
+`noAndroidTupleIsEverConditionallyEligible` and
+`theTwoAndroidSourceOutcomesAreExactlyAsMandated`). The honest assembly is held by
+`DeploymentAssemblyTest`
+(`aDeviceGeneratedPadIsNotEligibleBecauseTheSourceIsASoftwareCsprng`,
+`anExternalSourcePadIsInsufficientNeverEligible`,
+`theWitnessKindNeverRaisesTheVerdictAboveInsufficient`). The claims and machine
+guards live in `AppSourceAuditTest` — no persisted verdict, no pad-derived
+fingerprint, the UI never hard-codes a stronger label than the evaluator produces,
+and no overstated vocabulary — and `HostileMutationMatrixTest` proves that
+laundering the LOCAL witness to `platform-monotonic`, or any single-fact mutation
+that would reach CONDITIONALLY ELIGIBLE, is caught with zero escapes.
 
 ---
 
@@ -566,7 +646,7 @@ be manufactured, listed with what would close them.
 
 Also open, none blocking:
 
-- **Dependency currency.** Reviewed and deliberately not changed — see §13.
+- **Dependency currency.** Reviewed and deliberately not changed — see §12.
 - **Translation and locale coverage.** One locale's copy ships today.
 
 ## 11. Invariant map (frozen protocol → Android substrate)
@@ -593,6 +673,7 @@ Also open, none blocking:
 | A double tap cannot spend twice | engine per-pair lock | `UiJourneyTest`, `CrashAndLifecycleTest` |
 | The UI never caches consumable state | reload from the engine on resume | `UiJourneyTest` |
 | Claims are not overstated | sentence-scoped claims lint | `AppSourceAuditTest` |
+| The deployment classification is derived, never stored | recomputed per summary; no verdict in either stored format; never above INSUFFICIENT on Android | `DeploymentCorpusTest`, `DeploymentAssemblyTest`, `AppSourceAuditTest`, `HostileMutationMatrixTest` |
 | Every interactive control is announceable and reachable | whole-tree semantics sweep | `AccessibilityTest` |
 | Warnings are never clipped | re-render at 2x font scale | `LargeFontTest` |
 | No secret in accessibility metadata | semantics-tree scan | `AccessibilityTest` |
