@@ -133,3 +133,64 @@ under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
 CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License. The
 full license text ships in the package at `node_modules/jsqr/LICENSE`.
+
+---
+
+## Android Edition — post-quantum hybrid KEM (Bouncy Castle)
+
+The Android Edition (`android/**`) implements the **same** Sealed Pad Transfer
+protocol and the **same** X-Wing hybrid KEM (ML-KEM-768 + X25519), but on the
+JVM it uses **Bouncy Castle** in place of `@noble/post-quantum`. The bytes are
+identical: `android/truepad-spt` reproduces the X-Wing draft-10 Appendix-C
+known-answer vectors and the cross-language SPT interop corpus (see
+`android/truepad-spt/src/test`). Bouncy Castle is reached only through Sealed
+Pad Transfer; the OTP message path (gen/burn/open) imports none of it.
+
+Bouncy Castle is a pure-Java cryptography library. It ships no Android manifest,
+declares no permission, opens no socket, and is used through BC's **low-level
+API** (e.g. `XWingKeyPairGenerator`, `XWingKEMGenerator`, `XWingKEMExtractor`,
+`org.bouncycastle.math.ec.rfc7748.X25519`), **not** by registering a JCA
+provider — so it never clashes with the trimmed `org.bouncycastle` classes some
+Android platforms bundle.
+
+### bcprov-jdk18on
+
+- **Package:** `org.bouncycastle:bcprov-jdk18on` **1.85.2** (exact pin, in
+  `android/gradle/libs.versions.toml`; do not bump without re-running the SPT
+  known-answer and interop corpora).
+- **Provider:** The Legion of the Bouncy Castle Inc. (https://www.bouncycastle.org)
+- **Repository:** https://github.com/bcgit/bc-java
+- **License:** the Bouncy Castle Licence — an adaptation of the MIT/X11 license,
+  reproduced verbatim below. It is AGPL-3.0-only compatible.
+
+```
+Copyright (c) 2000 - 2025 The Legion of the Bouncy Castle Inc.
+(https://www.bouncycastle.org)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Comparison wordlist (Android)
+
+The Android Edition vendors the same BIP-39 English comparison wordlist as the
+Browser Edition, byte-for-byte, at
+`android/truepad-spt/src/main/resources/comparison-words.txt`, with its
+provenance and MIT notice at
+`android/truepad-spt/src/main/resources/COMPARISON-WORDS-PROVENANCE.md` and its
+SHA-256 pinned by `ComparisonWordsTest`.
