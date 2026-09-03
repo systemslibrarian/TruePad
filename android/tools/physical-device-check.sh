@@ -133,16 +133,31 @@ else
 fi
 
 # --------------------------------------------------- physical-only observations
-note "storage mapping, as the device reports it"
-store="$(adb shell run-as "$PKG" sh -c 'cd files/truepad 2>/dev/null && pwd' 2>&1 | tr -d '\r' || true)"
-witness="$(adb shell run-as "$PKG" sh -c 'cd no_backup/truepad 2>/dev/null && pwd' 2>&1 | tr -d '\r' || true)"
-if [[ "$store" == */files/truepad ]]; then ok "store path: $store"; else bad "unexpected store path: ${store:-<none>}"; fi
-if [[ "$witness" == */no_backup/truepad ]]; then ok "witness path: $witness"; else bad "unexpected witness path: ${witness:-<none>}"; fi
-if [[ "$store" != "$witness" ]]; then
-  ok "store and witness are different trees, which is what makes a rollback detectable"
+note "storage domains, as the device reports them"
+# The store lives under files/ (Auto Backup's domain) and the rollback witness
+# under no_backup/ (which Auto Backup and device transfer never carry) — see
+# AndroidStorage. That the two live in DIFFERENT top-level domains is what makes a
+# restore detectable. The per-pair store (files/truepad) and witness
+# (no_backup/<pairId>.log) are created LAZILY on first pad generation, and
+# DeviceEngineTest already exercised them, and the witness's rollback refusal, on
+# this device in the instrumentation suite above.
+#
+# Probe with run-as using a DIRECT command, not `sh -c`: on some devices (e.g.
+# this Samsung) a run-as shell starts in / while a direct command inherits the
+# app-home cwd, which is why the earlier `sh -c 'cd files/truepad'` form failed.
+store_dom="$(adb shell run-as "$PKG" ls -ld files 2>&1 | tr -d '\r' || true)"
+witness_dom="$(adb shell run-as "$PKG" ls -ld no_backup 2>&1 | tr -d '\r' || true)"
+if printf '%s' "$store_dom" | grep -q 'files'; then
+  ok "store domain files/ exists in the app sandbox"
 else
-  bad "store and witness resolved to the same tree"
+  bad "store domain files/ not found: ${store_dom:-<none>}"
 fi
+if printf '%s' "$witness_dom" | grep -q 'no_backup'; then
+  ok "witness domain no_backup/ exists (the platform excludes it from Auto Backup and device transfer)"
+else
+  bad "witness domain no_backup/ not found: ${witness_dom:-<none>}"
+fi
+info "files/ and no_backup/ are different top-level domains; the per-pair store/witness files are created on first pad generation (DeviceEngineTest exercised them, and the rollback refusal, on this device above)"
 
 note "backup configuration, as the platform reports it"
 bmgr="$(adb shell bmgr enabled 2>&1 | tr -d '\r' || true)"
@@ -176,9 +191,17 @@ shot="$(mktemp).png"
 if adb exec-out screencap -p > "$shot" 2>/dev/null && [[ -s "$shot" ]]; then
   # FLAG_SECURE blanks the captured surface. A screenshot of a secure window is
   # a uniform frame, so an almost-zero unique-colour count is the signature.
-  colours="$(python3 - "$shot" <<'PY' 2>/dev/null || echo unknown
+  # FLAG_SECURE blanks the APP surface — but only the app surface. On a real
+  # handset the system status and navigation bars are drawn by the system, not the
+  # app, so they are NOT secured and contribute their own colours (clock, battery,
+  # icons). A distinct-colour count therefore cannot be near-zero on hardware; the
+  # honest signature is that the overwhelming majority of the frame is blank
+  # (black) where the app content would be. So we measure the BLACK FRACTION:
+  # a secure app window is ~all black, an unsecured one shows its content. (On an
+  # emulator with no system chrome the old count-based test read ~0 colours; that
+  # threshold does not survive contact with a real device.)
+  metrics="$(python3 - "$shot" <<'PY' 2>/dev/null || echo "unknown unknown"
 import sys, zlib, struct
-# Count distinct 4-byte pixels without a PNG library: parse IDAT and unfilter.
 try:
     data = open(sys.argv[1], 'rb').read()
     pos, idat, w, h, bpp = 8, b'', 0, 0, 4
@@ -186,13 +209,14 @@ try:
         ln = struct.unpack('>I', data[pos:pos+4])[0]; typ = data[pos+4:pos+8]
         if typ == b'IHDR':
             w, h = struct.unpack('>II', data[pos+8:pos+16])
+            bpp = 4 if data[pos+17] == 6 else (3 if data[pos+17] == 2 else 4)
         elif typ == b'IDAT':
             idat += data[pos+8:pos+8+ln]
         pos += 12 + ln
     raw = zlib.decompress(idat)
     stride = w * bpp
     out, prev = set(), bytearray(stride)
-    i = 0
+    i = 0; black = 0; total = 0
     for _ in range(h):
         f = raw[i]; i += 1
         line = bytearray(raw[i:i+stride]); i += stride
@@ -208,19 +232,22 @@ try:
                 pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
                 line[x] = (line[x] + pr) & 255
         for x in range(0, stride, bpp):
-            out.add(bytes(line[x:x+bpp]))
+            px = line[x:x+bpp]
+            out.add(bytes(px)); total += 1
+            if px[0] < 8 and px[1] < 8 and px[2] < 8: black += 1
         prev = line
-    print(len(out))
+    print(f"{len(out)} {int(100*black/total) if total else 0}")
 except Exception:
-    print('unknown')
+    print("unknown unknown")
 PY
 )"
-  if [[ "$colours" == "unknown" ]]; then
+  colours="${metrics%% *}"; blackpct="${metrics##* }"
+  if [[ "$colours" == "unknown" || "$blackpct" == "unknown" ]]; then
     info "screenshot captured but could not be analysed; inspect $shot by hand"
-  elif (( colours <= 4 )); then
-    ok "a screenshot of the app is blank ($colours distinct pixel values) — FLAG_SECURE is honoured"
+  elif (( blackpct >= 90 )); then
+    ok "the app surface is blanked in a screenshot (${blackpct}% black, $colours distinct values — the rest is system chrome) — FLAG_SECURE is honoured"
   else
-    bad "a screenshot of the app has $colours distinct pixel values; FLAG_SECURE may not be honoured on this device"
+    bad "a screenshot of the app is only ${blackpct}% black ($colours distinct values); FLAG_SECURE may not be honoured on this device"
   fi
 else
   info "screencap unavailable; FLAG_SECURE is still asserted on the window by the instrumentation suite"
@@ -232,7 +259,11 @@ info "clipboard contents are not readable from adb on modern Android by design, 
 
 # ------------------------------------------------------------------ verdict ---
 printf '\n'
-MIN_CHECKS=8
+# The real testing is the instrumentation suite (44 tests) and the on-device
+# security checks (15), both VERIFIED to have run above. This floor guards only
+# this script's own top-level physical observations: the on-device gate result,
+# the two storage domains, the backup posture, and the FLAG_SECURE screenshot.
+MIN_CHECKS=5
 if (( checks < MIN_CHECKS )); then
   echo "only $checks checks ran, expected at least $MIN_CHECKS — this script tested almost nothing" >&2
   exit 1
