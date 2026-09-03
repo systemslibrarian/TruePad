@@ -117,6 +117,22 @@ T_AFTER="$(tpm_counter "$NV_COUNTER")"
 check "repeat init consumes ZERO counter values" "$T_AFTER" "$T_BEFORE"
 if [[ "$(cat "$STATE")" == "$BYTES_BEFORE" ]]; then ok "repeat init leaves the state byte-identical"; else bad "repeat init rewrote the state"; fi
 
+# --- 6.5. pin this authority as the installation's trusted root (3.0) --------
+# A pair cannot choose its own root of trust: every platform operation (burn,
+# ceremony, status) resolves the pair's claimed authority against an
+# operator-pinned trusted authority, stored OUTSIDE any pair directory. Pin the
+# real authority we just provisioned so the platform-monotonic burn below is
+# permitted.
+export TRUEPAD_TRUST_STORE="$WORK/platform-trust.json"
+AUTH_ID="$(python3 -c "import json;print(json.load(open('$STATE'))['authorityId'])")"
+set +e
+PIN_OUT="$(truepad2 authority pin "$STATE" --nv-index "$NV_COUNTER" --confirm "$AUTH_ID" 2>&1)"; PIN_CODE=$?
+set -e
+if [[ $PIN_CODE -eq 0 ]]; then ok "authority pin recorded the trusted platform authority"; else bad "authority pin exited $PIN_CODE"; echo "$PIN_OUT" | tail -3; fi
+# An UNPINNED-vs-this pair (a different, unpinned authority named by head.json) is
+# refused: burn against a mismatched/unpinned authority must fail closed. (Covered
+# by unit + CLI tests; here we assert the pinned path burns.)
+
 # --- 7-9. a real platform-monotonic pair, and a burn ------------------------
 PAIR="$WORK/pair"; SRC="$WORK/src.bin"
 head -c 200000 /dev/urandom > "$SRC"
@@ -134,6 +150,17 @@ if [[ -n "$ENV_LINE" ]]; then ok "burn emitted an envelope"; else bad "burn emit
 check "burn advanced the TPM anchor by exactly one" "$T_POST" "$((T_PRE+1))"
 A_NOW="$(python3 -c "import json;print(json.load(open('$STATE'))['anchor'])")"
 check "state anchor tracks the TPM after the burn" "$A_NOW" "$T_POST"
+
+# --- 9.5. the pin gates the platform burn: remove it and the same pair refuses
+# free (a pair cannot use an unpinned authority; §7 root of trust). This burn is
+# refused at preflight, so nothing is consumed.
+T_PIN_PRE="$(tpm_counter "$NV_COUNTER")"
+mv "$TRUEPAD_TRUST_STORE" "$WORK/trust.away"
+set +e; UNPIN_OUT="$(truepad2 burn "$PAIR" --as A "no pin" 2>&1)"; UNPIN_CODE=$?; set -e
+mv "$WORK/trust.away" "$TRUEPAD_TRUST_STORE"
+check "an unpinned platform authority refuses to burn (exit 2)" "$UNPIN_CODE" "2"
+check "  nothing consumed while unpinned: TPM counter unchanged" "$(tpm_counter "$NV_COUNTER")" "$T_PIN_PRE"
+if echo "$UNPIN_OUT" | grep -qi "no trusted platform authority is pinned"; then ok "  refusal names the missing pin"; else bad "  refusal did not name the missing pin"; fi
 
 # --- 10. raw counter bytes are the big-endian uint64 we parse ---------------
 RAWHEX="$(tpm2_nvread "$NV_COUNTER" -s 8 2>/dev/null | xxd -p | tr -d '\n')"
