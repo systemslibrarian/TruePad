@@ -44,7 +44,7 @@ name: Android
 
 on:
   push:
-    branches: [master, android-phase-2]
+    branches: [master]
     paths: ['android/**', 'docs/ANDROID-SECURITY.md', '.github/workflows/android.yml']
   pull_request:
     paths: ['android/**', 'docs/ANDROID-SECURITY.md', '.github/workflows/android.yml']

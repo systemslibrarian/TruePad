@@ -18,7 +18,10 @@ package dev.systemslibrarian.truepad.app
  * FORBIDDEN on the randomness path, in any edition: "verified", "certified",
  * "passed", "confirmed", "proven", "true randomness", "truly random" (except
  * inside CANNOT_VERIFY, which denies it), "perfect secrecy achieved",
- * "information-theoretic security confirmed". ClaimsTextTest enforces this.
+ * "information-theoretic security confirmed"; and — since the 3.0 port — the
+ * deployment overclaims "maximum assurance", "gold standard", "perfect secrecy",
+ * "verified random", "certified entropy" as positive assertions.
+ * AppSourceAuditTest.noClaimAssertsWhatTheProductRefusesToClaim enforces this.
  */
 object Claims {
 
