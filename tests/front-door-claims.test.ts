@@ -262,20 +262,28 @@ describe("CHANGELOG records the v2.0.0 release without inventing a past", () => 
     expect(CHANGELOG).toMatch(/from MIT to GNU AGPL v3 only/);
   });
 
-  it("invents no prior release line", () => {
+  it("invents no prior release line, and carries only the one FORMAL release heading (v2.0.0)", () => {
     expect(CHANGELOG).not.toMatch(/v1\.0\.0/);
-    // Exactly one released heading, and it is v2.0.0.
-    const headings = [...CHANGELOG.matchAll(/^## v?\d+\.\d+\.\d+/gm)].map((m) => m[0]);
+    // Exactly one RELEASED heading (`## vX.Y.Z`), and it is v2.0.0. A planned
+    // "## Unreleased — planned v3.0.0" section does not match this shape.
+    const headings = [...CHANGELOG.matchAll(/^## v\d+\.\d+\.\d+/gm)].map((m) => m[0]);
     expect(headings).toEqual(["## v2.0.0"]);
+  });
+
+  it("records the 3.0 line as UNRELEASED development, never as a formal release", () => {
+    expect(CHANGELOG, "an Unreleased planned v3.0.0 development section").toMatch(/## Unreleased — planned v3\.0\.0/);
+    // No formal, dated v3.0.0 release heading exists.
+    expect(CHANGELOG).not.toMatch(/^## v3\.0\.0 — \d{4}-\d{2}-\d{2}$/m);
   });
 });
 
-describe("the package manifest carries the released version and license", () => {
-  it("is stamped 2.0.0 under AGPL-3.0-only", () => {
-    expect(PKG.version, "the formal release version").toBe("2.0.0");
+describe("the package manifest carries the development version and license", () => {
+  it("is stamped 3.0.0-dev.0 under AGPL-3.0-only (master is 3.0 development; the latest formal release is 2.0.0)", () => {
+    expect(PKG.version, "master carries the 3.0 development version").toBe("3.0.0-dev.0");
     expect(PKG.license, "the license must not drift off AGPL-3.0-only").toBe("AGPL-3.0-only");
-    // The pre-release placeholder must be gone from the manifest.
+    // Neither the pre-release placeholder nor a fabricated formal 3.0 tag.
     expect(PKG.version).not.toBe("0.1.0");
+    expect(PKG.version).not.toBe("3.0.0");
   });
 });
 

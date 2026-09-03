@@ -86,7 +86,9 @@ licence for the code to fail inside what it does.
 ## Supported versions
 
 The supported release line is **2.0.x**: security fixes land there. Fixes also
-target current `master`, which is where the next release line is prepared.
+target current `master`, which carries **TruePad 3.0 development** — where the
+next release line is prepared. 3.0 is not released, not tagged, and not published;
+its maximum-assurance architecture is development code until a formal 3.0 release.
 
 There is no supported v1.x release, because there was never a formal TruePad 1.0.
 

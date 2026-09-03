@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased — planned v3.0.0 (development)
+
+**`master` carries TruePad 3.0 development; the latest FORMAL release remains
+2.0.0.** This line is not released, not tagged, and not published to npm; the
+public demo stays on the 2.0.0 release. It gathers the maximum-assurance work
+integrated from the QR, Shannon-provenance, fixed-record, and maximum-assurance
+lanes:
+
+- **QR transport** for the Sealed Pad Transfer receive code.
+- **Derived deployment assessment** (a single evaluator; no stored verdict) that
+  distinguishes the OTP *combiner* from a particular *deployment*, and never
+  launders a computational or unknown path into an information-theoretic claim.
+- **Fixed-record privacy profile** — a metadata-hardening policy (not a Shannon
+  axiom); the physical ceremony requires fixed records.
+- **Maximum-assurance OTP architecture**: immutable, pair-bound `provenance.json`;
+  a one-way `ceremony accept` and a terminal `ceremony withdraw`; live rollback
+  and ceremony authorities; and an **operator-pinned platform root of trust**
+  (`truepad2 authority pin`) so a pair cannot choose its own trust anchor. The
+  strongest verdict, CONDITIONALLY ELIGIBLE, still states the physical premises
+  software cannot prove, and physical-TPM hardware validation remains outstanding.
+
 ## v2.0.0 — 2026-09-01
 
 **v2.0.0 is TruePad's first formally tagged release.** The number reflects

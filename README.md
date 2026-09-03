@@ -94,9 +94,13 @@ write fallback is not truly atomic, the word ceremonies depend on humans actuall
 performing them, an archived sealed file carries harvest-now-decrypt-later
 exposure, and no software can prove that anything was physically erased.
 
-`package.json` reads `2.0.0`. The number reflects the current Format v2 / Browser
-generation, and there was never a formal TruePad 1.0 — 2.0.0 is where the formal
-version history begins, not the second entry in it.
+The latest **formal release is 2.0.0**; `master` now carries **TruePad 3.0
+development** (`package.json` reads `3.0.0-dev.0`), which is not released, not
+tagged, not published to npm, and does not change the public demo. The number
+reflects the current Format v2 / Browser generation, and there was never a formal
+TruePad 1.0 — 2.0.0 is where the formal version history begins, not the second
+entry in it. The 3.0 development line adds the maximum-assurance architecture (see
+[Changelog](CHANGELOG.md) and [docs/MAXIMUM-ASSURANCE.md](docs/MAXIMUM-ASSURANCE.md)).
 
 ## Earlier teaching CLI: `truepad-pad` (v1)
 
