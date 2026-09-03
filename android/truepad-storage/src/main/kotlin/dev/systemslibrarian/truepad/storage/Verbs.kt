@@ -314,10 +314,15 @@ class Engine(
     private fun buildSummary(pairId: String): PairSummary {
         val pair = loadPair(pairId)
         val meta = readPairMeta(fs, pairId)
-        // The sealed-ancestry fact, read once under this lock: a pad whose durable
-        // consumed.json marker names it arrived by sealed transfer (computational
-        // delivery => NOT ELIGIBLE, permanently). Same value for both directions.
-        val sealedAncestor = sptPairArrivedSealed(pairId)
+        // The sealed-ancestry fact, read once under this lock, computational
+        // delivery => NOT ELIGIBLE, permanently, for BOTH ends of a sealed transfer
+        // and for both directions of the pad:
+        //   - RECEIVER: a durable consumed.json names this pad as arrived sealed.
+        //   - SENDER:   a durable handoff.json marks this pad as sent sealed — its
+        //               whole material crossed the computational X-Wing channel, so
+        //               the sender's retained copy is only computationally
+        //               confidential too. (A physical handoff is NOT this.)
+        val sealedAncestor = sptPairArrivedSealed(pairId) || sptPairSentSealed(pairId)
         return PairSummary(
             pairId = pairId, label = meta.label, createdAt = meta.createdAt, destroyed = false,
             origin = meta.origin,
@@ -1053,6 +1058,23 @@ class Engine(
         if (fs.exists(importMarkerPath(pairId))) return false
         return fs.exists(filePath(storeDir(pairId, Direction.A_TO_B), HEAD_FILE)) ||
             fs.exists(filePath(storeDir(pairId, Direction.B_TO_A), HEAD_FILE))
+    }
+
+    /** The FREE pre-consume importability gate — the twin of the browser's
+     *  `requireImportable`. A sealed receive is refused BEFORE the one-time
+     *  receive request is consumed if a committed pair with this id already exists
+     *  here, or the id is destroyed — turning what would otherwise be an
+     *  after-consume LOSS into a free retry. Non-mutating: it only reads state.
+     *  importPair re-checks both facts authoritatively under the pad lock; this
+     *  spares the common case the cost of a spent request. */
+    internal fun requireImportable(pairId: String) {
+        requireNotDestroyed(pairId)
+        if (committedPairExists(pairId)) {
+            throw EngineRefused(
+                "pair-exists",
+                "a pair with id $pairId already exists here; importing would overwrite it. Nothing was imported.",
+            )
+        }
     }
 
     fun importPair(label: String, container: ByteArray, witnessKind: WitnessKind = WitnessKind.LOCAL): PairSummary {

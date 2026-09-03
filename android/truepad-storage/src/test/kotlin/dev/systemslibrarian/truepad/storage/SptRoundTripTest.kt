@@ -110,6 +110,110 @@ class SptRoundTripTest {
     }
 
     @Test
+    fun aSentSealedPadIsNotEligibleOnTheSenderSideToo() {
+        val alice = sender()
+        val bob = receiver()
+        val pairId = alice.freshPad("alice keeps her copy")
+
+        // Before sending, Alice's freshly generated pad has not been sent sealed.
+        assertFalse("not sent sealed before the seal", alice.sptPairSentSealed(pairId))
+
+        val request = bob.sptCreateReceiveRequest()
+        val review = alice.sptReviewRequest(request.tpr2Text)
+        alice.sptConfirmRequest(review.canonicalBody)
+        alice.sptSeal(review.requestHashHex, pairId)
+
+        // Alice's WHOLE pad crossed the computational X-Wing channel. Her retained
+        // copy is only computationally confidential — exactly as Bob's is — so the
+        // deployment evaluator marks it NOT ELIGIBLE, both directions, permanently.
+        // (The browser masks this by hard-coding generated-here to browser-opfs;
+        // Android's honest external-material provenance made the disqualifier
+        // reachable, and the sender's durable handoff.json is what records it.)
+        assertTrue("Alice's pad is now recorded as sent sealed", alice.sptPairSentSealed(pairId))
+        for (d in Direction.entries) {
+            val deployment = alice.status(pairId).meters.getValue(d).deployment
+            assertEquals("the sender's sealed copy is NOT ELIGIBLE ($d)", Assessment.NOT_ELIGIBLE, deployment.assessment)
+            assertTrue(
+                "the reason names sealed .tps2 delivery ($d): ${deployment.knownReason}",
+                deployment.knownReason?.contains("sealed .tps2") == true,
+            )
+        }
+
+        // A PHYSICALLY handed-off pad is NOT disqualified this way — the air-gapped
+        // file route is the eligible one. Only a SEALED handoff means the material
+        // crossed the computational channel. (Separate engine: the pinned pairId.)
+        val carol = sender()
+        val physicalPad = carol.freshPad("physical route")
+        carol.exportPair(physicalPad)
+        assertFalse("a physically handed-off pad is not 'sent sealed'", carol.sptPairSentSealed(physicalPad))
+    }
+
+    @Test
+    fun aTornSealedHandoffMarkerStillReadsNotEligibleFailingClosed() {
+        val alice = sender()
+        val bob = receiver()
+        val pairId = alice.freshPad("alice's sealed-then-corrupted copy")
+
+        val request = bob.sptCreateReceiveRequest()
+        val review = alice.sptReviewRequest(request.tpr2Text)
+        alice.sptConfirmRequest(review.canonicalBody)
+        alice.sptSeal(review.requestHashHex, pairId)
+
+        // Corrupt the durable sealed handoff marker AFTER a real send (a disk fault,
+        // or a local attacker with filesystem write). readHandoffState now returns
+        // UnreadableSpent — a marker exists but cannot be parsed as sealed.
+        alice.fs.writeFileAtomic(
+            dev.systemslibrarian.truepad.spt.markerPath(pairId),
+            "not a valid handoff marker".toByteArray(Charsets.UTF_8),
+        )
+
+        // HONESTY FAILS CLOSED. This external-material pad has no source
+        // disqualifier, so sealed-ancestry is its SOLE one — a torn marker must
+        // NOT flip NOT ELIGIBLE back to INSUFFICIENT. Its material provably crossed
+        // the computational channel; an unreadable marker cannot un-prove that.
+        assertTrue("a torn sealed marker still counts as sent sealed", alice.sptPairSentSealed(pairId))
+        for (d in Direction.entries) {
+            assertEquals(
+                "a sent-sealed pad with a corrupted marker is still NOT ELIGIBLE ($d)",
+                Assessment.NOT_ELIGIBLE,
+                alice.status(pairId).meters.getValue(d).deployment.assessment,
+            )
+        }
+    }
+
+    @Test
+    fun receivingAPadWhoseIdAlreadyExistsIsRefusedFreeBeforeConsume() {
+        val alice = sender()
+        val bob = receiver()
+        val pairId = alice.freshPad("alice's pad")
+
+        // Bob already holds a pad with this id (both test engines pin the same
+        // pairId), so importing the sealed one would overwrite it. That must be a
+        // FREE refusal BEFORE the one-time request is consumed — never a loss.
+        val bobExisting = bob.freshPad("bob already has this id")
+        assertEquals("the collision is real", pairId, bobExisting)
+
+        val request = bob.sptCreateReceiveRequest()
+        val review = alice.sptReviewRequest(request.tpr2Text)
+        alice.sptConfirmRequest(review.canonicalBody)
+        val seal = alice.sptSeal(review.requestHashHex, pairId)
+
+        // OPEN refuses FREE with the importer's own pair-exists (an EngineRefused),
+        // not spt-receive-loss: nothing is consumed, no importer ran.
+        val refusal = refusalOf { bob.sptOpen(seal.packageBytes) }
+        assertEquals("pair-exists", refusal.reason)
+
+        // AND the request is still Pending, so a retry costs the receiver nothing.
+        val state = dev.systemslibrarian.truepad.spt.readReceiverState(
+            FsSptVfs(bob.fs), request.requestIdHex, java.time.Instant.parse(FIXED_NOW),
+        )
+        assertTrue(
+            "the one-time request is untouched (still Pending) after a free refusal",
+            state is dev.systemslibrarian.truepad.spt.ReceiverState.Pending,
+        )
+    }
+
+    @Test
     fun aReceiveRequestIsConsumedExactlyOnce() {
         val alice = sender()
         val bob = receiver()

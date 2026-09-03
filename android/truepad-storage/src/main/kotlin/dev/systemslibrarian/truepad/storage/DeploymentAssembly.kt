@@ -138,11 +138,10 @@ fun deploymentFactsFor(
     )
 }
 
-/** Assemble the facts and classify them in one step. */
-fun assessAndroidDeployment(
-    sourceDeclarations: List<SourceDeclaration>,
-    origin: PairOrigin,
-    witnessKind: WitnessKind,
-    witnessState: WitnessState,
-): DeploymentAssessment =
-    assessDeployment(deploymentFactsFor(sourceDeclarations, origin, witnessKind, witnessState))
+// A one-step `assessAndroidDeployment` convenience once lived here and was
+// deliberately REMOVED: it called deploymentFactsFor(...) WITHOUT the
+// `sealedAncestor` argument (defaulting it to false), so wiring it to a live path
+// would silently drop the sealed-transfer disqualifier and report a dishonest
+// verdict. The one production path — Engine.directionMeters — calls
+// deploymentFactsFor(...) and assessDeployment(...) directly and threads the real
+// sealedAncestor fact, so no convenience that can omit it should exist.

@@ -415,7 +415,7 @@ class AppSourceAuditTest {
         val hashPrimitives = listOf("MessageDigest", ".digest(", "sha256", "sha-256", "SHA-256", "SHA256")
         // The word "fingerprint" is additionally banned everywhere EXCEPT the
         // sealed-transfer bridge and its screen. There it names the TPR2 REQUEST
-        // fingerprint — a SHA3-256 over the PUBLIC receive request (the recipient
+        // fingerprint — a SHA-256 over the PUBLIC receive request (the recipient
         // key and a request id), computed inside :truepad-spt as part of the
         // X-Wing/SPT protocol, and never over pad or secret material. The spt
         // module carries its own KAT/vector conformance and is not scanned here.

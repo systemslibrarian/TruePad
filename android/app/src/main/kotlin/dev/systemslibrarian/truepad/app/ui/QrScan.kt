@@ -109,6 +109,12 @@ private fun QrCameraPreview(modifier: Modifier, onScanned: (String) -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val previewView = remember { PreviewView(context) }
     val fired = remember { AtomicBoolean(false) }
+    // Set the instant this composition is disposed. It guards the provider-ready
+    // callback (which resolves asynchronously and, on the process's first-ever
+    // ProcessCameraProvider init, can land AFTER onDispose) and the scan callback,
+    // so the camera is never bound behind a screen that already left and a frame
+    // decoded after dispose never drives navigation.
+    val disposed = remember { AtomicBoolean(false) }
     val executor = remember { Executors.newSingleThreadExecutor() }
 
     AndroidView(factory = { previewView }, modifier = modifier)
@@ -125,24 +131,38 @@ private fun QrCameraPreview(modifier: Modifier, onScanned: (String) -> Unit) {
             )
         }
         providerFuture.addListener({
-            provider = providerFuture.get()
+            val ready = providerFuture.get()
+            provider = ready
+            // The composition may have been disposed while this first-init future
+            // was still resolving — in which case onDispose already ran with
+            // `provider` still null, so its unbindAll() was a no-op. Binding now
+            // would open the camera behind whatever screen replaced this one, with
+            // nothing left to unbind it. Bind ONLY if still live; else release now.
+            if (disposed.get()) {
+                ready.unbindAll()
+                return@addListener
+            }
             val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
             val analysis = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
             analysis.setAnalyzer(executor) { image ->
                 decodeFrame(reader, image)?.let { text ->
-                    if (fired.compareAndSet(false, true)) {
-                        previewView.post { onScanned(text) }
+                    // Fire once, and never after the scan screen has left. The post
+                    // lands on the main thread, where onDispose also runs, so the
+                    // final !disposed check there is the authoritative one.
+                    if (!disposed.get() && fired.compareAndSet(false, true)) {
+                        previewView.post { if (!disposed.get()) onScanned(text) }
                     }
                 }
                 image.close()
             }
-            provider?.unbindAll()
-            provider?.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
+            ready.unbindAll()
+            ready.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
         }, ContextCompat.getMainExecutor(context))
 
         onDispose {
+            disposed.set(true)
             provider?.unbindAll()
             executor.shutdown()
         }

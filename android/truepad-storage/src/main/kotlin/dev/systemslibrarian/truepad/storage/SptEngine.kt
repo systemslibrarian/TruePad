@@ -208,18 +208,38 @@ fun Engine.sptSeal(requestHashHex: String, pairId: String): SptSealResult {
                 SptSealResult(requestHashHex, handoff.marker.packageIdentity, committed.packageBytes.copyOf(), confirmationIndices88(committed.confirmValue), true)
             }
             is SptHandoffState.Absent -> {
+                // ABSENT — and only NOW does live eligibility apply (before the
+                // inner lock, exactly as the frozen sealImpl orders it).
                 requirePadSealable(pairId)
-                val nowI = clock()
-                val confirmed = requireConfirmedBody(vfs, requestHashHex, nowI)
-                val requestHash = requestFingerprint(confirmed.body)
-                if (bytesToHex(requestHash) != requestHashHex) throw SptRefused("spt-request-unavailable", "the stored confirmation does not match this request.")
-                claimRequestForPair(vfs, requestHash, pairId, SptTime.format(nowI))
-                val container = buildLiveCourierContainer(pairId)
-                if (container.size > SPT_MAX_PLAINTEXT) throw SptRefused("spt-pad-ineligible", "this pad is too large to send by sealed transfer.")
-                val sealed = sealPayloadV1(confirmed.body, container)
-                commitSealedHandoff(vfs, pairId, SealedHandoffInput(sealed.packageBytes, requestHash, sealed.confirmValue, sealed.packageIdentity), SptTime.format(nowI))
-                val committed = loadCommittedSealedHandoff(vfs, pairId)
-                SptSealResult(requestHashHex, toBase64Url(sealed.packageIdentity), committed.packageBytes.copyOf(), confirmationIndices88(committed.confirmValue), false)
+                // THE REQUEST-SCOPED SENDER LOCK, nested inside the pad lock
+                // (pad OUTERMOST, request-send INNER — never the reverse). Two
+                // seals of DIFFERENT pads to the SAME request take DIFFERENT pad
+                // locks, so only this request-scoped lock makes claimRequestForPair's
+                // read-then-write compare-and-set atomic. Without it the claim gate
+                // has a TOCTOU window and one request could yield two valid packages
+                // with two different confirmation codes.
+                fs.withLock("spt-send:$requestHashHex") {
+                    // Re-check the pad's handoff with BOTH locks held.
+                    val again = sptReadHandoffState(vfs, pairId)
+                    if (again !is SptHandoffState.Absent) {
+                        throw SptRefused("pad-already-sealed", "this pad's handoff was committed concurrently.")
+                    }
+                    // The time is read HERE, under both locks, immediately before
+                    // the decision it governs — never a clock read from before this
+                    // call waited in the queue (which could authorize a seal on a
+                    // confirmation that expired while it waited).
+                    val nowI = clock()
+                    val confirmed = requireConfirmedBody(vfs, requestHashHex, nowI)
+                    val requestHash = requestFingerprint(confirmed.body)
+                    if (bytesToHex(requestHash) != requestHashHex) throw SptRefused("spt-request-unavailable", "the stored confirmation does not match this request.")
+                    claimRequestForPair(vfs, requestHash, pairId, SptTime.format(nowI))
+                    val container = buildLiveCourierContainer(pairId)
+                    if (container.size > SPT_MAX_PLAINTEXT) throw SptRefused("spt-pad-ineligible", "this pad is too large to send by sealed transfer.")
+                    val sealed = sealPayloadV1(confirmed.body, container)
+                    commitSealedHandoff(vfs, pairId, SealedHandoffInput(sealed.packageBytes, requestHash, sealed.confirmValue, sealed.packageIdentity), SptTime.format(nowI))
+                    val committed = loadCommittedSealedHandoff(vfs, pairId)
+                    SptSealResult(requestHashHex, toBase64Url(sealed.packageIdentity), committed.packageBytes.copyOf(), confirmationIndices88(committed.confirmValue), false)
+                }
             }
         }
     }
@@ -281,6 +301,10 @@ fun Engine.sptOpen(packageBytes: ByteArray): SptOpenResult {
             is UnpackResult.Ok -> u
         }
         sptPreflightBundle(unpacked)?.let { throw SptRefused("spt-package-not-importable", "$it Nothing was imported.") }
+        // 6b — against the REAL store, non-mutating: refuse a pad id already
+        // committed (or destroyed) here BEFORE opening a session. FREE — nothing
+        // is consumed, no importer runs. Re-checked at commit, because state moves.
+        requireImportable(unpacked.pairId)
         SptOpenResult(requestIdHex, pending.requestHash.copyOf(), unpacked.pairId, r.packageIdentity, r.payload, r.confirmValue, r.confirmationIndices)
     }
 }
@@ -309,6 +333,11 @@ fun Engine.sptCommitReceive(session: SptOpenResult, label: String): PairSummary 
             is UnpackResult.Bad -> throw SptRefused("spt-package-not-importable", "this pad file is not usable: ${u.message}")
             is UnpackResult.Ok -> u
         }
+        // Re-run the cheap real-state check under the request lock: a pair or a
+        // tombstone can appear between open and now. Refusing HERE is FREE —
+        // nothing is consumed. importPair re-checks authoritatively under the pad
+        // lock; this only spares the common case a spent one-time receive request.
+        requireImportable(unpacked.pairId)
         // CONSUME. After this returns valid, any failure below is LOSS.
         val consumed = consumePendingReceiveRequest(vfs, session.requestIdHex, ConsumeInput(unpacked.pairId, session.packageIdentity, SptTime.format(nowI)), nowI)
         if (consumed !is SptReceiverState.Consumed) {
@@ -325,4 +354,30 @@ fun Engine.sptCommitReceive(session: SptOpenResult, label: String): PairSummary 
 /** True if this pad was delivered by sealed transfer — derived from the durable
  *  consumed.json marker (the sealed-ancestry fact for the deployment evaluator). */
 fun Engine.sptPairArrivedSealed(pairId: String): Boolean = pairArrivedSealed(sptVfs(), pairId)
+
+/** True if this pad was SENT by sealed transfer — from its durable handoff.json.
+ *  The sender's retained copy of a pad whose whole material was sealed and sent
+ *  has, by that act, had that material cross the computational X-Wing channel; it
+ *  is only computationally confidential, exactly as the receiver's copy is, and is
+ *  equally disqualifying (NOT ELIGIBLE) — the "sealed .tps2 is computational
+ *  delivery, end to end" thesis, and the sender is one end.
+ *
+ *  FAILS CLOSED. Unlike the receiver-side `pairArrivedSealed` — which mirrors the
+ *  frozen Browser Edition and can lean on a source/storage disqualifier as a
+ *  backstop — an Android generated-here pad may be EXTERNAL_DECLARED, so this
+ *  sealed-ancestry fact is the SOLE disqualifier. A torn/tampered handoff.json
+ *  must therefore NOT let the verdict flip back to a stronger one: an honesty
+ *  evaluator may only ever under-claim. So an UnreadableSpent marker counts as
+ *  sent-sealed too — consistent with the handoff module, where a present-but-torn
+ *  marker is already "spent, not absent" and blocks any further handoff. A
+ *  PHYSICAL handoff (the eligible air-gapped route) is deliberately NOT this; the
+ *  rare cost is a physically-handed pad whose marker later corrupts reading
+ *  NOT ELIGIBLE instead of its true verdict — the safe direction. */
+fun Engine.sptPairSentSealed(pairId: String): Boolean =
+    when (sptReadHandoffState(sptVfs(), pairId)) {
+        is SptHandoffState.Sealed -> true
+        is SptHandoffState.UnreadableSpent -> true
+        is SptHandoffState.Physical -> false
+        SptHandoffState.Absent -> false
+    }
 
