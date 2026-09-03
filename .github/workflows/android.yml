@@ -1,0 +1,278 @@
+# Build, lint and test the Android edition, and re-verify that its golden
+# interoperability vectors still match the released v2.0.0.
+#
+# WHAT THIS WORKFLOW DOES AND DOES NOT COVER, stated plainly so nobody reads a
+# green tick as more than it is.
+#
+#   1. `./gradlew check` — the JVM suites for truepad-core and truepad-storage,
+#      the app's source audits, Android Lint, and the release-manifest gate.
+#      Both engine modules are pure Kotlin/JVM with no Android SDK dependency,
+#      so the whole security state machine is tested here with no emulator, and
+#      the SAME compiled code runs on ART — there is no separate "Android build"
+#      that could drift from the one CI proved.
+#
+#   2. `:app:assembleDebug` and `:app:assembleRelease` — the manifest is only
+#      real once it has been merged, and `verifyReleaseManifest` parses the
+#      MERGED RELEASE manifest: one exported component, no permissions, backup
+#      off. A dependency that quietly adds an exported receiver breaks the build.
+#
+#   3. `tools/regenerate-vectors.sh --check` — regenerates android/vectors/ by
+#      running the RELEASED v2.0.0 TypeScript in a throwaway detached worktree
+#      and fails if the committed fixtures differ. Without it the fixtures are
+#      numbers somebody once wrote down; with it, "Android agrees with what
+#      shipped" is a claim CI keeps honest. It reads the tag and never writes to
+#      any branch, tag, or the release commit.
+#
+#   4. The `instrumentation` job — a real API 35 emulator, the full
+#      instrumentation suite, and the on-device security checks. It runs
+#      android/tools/ci-instrumentation.sh, which is the same command a developer
+#      runs locally, so CI and a workstation cannot drift into testing different
+#      things.
+#
+#      That job is written to be UNABLE to go green over an empty run. Booting an
+#      emulator and calling a Gradle task proves nothing: a connected-test task
+#      that discovers no tests exits 0, and so does one whose APK never
+#      installed. So the results XML is parsed afterwards and every expected test
+#      class must be present, the count must meet a floor, and failures, errors
+#      and skips must all be zero. A skipped security test is not a passing one.
+#
+# STILL NOT COVERED: physical hardware. Everything here is an emulator, which
+# says nothing about a real TEE, real flash, or a vendor's backup implementation.
+# android/tools/physical-device-check.sh is the gate for that and refuses to run
+# against an emulator. See docs/ANDROID-SECURITY.md.
+name: Android
+
+on:
+  push:
+    branches: [master, android-phase-2]
+    paths: ['android/**', 'docs/ANDROID-SECURITY.md', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['android/**', 'docs/ANDROID-SECURITY.md', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The vector check checks tag v2.0.0 out into a worktree, so the tag
+          # and its history must be present — a shallow clone cannot do it.
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          # The engine targets JVM 17 bytecode (Android-consumable) but builds
+          # on 21, matching the JDK gradle.properties pins locally.
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # gradle.properties pins org.gradle.java.home to Android Studio's bundled
+      # JBR so local builds do not depend on a registered system JDK. CI has no
+      # Android Studio, so point Gradle at the JDK setup-java just installed.
+      - name: Use the CI JDK instead of the local Android Studio JBR
+        working-directory: android
+        run: sed -i "s|^org.gradle.java.home=.*|org.gradle.java.home=${JAVA_HOME}|" gradle.properties
+
+      # The Android SDK the app module needs. The engine modules do not, but the
+      # app's manifest, resources and lint do.
+      - uses: android-actions/setup-android@v3
+
+      - name: Install the pinned SDK components
+        run: |
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" > /dev/null
+
+      - name: Build, lint and test everything
+        working-directory: android
+        # `check` runs: the JVM engine suites, the app's source audits, Android
+        # Lint (warningsAsErrors), and verifyReleaseManifest.
+        run: ./gradlew check --console=plain --stacktrace
+
+      - name: Assemble both build types
+        working-directory: android
+        run: ./gradlew :app:assembleDebug :app:assembleRelease --console=plain
+
+      - name: The APK asks for nothing
+        working-directory: android
+        # A last, independent look at the built ARTEFACT rather than at the
+        # sources or the merged manifest that produced it.
+        #
+        # Parsed in Python rather than grepped: aapt2 renders an XML boolean
+        # differently across versions — `=true` on one, `(type 0x12)0xffffffff`
+        # on another — and a grep for one spelling silently counts zero on a
+        # runner that uses the other. Counting zero exported components looks
+        # like a pass if you are not careful, which is exactly the wrong way for
+        # a hardening check to fail.
+        run: |
+          python3 - <<'CHECK'
+          import re, subprocess, sys, os
+          apk = "app/build/outputs/apk/release/app-release-unsigned.apk"
+          aapt2 = os.environ["ANDROID_HOME"] + "/build-tools/35.0.0/aapt2"
+          dump = subprocess.run([aapt2, "dump", "xmltree", "--file", "AndroidManifest.xml", apk],
+                                capture_output=True, text=True, check=True).stdout
+
+          problems = []
+          if "android.permission.INTERNET" in dump:
+              problems.append("the release APK requests INTERNET")
+
+          # Walk the tree, tracking the element each attribute belongs to.
+          TRUE = ("=true", "0xffffffff", "(type 0x12)0xffffffff")
+          element, name, exported = None, None, None
+          found = []
+          def flush():
+              if element in ("activity", "activity-alias", "service", "receiver", "provider") and exported:
+                  found.append((element, name))
+          for line in dump.splitlines():
+              m = re.match(r"\s*E: ([\w-]+)", line)
+              if m:
+                  flush()
+                  element, name, exported = m.group(1), None, False
+                  continue
+              # aapt2 writes attributes as `android:name(0x01010003)="…"`, so
+              # the resource-id suffix has to be allowed for.
+              if re.search(r":name(\([^)]*\))?=", line) and name is None:
+                  q = re.search(r'"([^"]+)"', line)
+                  if q: name = q.group(1)
+              if re.search(r":exported(\([^)]*\))?=", line) and any(t in line for t in TRUE):
+                  exported = True
+          flush()
+
+          launcher = "dev.systemslibrarian.truepad.app.MainActivity"
+          unexpected = [f"{k}:{n}" for k, n in found if n != launcher]
+          if unexpected:
+              problems.append("exported beyond the launcher: " + ", ".join(unexpected))
+          if not any(n == launcher for _, n in found):
+              problems.append("the launcher activity is not exported, so the parse found nothing — check the parser")
+
+          if problems:
+              print("\n".join(problems), file=sys.stderr)
+              print(dump, file=sys.stderr)
+              sys.exit(1)
+          print(f"release APK: {len(found)} exported component ({found[0][1]}), no INTERNET")
+          CHECK
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-reports
+          path: |
+            android/*/build/reports/
+            android/app/build/reports/
+          if-no-files-found: ignore
+
+  vectors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          # The released src/ is TypeScript imported directly by the generator,
+          # which needs node's native type stripping (>= 22.18).
+          node-version: 24
+          cache: npm
+
+      # No `npm ci` here on purpose. This branch predates the release's
+      # @noble/post-quantum dependency, so installing THIS package.json would
+      # not provide it. The script installs the release's own pinned tree inside
+      # the v2.0.0 worktree instead, which is the correct authority anyway.
+      - name: Verify the golden vectors still match the released v2.0.0
+        working-directory: android
+        run: ./tools/regenerate-vectors.sh --check
+
+  instrumentation:
+    # The on-device gate. Separate from `engine` so a slow emulator never hides
+    # a fast build failure, and so its logs stand on their own.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Use the CI JDK instead of the local Android Studio JBR
+        working-directory: android
+        run: sed -i "s|^org.gradle.java.home=.*|org.gradle.java.home=${JAVA_HOME}|" gradle.properties
+
+      # Without KVM the emulator falls back to software emulation and a suite
+      # this size does not finish inside any sensible timeout. GitHub-hosted
+      # Linux runners expose /dev/kvm; this makes it usable by the runner user.
+      - name: Enable KVM
+        run: |
+          set -x
+          # Diagnostics first: if this ever fails again, the log should say why
+          # rather than leaving the next person to guess.
+          uname -m
+          grep -c -E '(vmx|svm)' /proc/cpuinfo || echo "no hardware virtualisation flags"
+          ls -l /dev/kvm || echo "/dev/kvm does not exist"
+
+          # The udev rule is the documented approach and is what persists.
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+          # It does not always re-apply to a node that already exists, so fix the
+          # existing one directly as well. Both are harmless if the other worked.
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm || true
+            sudo chown root:kvm /dev/kvm || true
+          fi
+          ls -l /dev/kvm || true
+
+          if [ ! -w /dev/kvm ]; then
+            echo "::error::/dev/kvm is not writable on this runner. Without KVM the emulator falls back to software emulation and this suite cannot finish in any sensible time. Not silently downgrading — see docs/ANDROID-SECURITY.md." >&2
+            exit 1
+          fi
+          echo "KVM available"
+
+      # Built before the emulator starts: a compile error should not cost an
+      # emulator boot, and the gate script asserts both APKs exist.
+      - name: Build the app and its test APK
+        working-directory: android
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --console=plain
+
+      - name: Instrumentation suite and on-device security checks
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          # The suite asserts on FLAG_SECURE, activity recreation and semantics;
+          # animations make all three flaky and none of them is what is under
+          # test.
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none -camera-front none
+          # ONE command, and it is the same one used locally.
+          script: android/tools/ci-instrumentation.sh
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: instrumentation-reports
+          # Reports and JUnit XML only. NOT logcat, and not the emulator's data
+          # image: the suite deliberately handles plaintexts and pad material,
+          # and a failure artefact is a published artefact.
+          path: |
+            android/app/build/reports/androidTests/
+            android/app/build/outputs/androidTest-results/
+          if-no-files-found: ignore

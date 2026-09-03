@@ -1,0 +1,77 @@
+{
+  "note": "GENERATED from the released TruePad v2.0.0 (tag v2.0.0, commit 240d7f0) by android/tools/generate-vectors.mjs (run it via android/tools/regenerate-vectors.sh). Every value is the released implementation's own output. The Kotlin port must reproduce these byte-for-byte.",
+  "pairId": "5ab1e2c30d4f5a6b7c8d9e0fa1b2c3d4",
+  "capacity": 4096,
+  "capacityRecords": 24,
+  "sourceSeed": 77,
+  "requiredSourceLength": 9728,
+  "plaintexts": [
+    "m0",
+    "m1",
+    "m2",
+    "m3",
+    "m4",
+    "m5",
+    "m6",
+    "m7",
+    "m8",
+    "m9",
+    "m10",
+    "m11",
+    "m12",
+    "m13",
+    "m14",
+    "m15",
+    "m16",
+    "m17",
+    "m18",
+    "m19"
+  ],
+  "failureOrder": [
+    12,
+    5,
+    19,
+    3,
+    11,
+    2,
+    10,
+    1
+  ],
+  "refusals": [
+    {
+      "sequence": 12,
+      "reason": "auth-failed"
+    },
+    {
+      "sequence": 5,
+      "reason": "auth-failed"
+    },
+    {
+      "sequence": 19,
+      "reason": "auth-failed"
+    },
+    {
+      "sequence": 3,
+      "reason": "auth-failed"
+    },
+    {
+      "sequence": 11,
+      "reason": "auth-failed"
+    },
+    {
+      "sequence": 2,
+      "reason": "auth-failed"
+    },
+    {
+      "sequence": 10,
+      "reason": "auth-failed"
+    },
+    {
+      "sequence": 1,
+      "reason": "auth-failed"
+    }
+  ],
+  "headText": "{\"formatVersion\":2,\"pairId\":\"5ab1e2c30d4f5a6b7c8d9e0fa1b2c3d4\",\"direction\":\"A->B\",\"mode\":\"bytes\",\"sourceDeclarations\":[{\"name\":\"s.bin\",\"declaredOrigin\":\"declared\",\"lengthBytes\":9728}],\"encryption\":{\"capacity\":4096,\"nextOffset\":0},\"authentication\":{\"profile\":\"wc-one-time-v1\",\"tagBits\":128,\"capacityRecords\":24,\"nextSequence\":0,\"verifyAttemptLimit\":8,\"maxCiphertextBytes\":1048576,\"maxAuthLookahead\":64},\"recordPolicy\":{\"authenticated\":\"required\",\"downgradeAllowed\":false,\"record\":{\"kind\":\"variable\"}},\"rollback\":{\"witnessClass\":\"none\",\"config\":{}},\"verification\":{\"failurePolicy\":{\"kind\":\"freeze\",\"threshold\":32},\"failureCount\":8,\"clearedAtFailureCount\":0,\"perSequenceAttempts\":{\"1\":1,\"2\":1,\"3\":1,\"5\":1,\"10\":1,\"11\":1,\"12\":1,\"19\":1}}}",
+  "perSequenceAttemptsSubstring": "\"perSequenceAttempts\":{\"1\":1,\"2\":1,\"3\":1,\"5\":1,\"10\":1,\"11\":1,\"12\":1,\"19\":1}}}",
+  "journalText": "{\"op\":\"init\",\"pairId\":\"5ab1e2c30d4f5a6b7c8d9e0fa1b2c3d4\",\"direction\":\"A->B\",\"capacity\":4096,\"capacityRecords\":24,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"attempt\",\"sequence\":12,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"auth-fail\",\"sequence\":12,\"failureCount\":1,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"attempt\",\"sequence\":5,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"auth-fail\",\"sequence\":5,\"failureCount\":2,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"attempt\",\"sequence\":19,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"auth-fail\",\"sequence\":19,\"failureCount\":3,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"attempt\",\"sequence\":3,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"auth-fail\",\"sequence\":3,\"failureCount\":4,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"attempt\",\"sequence\":11,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"auth-fail\",\"sequence\":11,\"failureCount\":5,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"attempt\",\"sequence\":2,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"auth-fail\",\"sequence\":2,\"failureCount\":6,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"attempt\",\"sequence\":10,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"auth-fail\",\"sequence\":10,\"failureCount\":7,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"attempt\",\"sequence\":1,\"at\":\"2026-09-01T00:00:00.000Z\"}\n{\"op\":\"auth-fail\",\"sequence\":1,\"failureCount\":8,\"at\":\"2026-09-01T00:00:00.000Z\"}\n"
+}

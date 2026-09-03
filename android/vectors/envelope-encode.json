@@ -1,0 +1,29 @@
+{
+  "note": "byte-exact wire output of src/core encodeEnvelope2; the Kotlin encoder must match",
+  "cases": [
+    {
+      "input": {
+        "pairId": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        "direction": "A->B",
+        "sequence": 7,
+        "startOffset": 4096,
+        "ciphertextLength": 32,
+        "ciphertextHex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+        "tagHex": "5bb81c1ec47fe75e649f81d8280c64d9"
+      },
+      "wire": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":7,\"startOffset\":4096,\"ciphertextLength\":32,\"ciphertext\":\"404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f\",\"tag\":\"5bb81c1ec47fe75e649f81d8280c64d9\"}"
+    },
+    {
+      "input": {
+        "pairId": "00112233445566778899aabbccddeeff",
+        "direction": "B->A",
+        "sequence": 0,
+        "startOffset": 0,
+        "ciphertextLength": 0,
+        "ciphertextHex": "",
+        "tagHex": "00000000000000000000000000000000"
+      },
+      "wire": "{\"formatVersion\":2,\"pairId\":\"00112233445566778899aabbccddeeff\",\"direction\":\"B->A\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":0,\"ciphertext\":\"\",\"tag\":\"00000000000000000000000000000000\"}"
+    }
+  ]
+}

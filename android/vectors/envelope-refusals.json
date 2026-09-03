@@ -1,0 +1,125 @@
+{
+  "note": "GENERATED from the released TruePad v2.0.0 (tag v2.0.0, commit 240d7f0) by android/tools/generate-vectors.mjs (run it via android/tools/regenerate-vectors.sh). Every value is the released implementation's own output. The Kotlin port must reproduce these byte-for-byte.",
+  "corpus": [
+    {
+      "name": "valid",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbeef\",\"tag\":\"00000000000000000000000000000000\"}",
+      "ok": true,
+      "reason": null
+    },
+    {
+      "name": "not-json",
+      "text": "{",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "not-object",
+      "text": "[1,2,3]",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "v1-signature",
+      "text": "{\"label\":\"x\",\"ciphertext\":\"00\"}",
+      "ok": false,
+      "reason": "envelope-v1"
+    },
+    {
+      "name": "missing-key",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbeef\"}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "extra-key",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbeef\",\"tag\":\"00000000000000000000000000000000\",\"extra\":1}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "duplicate-key",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbeef\",\"tag\":\"00000000000000000000000000000000\",\"tag\":\"11111111111111111111111111111111\"}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "escaped-name",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbeef\",\"\\u0074ag\":\"00000000000000000000000000000000\"}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "escaped-value",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A-\\u003eB\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbeef\",\"tag\":\"00000000000000000000000000000000\"}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "formatVersion-2.0",
+      "text": "{\"formatVersion\":2.0,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbeef\",\"tag\":\"00000000000000000000000000000000\"}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "sequence-leading-zero",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":00,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbeef\",\"tag\":\"00000000000000000000000000000000\"}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "sequence-exponent",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":0e0,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbeef\",\"tag\":\"00000000000000000000000000000000\"}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "sequence-negative",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":-1,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbeef\",\"tag\":\"00000000000000000000000000000000\"}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "uppercase-pairid",
+      "text": "{\"formatVersion\":2,\"pairId\":\"A0A1A2A3A4A5A6A7A8A9AAABACADAEAF\",\"direction\":\"A->B\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbeef\",\"tag\":\"00000000000000000000000000000000\"}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "bad-direction",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A→B\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbeef\",\"tag\":\"00000000000000000000000000000000\"}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "odd-hex-ciphertext",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbee\",\"tag\":\"00000000000000000000000000000000\"}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "length-disagrees",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":3,\"ciphertext\":\"deadbeef\",\"tag\":\"00000000000000000000000000000000\"}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "oversize-ciphertext",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":1048577,\"ciphertext\":\"deadbeef\",\"tag\":\"00000000000000000000000000000000\"}",
+      "ok": false,
+      "reason": "oversize-ciphertext"
+    },
+    {
+      "name": "short-tag",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":0,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbeef\",\"tag\":\"000000000000000000000000000000\"}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    },
+    {
+      "name": "unsafe-sequence",
+      "text": "{\"formatVersion\":2,\"pairId\":\"a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\",\"direction\":\"A->B\",\"sequence\":9007199254740992,\"startOffset\":0,\"ciphertextLength\":4,\"ciphertext\":\"deadbeef\",\"tag\":\"00000000000000000000000000000000\"}",
+      "ok": false,
+      "reason": "malformed-envelope"
+    }
+  ]
+}

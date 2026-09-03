@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 11 (API 30) and below, where fullBackupContent is the mechanism and
+  data_extraction_rules.xml is ignored.
+
+  Same policy, same reason: nothing this app stores may be carried to another
+  device or another point in time. android:allowBackup="false" is what actually
+  turns Auto Backup off here; this file makes the intent explicit for any code
+  path that consults the rules anyway.
+-->
+<full-backup-content>
+    <exclude domain="root" path="." />
+</full-backup-content>

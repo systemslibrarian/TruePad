@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  TruePad Android — the whole attack surface this app offers the rest of the
+  device. Read it as a list of what is deliberately ABSENT.
+
+  NO <uses-permission> AT ALL. Not INTERNET, not storage. The app has no
+  backend, and every file it touches is either app-private or one the operator
+  picked in the system file picker, which grants access per-URI without a
+  permission. A permission added later is a visible diff and a failing test
+  (ManifestHardeningTest).
+
+  NO exported component except the launcher activity, which must be exported to
+  appear in the launcher at all. No service, no receiver, NO PROVIDER.
+
+  NO FileProvider. Export writes through the Storage Access Framework to a
+  location the operator chose, and sharing an encrypted message uses ACTION_SEND
+  with plain text. Neither needs a content provider, so the app does not have
+  one — there is no paths XML to get subtly wrong and no way to hand another app
+  a URI into the pad store.
+
+  NO intent-filter that accepts content. The app never advertises itself as a
+  handler for a file type or a share target. A hostile app therefore cannot push
+  anything into it; the operator pulls, through the picker they opened.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:name=".TruePadApp"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:theme="@style/Theme.TruePad"
+        android:supportsRtl="true"
+
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:hasFragileUserData="false"
+
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config"
+
+        android:enableOnBackInvokedCallback="true"
+        tools:targetApi="33">
+
+        <!--
+          THE ONLY EXPORTED COMPONENT, and only because a launcher entry
+          requires it. It takes no data: the intent filter is MAIN/LAUNCHER and
+          nothing else, so there is no path by which another application can
+          hand this activity a URI, an extra, or an action of its own choosing.
+
+          configChanges is deliberately NOT set. Letting Android recreate the
+          activity on rotation is the honest default and is what the lifecycle
+          tests exercise — authoritative state is reloaded from the engine on
+          every resume, never restored from a saved UI bundle.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.TruePad"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          REMOVED, not inherited. androidx.profileinstaller (pulled in
+          transitively by Compose) merges in an EXPORTED broadcast receiver so
+          that shell tooling can trigger baseline-profile installation. It is
+          permission-protected, and it is still an exported component this app
+          neither needs nor uses — TruePad ships no baseline profile and has no
+          benchmark harness. An exported component that exists for a feature you
+          do not have is surface for nothing, so it is removed here and
+          ManifestHardeningTest fails if it ever comes back.
+
+          The provider that installs the profile at startup is left in place: it
+          is not exported, and removing it would disable the ahead-of-time
+          profile the app does benefit from.
+        -->
+        <receiver
+            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+            tools:node="remove"
+            tools:ignore="MissingClass" />
+    </application>
+</manifest>

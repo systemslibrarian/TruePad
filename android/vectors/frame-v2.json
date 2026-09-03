@@ -1,0 +1,62 @@
+{
+  "note": "GENERATED from the released TruePad v2.0.0 (tag v2.0.0, commit 240d7f0) by android/tools/generate-vectors.mjs (run it via android/tools/regenerate-vectors.sh). Every value is the released implementation's own output. The Kotlin port must reproduce these byte-for-byte.",
+  "build": [
+    {
+      "recordBytes": 32,
+      "plaintextHex": "",
+      "capacity": 28,
+      "frameHex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "parsedHex": ""
+    },
+    {
+      "recordBytes": 32,
+      "plaintextHex": "00",
+      "capacity": 28,
+      "frameHex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "parsedHex": "00"
+    },
+    {
+      "recordBytes": 32,
+      "plaintextHex": "48656c6c6f",
+      "capacity": 28,
+      "frameHex": "0500000048656c6c6f0000000000000000000000000000000000000000000000",
+      "parsedHex": "48656c6c6f"
+    },
+    {
+      "recordBytes": 48,
+      "plaintextHex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "capacity": 44,
+      "frameHex": "2c000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "parsedHex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "recordBytes": 64,
+      "plaintextHex": "032345698fb7e10d3b6b9dd1073f79b5f8",
+      "capacity": 60,
+      "frameHex": "11000000032345698fb7e10d3b6b9dd1073f79b5f800000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "parsedHex": "032345698fb7e10d3b6b9dd1073f79b5f8"
+    }
+  ],
+  "parseRejects": [
+    {
+      "name": "prefix-past-capacity",
+      "frameHex": "ffffff7f00000000000000000000000000000000000000000000000000000000",
+      "parsedHex": null
+    },
+    {
+      "name": "prefix-one-past",
+      "frameHex": "1d00000000000000000000000000000000000000000000000000000000000000",
+      "parsedHex": null
+    },
+    {
+      "name": "prefix-exactly-capacity",
+      "frameHex": "1c00000000000000000000000000000000000000000000000000000000000000",
+      "parsedHex": "00000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "name": "high-bit-u32",
+      "frameHex": "0000008000000000000000000000000000000000000000000000000000000000",
+      "parsedHex": null
+    }
+  ]
+}

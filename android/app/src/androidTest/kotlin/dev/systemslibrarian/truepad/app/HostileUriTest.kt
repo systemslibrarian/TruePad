@@ -1,0 +1,230 @@
+package dev.systemslibrarian.truepad.app
+
+import android.net.Uri
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import dev.systemslibrarian.truepad.core.Direction
+import dev.systemslibrarian.truepad.storage.Engine
+import dev.systemslibrarian.truepad.storage.EngineRefused
+import dev.systemslibrarian.truepad.storage.NioFs
+import dev.systemslibrarian.truepad.storage.SourceInput
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.File
+import java.io.IOException
+
+/**
+ * A URI FROM THE PICKER IS NOT A FILE PATH.
+ *
+ * The operator chooses it, but whoever OWNS it serves it, and that may be another
+ * application. It can misreport its size, stream without end, hand back a display
+ * name full of path separators, or simply fail halfway. None of that may become
+ * TruePad's problem, and none of it may reach the pad store.
+ */
+@RunWith(AndroidJUnit4::class)
+class HostileUriTest {
+
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
+    private val resolver = context.contentResolver
+
+    private fun tempUri(name: String, bytes: ByteArray): Uri {
+        // A file:// URI resolved through the ContentResolver exercises the same
+        // openInputStream path a picker URI takes.
+        val f = File(context.cacheDir, name)
+        f.writeBytes(bytes)
+        return Uri.fromFile(f)
+    }
+
+    /* ---- the bounded read ---------------------------------------------------- */
+
+    @Test
+    fun aFileAtTheCeilingIsReadAndOnePastItIsRefused() {
+        val limit = 4096
+        val exact = ByteArray(limit) { (it and 0xFF).toByte() }
+        val read = AndroidStorage.readPicked(resolver, tempUri("exact.bin", exact), limit)
+        assertEquals("a file of exactly the ceiling is allowed", limit, read.size)
+
+        try {
+            AndroidStorage.readPicked(resolver, tempUri("over.bin", ByteArray(limit + 1)), limit)
+            error("a file past the ceiling was accepted")
+        } catch (e: AndroidStorage.PickedFileTooLarge) {
+            assertEquals(limit, e.limit)
+        }
+    }
+
+    /**
+     * THE CEILING IS ON WHAT ARRIVES, not on what anything claims.
+     *
+     * A picker URI is served by whoever owns it, and a hostile provider can
+     * report a size of one byte and then stream for ever. A reader that trusted
+     * the reported size would allocate one byte and loop until the device ran
+     * out of memory. The ceiling is tested here against a stream that genuinely
+     * never ends, which no fixed test file can produce.
+     */
+    @Test
+    fun anEndlessStreamCannotCauseAnUnboundedRead() {
+        val endless = object : java.io.InputStream() {
+            var served = 0L
+            override fun read(): Int { served += 1; return 0 }
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                java.util.Arrays.fill(b, off, off + len, 0)
+                served += len
+                return len
+            }
+        }
+        val limit = 64 * 1024
+        try {
+            AndroidStorage.readBounded(endless, limit)
+            error("an endless stream was read to completion")
+        } catch (e: AndroidStorage.PickedFileTooLarge) {
+            assertEquals(limit, e.limit)
+        }
+        // It stopped promptly rather than after some large multiple.
+        assertTrue("the read must stop near the ceiling, served ${endless.served}", endless.served <= limit + (1 shl 16))
+    }
+
+    /**
+     * The reader never consults the size a provider reports — it does not query
+     * for it at all. A file whose OpenableColumns.SIZE would be wrong is still
+     * read correctly, because the only thing consulted is the stream.
+     */
+    @Test
+    fun theReportedSizeIsNeverConsulted() {
+        val payload = ByteArray(5000) { (it and 0x7F).toByte() }
+        val read = AndroidStorage.readPicked(resolver, tempUri("size.bin", payload), 64 * 1024)
+        assertEquals(payload.size, read.size)
+        assertTrue(read.contentEquals(payload))
+    }
+
+    @Test
+    fun anUnopenableUriFailsCleanly() {
+        val uri = Uri.parse("content://com.example.does.not.exist/whatever")
+        try {
+            AndroidStorage.readPicked(resolver, uri)
+            error("a nonexistent provider was read successfully")
+        } catch (e: Exception) {
+            assertTrue("must be an IO or permission failure, not a crash: $e", e is IOException || e is SecurityException)
+        }
+    }
+
+    /* ---- the display name ----------------------------------------------------- */
+
+    /**
+     * A display name is decoration. It is never a path, never a decision, and
+     * anything that could make it read as one is neutralised.
+     *
+     * The PROPERTIES are what is asserted, not one particular rewriting: the
+     * result must be unusable as a path, free of control characters and of the
+     * bidi overrides that make a name render as something it is not, non-empty,
+     * and bounded. Two spot checks follow so a sanitiser that returned a
+     * constant would still fail.
+     */
+    @Test
+    fun aHostileDisplayNameCannotEscapeItsRole() {
+        val hostile = listOf(
+            "../../../etc/passwd",
+            "/absolute/path",
+            "..\\..\\windows\\system32",
+            "name\u0000truncated",
+            "line\nbreak",
+            "\u202Egnp.exe",
+            "\u200F\u200Ereversed",
+            "....",
+            "x".repeat(500),
+            "",
+            "   ",
+        )
+        for (raw in hostile) {
+            val safe = AndroidStorage.sanitiseDisplayName(raw, "source")
+            assertTrue("must never be empty", safe.isNotEmpty())
+            assertFalse("no forward slash: $safe", safe.contains('/'))
+            assertFalse("no backslash: $safe", safe.contains('\\'))
+            assertFalse("no control characters: $safe", safe.any { it.isISOControl() })
+            assertFalse("no bidi override: $safe", safe.any { it in "\u202E\u202D\u200F\u200E" })
+            assertTrue("bounded length: ${safe.length}", safe.length <= 65)
+        }
+        assertEquals("_absolute_path", AndroidStorage.sanitiseDisplayName("/absolute/path", "source"))
+        assertEquals("ordinary name.bin", AndroidStorage.sanitiseDisplayName("ordinary name.bin", "source"))
+        assertEquals("source", AndroidStorage.sanitiseDisplayName(null, "source"))
+    }
+
+    /* ---- what reaches the engine ----------------------------------------------- */
+
+    /**
+     * Whatever the picker returns, the ENGINE decides whether it is a pad. A file
+     * that claims to be a bundle and is not must leave no active pair, no
+     * staging, and above all nothing outside the store root — on the device's
+     * real filesystem, where a traversal would actually traverse.
+     */
+    @Test
+    fun hostileBundleBytesLeaveNothingBehindOnDevice() {
+        val store = File(context.filesDir, "test-hostile-store").also { it.deleteRecursively() }
+        val witness = File(context.noBackupFilesDir, "test-hostile-witness").also { it.deleteRecursively() }
+        val engine = Engine(NioFs(store), NioFs(witness))
+        val id = "a".repeat(32)
+
+        val hostile = listOf(
+            "empty" to ByteArray(0),
+            "not json" to "just some bytes".toByteArray(),
+            "wrong tag" to """{"format":"something-else","version":1,"pairId":"$id","files":[]}""".toByteArray(),
+            "traversal path" to """{"format":"truepad2-pair-bundle","version":1,"pairId":"$id","files":[{"path":"../../../etc/passwd","bytesB64":"AAAA"}]}""".toByteArray(),
+            "absolute path" to """{"format":"truepad2-pair-bundle","version":1,"pairId":"$id","files":[{"path":"/data/data/x","bytesB64":"AAAA"}]}""".toByteArray(),
+            "huge nesting" to ("[".repeat(20_000) + "]".repeat(20_000)).toByteArray(),
+        )
+        for ((why, bytes) in hostile) {
+            val refusal = try {
+                engine.importPair("hostile", bytes); null
+            } catch (r: EngineRefused) { r }
+            assertNotNull("$why must be refused", refusal)
+            assertTrue("$why must carry a typed reason", refusal!!.reason.isNotEmpty())
+        }
+
+        assertTrue("no pair may exist", engine.listPairs().isEmpty())
+        assertFalse("no traversal may have happened", File(context.filesDir, "../etc").resolve("passwd").exists())
+
+        // No PAD file may be left behind. The engine's per-pair lock files under
+        // .locks/ are zero-byte mutexes in app-private storage, not store
+        // content, and they are expected to persist.
+        val stray = store.walkTopDown().filter { it.isFile }.filterNot { it.parentFile?.name == ".locks" }.toList()
+        assertTrue("no pad files may be left behind, found $stray", stray.isEmpty())
+        assertTrue(
+            "and any lock file must be empty",
+            store.walkTopDown().filter { it.isFile && it.parentFile?.name == ".locks" }.all { it.length() == 0L },
+        )
+
+        store.deleteRecursively(); witness.deleteRecursively()
+    }
+
+    /** A picked file's bytes are read, then handed to the engine — never mapped as a path. */
+    @Test
+    fun anImportedPadIsCopiedInRatherThanOperatedOnInPlace() {
+        val store = File(context.filesDir, "test-copy-store").also { it.deleteRecursively() }
+        val witness = File(context.noBackupFilesDir, "test-copy-witness").also { it.deleteRecursively() }
+        val alice = Engine(NioFs(store), NioFs(witness))
+        val need = (2 * (256 + 32 * 8)).toInt()
+        val material = ByteArray(need) { (it * 7 and 0xFF).toByte() }
+        val pairId = alice.gen("copy", listOf(SourceInput("s", "o", material)), 256, 8).pair.pairId
+        val container = alice.exportPair(pairId).container
+
+        val external = File(context.cacheDir, "external-pad.json")
+        external.writeBytes(container)
+
+        val bobStore = File(context.filesDir, "test-copy-bob").also { it.deleteRecursively() }
+        val bobWitness = File(context.noBackupFilesDir, "test-copy-bobw").also { it.deleteRecursively() }
+        val bob = Engine(NioFs(bobStore), NioFs(bobWitness))
+        bob.importPair("from file", AndroidStorage.readPicked(resolver, Uri.fromFile(external)))
+
+        // The pad now lives inside the app's own store...
+        assertTrue(File(bobStore, "$pairId/a-to-b/secret.bin").isFile)
+        // ...and deleting the source file changes nothing.
+        assertTrue(external.delete())
+        assertEquals(1, bob.listPairs().size)
+        assertEquals(256L, bob.status(pairId).meters.getValue(Direction.A_TO_B).capacity)
+
+        listOf(store, witness, bobStore, bobWitness).forEach { it.deleteRecursively() }
+    }
+}

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A sheet with a torn-off corner: one page of a pad, used once and gone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#F3EFE4"
+        android:pathData="M34,28 L62,28 L74,40 L74,80 L34,80 Z" />
+    <path
+        android:fillColor="#11100C"
+        android:pathData="M62,28 L62,40 L74,40 Z" />
+    <path
+        android:fillColor="#11100C"
+        android:pathData="M41,52 h26 v3 h-26 z M41,60 h26 v3 h-26 z M41,68 h16 v3 h-16 z" />
+</vector>
