@@ -172,8 +172,14 @@ describe("the strongest verdict requires the INDEPENDENT platform ceremony autho
     expect(r.knownReason).toMatch(/inconsistent/i);
   });
 
+  it("an UNTRUSTED authority (the pair names one that is not the pinned root) is NOT ELIGIBLE", () => {
+    const r = assessDeployment(withFacts({ assuranceAuthority: "untrusted-authority" }));
+    expect(r.assessment).toBe("not-eligible");
+    expect(r.knownReason).toMatch(/trust root|pinned/i);
+  });
+
   it("handoff-accepted is the ONLY assurance value that reaches gold", () => {
-    for (const a of ["unavailable", "ordinary", "ceremony-created", "withdrawn", "inconsistent"] as const) {
+    for (const a of ["unavailable", "untrusted-authority", "ordinary", "ceremony-created", "withdrawn", "inconsistent"] as const) {
       expect(assessDeployment(withFacts({ assuranceAuthority: a })).assessment).not.toBe("conditionally-eligible");
     }
     expect(assessDeployment(withFacts({ assuranceAuthority: "handoff-accepted" })).assessment).toBe("conditionally-eligible");

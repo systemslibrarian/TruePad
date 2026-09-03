@@ -297,9 +297,10 @@ cannot prove the handoff was private or that no other copy exists. A second
 `accept` refuses, and nothing moves the delivery back.
 
 Only after acceptance — and with a **live platform-monotonic (TPM)** rollback
-authority configured at generation — does `truepad2 status` show the strongest
-label, CONDITIONALLY ELIGIBLE, always beside the physical premises TruePad did
-not prove. A separate-state-file witness is fully supported and strongly
+authority that is this installation's **pinned** trusted authority (`truepad2
+authority pin`; a pair may not choose the trust root) — does `truepad2 status`
+show the strongest label, CONDITIONALLY ELIGIBLE, always beside the physical
+premises TruePad did not prove. A separate-state-file witness is fully supported and strongly
 rollback-protected, but does not by itself meet the maximum-assurance
 rollback requirement (it can be restored with the pair), so such a pad stays
 INSUFFICIENT. See [MAXIMUM-ASSURANCE.md](MAXIMUM-ASSURANCE.md).

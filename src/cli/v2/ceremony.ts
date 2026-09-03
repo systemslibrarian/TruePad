@@ -56,7 +56,13 @@ import { HEAD_FILE, JOURNAL_FILE, loadStore2, SECRET_FILE, type LoadedStore2 } f
 import { gen, Refused2, SUBDIR2, withPair, type Args2, type LoadedPair } from "./truepad2.ts";
 import { ceremonyProvenance, PROVENANCE_FILE, provenanceBoundTo, readProvenance, writeProvenance } from "./provenance.ts";
 import { isWithdrawn, withdrawalRecord, writeWithdrawal } from "./withdrawal.ts";
-import { platformAssurance, platformRecordAssurance, type AssuranceLevel, type PlatformConfig } from "./platform-witness.ts";
+import {
+  platformAssurance,
+  platformRecordAssurance,
+  resolvePlatformAuthority,
+  type AssuranceLevel,
+  type PlatformConfig
+} from "./platform-witness.ts";
 
 /* ---- the operator assertions ----------------------------------------------
  * Presence flags (parseArgs2 consumes no value for them): the operator makes
@@ -550,7 +556,21 @@ export function ceremonyCreate(args: Args2): void {
           "location. Nothing usable was provisioned."
       );
     }
-    const created = platformRecordAssurance(config, manifest.pairId, "ceremony-created");
+    // Root of trust: a maximum-assurance ceremony pair may only be created against
+    // this installation's PINNED trusted authority. Record `ceremony-created`
+    // there — never the authority head.json alone names (§7, §19).
+    const res = resolvePlatformAuthority(config);
+    if (res.trust === "unpinned") {
+      throw new Refused2(
+        "ceremony-incomplete",
+        "no trusted platform authority is pinned for this installation (`truepad2 authority pin`). A ceremony pair " +
+          "cannot be created against an unpinned authority. Nothing usable was provisioned."
+      );
+    }
+    if (res.trust === "mismatched") {
+      throw new Refused2("ceremony-incomplete", `${res.message} Nothing usable was provisioned.`);
+    }
+    const created = platformRecordAssurance(res.config, manifest.pairId, "ceremony-created");
     if (!created.ok) {
       throw new Refused2(
         "ceremony-incomplete",
@@ -807,9 +827,23 @@ function platformConfigOfPair(pair: LoadedPair): PlatformConfig | null {
 // no such authority to advance; the caller records only the descriptive sidecar,
 // and such a pair can never reach the maximum-assurance verdict anyway.
 function advancePlatformAssurance(pair: LoadedPair, pairId: string, target: AssuranceLevel): boolean {
-  const config = platformConfigOfPair(pair);
-  if (config === null) return false;
-  const r = platformRecordAssurance(config, pairId, target);
+  const claimed = platformConfigOfPair(pair);
+  if (claimed === null) return false;
+  // Root of trust: the transition is recorded ONLY in this installation's PINNED
+  // trusted authority, never the one head.json names. An unpinned installation
+  // or a pair naming a different authority is refused (§7, §20-§21).
+  const res = resolvePlatformAuthority(claimed);
+  if (res.trust === "unpinned") {
+    throw new Refused2(
+      "ceremony-incomplete",
+      "no trusted platform authority is pinned for this installation (`truepad2 authority pin`); a ceremony " +
+        "transition cannot be recorded. Nothing was changed."
+    );
+  }
+  if (res.trust === "mismatched") {
+    throw new Refused2("ceremony-incomplete", `${res.message} Nothing was changed.`);
+  }
+  const r = platformRecordAssurance(res.config, pairId, target);
   if (!r.ok) {
     throw new Refused2(
       "ceremony-incomplete",
@@ -959,11 +993,17 @@ export function ceremonyWithdraw(args: Args2): void {
 
   withPair(medium, (pair) => {
     const pairId = requireSharedPairId(pair);
-    const config = platformConfigOfPair(pair);
+    const claimed = platformConfigOfPair(pair);
 
-    // Already-withdrawn is decided by the LOAD-BEARING authority: the platform
-    // authority for a platform pair, the sidecar otherwise.
-    const alreadyWithdrawn = config !== null ? platformAssurance(config, pairId) === "withdrawn" : isWithdrawn(medium, pairId);
+    // Already-withdrawn is decided by the LOAD-BEARING authority: the PINNED
+    // platform authority for a platform pair, the sidecar otherwise.
+    let alreadyWithdrawn: boolean;
+    if (claimed !== null) {
+      const res = resolvePlatformAuthority(claimed);
+      alreadyWithdrawn = res.trust === "trusted" && platformAssurance(res.config, pairId) === "withdrawn";
+    } else {
+      alreadyWithdrawn = isWithdrawn(medium, pairId);
+    }
     if (alreadyWithdrawn) {
       err("CEREMONY PREMISES ALREADY WITHDRAWN");
       err(`  medium:  ${medium}`);

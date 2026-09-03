@@ -96,7 +96,8 @@ export type RollbackAuthority =
  *                       by deleting or editing a pair-directory sidecar).
  *  - `inconsistent`     the authority's state is stale/substituted/corrupt. */
 export type AssuranceAuthority =
-  | "unavailable"
+  | "unavailable" // no platform authority, or none pinned/reachable — cannot attest
+  | "untrusted-authority" // the pair names an authority that is NOT this installation's pinned trusted one
   | "ordinary"
   | "ceremony-created"
   | "handoff-accepted"
@@ -185,6 +186,12 @@ export function assessDeployment(f: DeploymentFacts): DeploymentAssessment {
   // withdrawal it attests is permanent and cannot be undone by editing or
   // deleting a pair-directory sidecar; an inconsistent (stale/substituted)
   // authority fails closed.
+  if (f.assuranceAuthority === "untrusted-authority") {
+    return notEligible(
+      "this pair names a platform authority that is NOT this installation's pinned trusted authority — a pair may " +
+        "reference an authority but may not choose the trust root"
+    );
+  }
   if (f.assuranceAuthority === "withdrawn") {
     return notEligible(
       "the platform authority attests a TERMINAL withdrawal of this pair's ceremony premises — a permanent downgrade"
@@ -320,7 +327,8 @@ export function rollbackAuthorityLabel(r: RollbackAuthority): string {
  *  `handoff-accepted` (attested by the TPM-anchored authority) satisfies the
  *  maximum-assurance ceremony requirement. */
 export const ASSURANCE_AUTHORITY_LABEL: Record<AssuranceAuthority, string> = {
-  unavailable: "unavailable (no platform ceremony authority)",
+  unavailable: "unavailable (no platform ceremony authority, or none pinned/reachable)",
+  "untrusted-authority": "UNTRUSTED (the pair names an authority that is not this installation's pinned one)",
   ordinary: "ordinary (no ceremony attested by the platform authority)",
   "ceremony-created": "ceremony-created (platform-attested; handoff pending)",
   "handoff-accepted": "handoff-accepted (platform-attested)",

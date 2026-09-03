@@ -257,7 +257,17 @@ That authority records a monotone, per-pair ceremony ladder —
 where each advance is a real ceremony operation that consumes a **TPM increment**
 (`ceremony create`, `ceremony accept`, `ceremony withdraw`). The evaluator
 requires `assurance-authority = handoff-accepted` for CONDITIONALLY ELIGIBLE, and
-reads it with a strictly read-only probe. A pair the authority never recorded
+reads it with a strictly read-only probe.
+
+Crucially, **a pair may not choose which authority is trusted.** `head.json` is
+unauthenticated pair-directory data, so it may only *reference* an authority. The
+installation's trusted authority is pinned by the operator into a host trust
+store OUTSIDE every pair directory (`truepad2 authority pin`), and every platform
+operation resolves a pair's *claimed* authority against that pin, reading the
+**pinned** state — never the one `head.json` names. A pair that names any other
+authority (even a valid foreign TPM authority the attacker controls) reads
+`untrusted-authority` and is NOT ELIGIBLE; an unpinned installation reads
+`unavailable` and is INSUFFICIENT. See [MAXIMUM-ASSURANCE.md](MAXIMUM-ASSURANCE.md). A pair the authority never recorded
 reads `ordinary` (editing its JSON changes nothing the evaluator trusts, and
 `ceremony accept` refuses); a stale restore of the authority's own state file is
 caught by its TPM anchor and reads `inconsistent`; a pair with no platform

@@ -208,7 +208,8 @@ source, a sealed computational delivery, ordinary browser storage as the live
 authority, or a plain `gen` store (which is *not* the physical ceremony) is NOT
 ELIGIBLE; a ceremony store whose private handoff has not yet been accepted is
 INSUFFICIENT EVIDENCE; and only a native ceremony pad with an *accepted* private
-handoff and an independent rollback witness is CONDITIONALLY ELIGIBLE — with the
+handoff, attested by the installation's **operator-pinned** platform authority (a
+pair may not choose its own trust root), is CONDITIONALLY ELIGIBLE — with the
 physical premises still unproven and shown beside the label. See
 [Shannon deployment](SHANNON-DEPLOYMENT.md) and
 [Maximum assurance](MAXIMUM-ASSURANCE.md).

@@ -17,7 +17,14 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { initPlatformWitness, platformAssurance, platformRecordAssurance, type PlatformConfig } from "../src/cli/v2/platform-witness";
+import {
+  initPlatformWitness,
+  platformAssurance,
+  platformRecordAssurance,
+  resolvePlatformAuthority,
+  type PlatformConfig
+} from "../src/cli/v2/platform-witness";
+import { removeTrustPin, writeTrustPin } from "../src/cli/v2/trust-store";
 import { PROVIDER_ID, type NvPublic, type TpmProvider, type TpmResult } from "../src/cli/v2/tpm";
 
 const NV = "0x01500016";
@@ -84,6 +91,51 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const record = (pairId: string, level: Parameters<typeof platformRecordAssurance>[2]) =>
   platformRecordAssurance(config, pairId, level, tpm);
+
+describe("resolution against the pin, end to end (FakeTpm)", () => {
+  // The pin points at the trusted state path; the resolution reads THAT, not the
+  // one a pair's head names. A pair claiming the pinned identity resolves trusted
+  // and its attestation is read from the pinned state.
+  afterEach(() => {
+    delete process.env.TRUEPAD_TRUST_STORE;
+  });
+  function pin(): void {
+    process.env.TRUEPAD_TRUST_STORE = join(dir, "trust.json");
+    writeTrustPin({ trustVersion: 1, provider: config.provider, authorityId: config.authorityId, nvIndex: config.nvIndex, nvName: config.nvName, statePath: config.statePath });
+  }
+  // A pair's head names the pinned IDENTITY but a bogus statePath (must be ignored).
+  const pairClaim = (): PlatformConfig => ({ ...config, statePath: join(dir, "attacker-named.json") });
+
+  it("a pair claiming the pinned authority resolves trusted and reads the pinned attestation", () => {
+    pin();
+    record(PAIR, "ceremony-created");
+    record(PAIR, "handoff-accepted");
+    const res = resolvePlatformAuthority(pairClaim());
+    expect(res.trust).toBe("trusted");
+    if (res.trust === "trusted") {
+      expect(res.config.statePath).toBe(config.statePath); // pinned path, not the pair's
+      expect(platformAssurance(res.config, PAIR, tpm)).toBe("handoff-accepted");
+    }
+  });
+
+  it("with no pin, the same pair resolves unpinned", () => {
+    process.env.TRUEPAD_TRUST_STORE = join(dir, "trust.json");
+    removeTrustPin(join(dir, "trust.json"));
+    expect(resolvePlatformAuthority(pairClaim()).trust).toBe("unpinned");
+  });
+
+  it("(item 14) same pin, but the live TPM index recreated with a DIFFERENT Name ⇒ inconsistent", () => {
+    pin();
+    record(PAIR, "handoff-accepted");
+    const res = resolvePlatformAuthority(pairClaim());
+    expect(res.trust).toBe("trusted");
+    if (res.trust === "trusted") {
+      // A different physical authority now sits at the index (Name changed).
+      const foreign = new FakeTpm({ counter: tpm.counter, name: "000b" + "ee".repeat(16) });
+      expect(platformAssurance(res.config, PAIR, foreign)).toBe("inconsistent");
+    }
+  });
+});
 
 describe("the monotone ceremony-assurance ladder", () => {
   it("a fresh pair is ordinary; create → accepted, each consuming exactly one TPM increment", () => {

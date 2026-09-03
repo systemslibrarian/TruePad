@@ -97,15 +97,19 @@ import {
 } from "./ceremony.ts";
 import {
   initPlatformWitness,
+  inspectAuthorityForPin,
   platformAdvance,
   platformAssurance,
   platformHealth,
   platformPreflight,
+  resolvePlatformAuthority,
   validatePlatformState,
   type PlatformAssurance,
   type PlatformConfig,
-  type PlatformHealth
+  type PlatformHealth,
+  type PlatformResolution
 } from "./platform-witness.ts";
+import { readTrustPin, removeTrustPin, trustStorePath, writeTrustPin, type TrustPin } from "./trust-store.ts";
 import {
   ASSESSMENT_LABEL,
   assessDeployment,
@@ -471,25 +475,39 @@ function witnessPreflight(store: LoadedStore2, pairDir: string): WitnessSnapshot
   if (rollback.witnessClass === "none") {
     return null;
   }
-  const configPath =
-    rollback.witnessClass === "platform-monotonic"
-      ? (rollback.config as unknown as PlatformConfig).statePath
-      : rollback.witnessClass === "separate-state-file"
-        ? rollback.config.path
-        : null;
-  if (configPath !== null && witnessPathInsidePair(configPath, pairDir)) {
+  // A separate-state-file witness has no trust pin, so an in-pair-directory
+  // witness is rejected here (not independent). A platform-monotonic authority is
+  // resolved against the pin below, which ignores head.json's statePath entirely.
+  if (rollback.witnessClass === "separate-state-file" && witnessPathInsidePair(rollback.config.path, pairDir)) {
     throw new Refused2(
       "witness-unsupported",
-      `this pair's rollback witness state file (${configPath}) resolves INSIDE the pair directory. A rollback ` +
-        "authority must be independent of the pair it protects — an in-pair-directory witness is not, and is refused " +
-        "so a forged in-pair authority cannot be adopted. Re-point the witness at an external path. Nothing was burned."
+      `this pair's rollback witness state file (${rollback.config.path}) resolves INSIDE the pair directory. A ` +
+        "rollback authority must be independent of the pair it protects. Re-point the witness at an external path. " +
+        "Nothing was burned."
     );
   }
   if (rollback.witnessClass === "platform-monotonic") {
     // The TPM-anchored authority (§15.2, provider tpm2-nv-counter-v1). Every
     // refusal here is FREE: nothing is consumed, and a platform outage is an
     // availability failure, never a downgrade to a weaker class.
-    const config = rollback.config as unknown as PlatformConfig;
+    //
+    // Root of trust: the pair's CLAIMED authority is resolved against the pinned
+    // one, and the PINNED state file (never the one head.json names) is used — so
+    // a redirect to a forged or foreign authority cannot escape rollback
+    // detection here (§7). An unpinned installation or a pair naming any other
+    // authority refuses free.
+    const res = resolvePlatformAuthority(rollback.config as unknown as PlatformConfig);
+    if (res.trust === "unpinned") {
+      throw new Refused2(
+        "witness-unreachable",
+        "this pair uses a platform-monotonic authority, but no trusted platform authority is pinned for this " +
+          "installation (`truepad2 authority pin`). Refusing before anything is consumed. Nothing was burned."
+      );
+    }
+    if (res.trust === "mismatched") {
+      throw new Refused2("witness-unsupported", `${res.message} Nothing was burned.`);
+    }
+    const config = res.config;
     const result = platformPreflight(config, store.head.pairId, store.head.direction);
     if (!result.ok) {
       throw new Refused2("witness-unreachable", `${result.message} Nothing was burned.`);
@@ -601,7 +619,19 @@ function witnessPreflight(store: LoadedStore2, pairDir: string): WitnessSnapshot
 function witnessAdvance(store: LoadedStore2, snapshot: WitnessSnapshot | null, counters: WitnessCounters): void {
   const rollback = store.head.rollback;
   if (rollback.witnessClass === "platform-monotonic") {
-    const config = rollback.config as unknown as PlatformConfig;
+    // Advance the PINNED (trusted) authority — the same one the preflight
+    // resolved and read — never the state file head.json names (§7). The
+    // preflight already refused an unpinned/mismatched pair; if the pin changed
+    // between preflight and advance, fail closed and withhold the output.
+    const res: PlatformResolution = resolvePlatformAuthority(rollback.config as unknown as PlatformConfig);
+    if (res.trust !== "trusted") {
+      throw new Error(
+        `the durable state commit succeeded but the trusted platform authority could not be resolved for the advance ` +
+          `(${res.trust === "mismatched" ? res.message : "no pinned authority"}). This record's pad material is retired ` +
+          "and is LOST; the output was withheld. No anchor is fabricated."
+      );
+    }
+    const config = res.config;
     const result = platformAdvance(config, store.head.pairId, store.head.direction, counters, snapshot);
     if (!result.ok) {
       // Post-commit: the material is retired and the output MUST be withheld
@@ -1471,24 +1501,6 @@ function separateHealthOf(store: LoadedStore2): WitnessHealth {
   return report.comparison === "regressed" ? "regressed" : "healthy";
 }
 
-/** The LIVE platform-monotonic health for one store, via the read-only probe
- *  (no TPM increment, no prepared-commit settle). Injectable `tpm` for tests. */
-function platformHealthOf(store: LoadedStore2, tpm?: Parameters<typeof platformHealth>[4]): WitnessHealth {
-  const config = store.head.rollback.config as unknown as PlatformConfig;
-  const h: PlatformHealth = platformHealth(
-    config,
-    store.head.pairId,
-    store.head.direction,
-    {
-      nextOffset: store.effective.nextOffset,
-      nextSequence: store.effective.nextSequence,
-      attemptsReserved: store.effective.attemptsReserved
-    },
-    tpm
-  );
-  return h;
-}
-
 // Worst-of two live healths across the pair's two directions: a positive
 // rollback/corruption signal on EITHER half governs, then an availability
 // failure, then healthy. Both halves must be live and clean to be healthy.
@@ -1521,11 +1533,19 @@ function rollbackAuthorityForPair(pair: LoadedPair, pairDir: string, tpm?: Param
     return { kind: "separate-state-file", health: worstHealth(separateHealthOf(pair["A->B"]), separateHealthOf(pair["B->A"])) };
   }
   if (a === "platform-monotonic") {
-    const statePath = (pair["A->B"].head.rollback.config as unknown as PlatformConfig).statePath;
-    if (witnessPathInsidePair(statePath, pairDir)) {
-      return { kind: "platform-monotonic", health: "inconsistent" };
-    }
-    return { kind: "platform-monotonic", health: worstHealth(platformHealthOf(pair["A->B"], tpm), platformHealthOf(pair["B->A"], tpm)) };
+    // Root of trust: resolve the pair's claimed authority against the pinned one.
+    const res = resolvePlatformAuthority(pair["A->B"].head.rollback.config as unknown as PlatformConfig);
+    if (res.trust === "unpinned") return { kind: "platform-monotonic", health: "unreachable" };
+    if (res.trust === "mismatched") return { kind: "platform-monotonic", health: "inconsistent" };
+    // Trusted: probe BOTH directions' health against the PINNED (trusted) config —
+    // never the state file head.json names.
+    const healthOf = (store: LoadedStore2): WitnessHealth =>
+      platformHealth(res.config, store.head.pairId, store.head.direction, {
+        nextOffset: store.effective.nextOffset,
+        nextSequence: store.effective.nextSequence,
+        attemptsReserved: store.effective.attemptsReserved
+      }, tpm);
+    return { kind: "platform-monotonic", health: worstHealth(healthOf(pair["A->B"]), healthOf(pair["B->A"])) };
   }
   return { kind: "unknown" };
 }
@@ -1546,11 +1566,15 @@ function assuranceAuthorityForPair(
   const a = pair["A->B"].head.rollback.witnessClass;
   const b = pair["B->A"].head.rollback.witnessClass;
   if (sharedPairId === null || a !== b || a !== "platform-monotonic") return "unavailable";
-  const config = pair["A->B"].head.rollback.config as unknown as PlatformConfig;
-  // Authority-redirect closure: an in-pair-directory authority is not independent
-  // and cannot attest anything, however well-formed its forged state file is.
-  if (witnessPathInsidePair(config.statePath, pairDir)) return "inconsistent";
-  const level: PlatformAssurance = platformAssurance(config, sharedPairId, tpm);
+  // Root of trust: resolve the pair's CLAIMED authority against this
+  // installation's PINNED trusted authority. The pair cannot choose the trust
+  // root — an unpinned installation reads `unavailable`, and a pair naming any
+  // other authority reads `untrusted-authority`. Only the pinned authority's
+  // state (never the one head.json names) is read for the attestation.
+  const res = resolvePlatformAuthority(pair["A->B"].head.rollback.config as unknown as PlatformConfig);
+  if (res.trust === "unpinned") return "unavailable";
+  if (res.trust === "mismatched") return "untrusted-authority";
+  const level: PlatformAssurance = platformAssurance(res.config, sharedPairId, tpm);
   return level;
 }
 
@@ -2178,6 +2202,99 @@ export function destroy(args: Args2): void {
 // It never overwrites a witness holding state, and never overwrites one it
 // cannot parse. This does NOT make the class rollback-proof: restoring an older
 // VALID witness remains outside separate-state-file's guarantee (§15.2).
+/* ---- authority: the operator-pinned trusted platform authority (root of trust) ---
+ * A pair may reference a platform authority, but it may NOT choose the trust
+ * root. `authority pin` is the explicit operator action that records — outside
+ * every pair directory — the ONE platform authority this installation trusts for
+ * the maximum-assurance profile. There is no trust-on-first-use: a pin is only
+ * ever written here, never inferred from opening a pair. See docs/MAXIMUM-ASSURANCE.md.
+ */
+function authority(args: Args2): void {
+  const sub = args.positional[1];
+  if (sub === "pin") {
+    authorityPin(args);
+    return;
+  }
+  if (sub === "show") {
+    authorityShow();
+    return;
+  }
+  if (sub === "unpin") {
+    authorityUnpin();
+    return;
+  }
+  throw new Error("authority needs a subcommand: pin, show, or unpin");
+}
+
+function authorityPin(args: Args2): void {
+  const statePathArg = args.positional[2];
+  if (statePathArg === undefined) {
+    throw new Error("authority pin needs <state-path>: the trusted platform witness state file (absolute)");
+  }
+  const statePath = resolve(statePathArg);
+  const nvIndex = single(args, "nv-index");
+  if (nvIndex === undefined) {
+    throw new Error("authority pin needs --nv-index 0xHANDLE: the TPM NV counter of the trusted authority");
+  }
+  const inspected = inspectAuthorityForPin(statePath, nvIndex);
+  if (!inspected.ok) {
+    throw new Error(`the platform authority could not be inspected: ${inspected.message} Nothing was pinned.`);
+  }
+  const id = inspected.value;
+  err("PLATFORM AUTHORITY — proposed trust pin (public identity, no secret):");
+  err(`  provider:     ${id.provider}`);
+  err(`  NV index:     ${id.nvIndex}`);
+  err(`  NV Name:      ${id.nvName}`);
+  err(`  authorityId:  ${id.authorityId}`);
+  err(`  state file:   ${id.statePath}`);
+  err("  The TPM index is a valid non-orderly 8-octet COUNTER.");
+  const confirm = single(args, "confirm");
+  if (confirm !== id.authorityId) {
+    throw new Error(
+      `to pin this as this installation's trusted maximum-assurance platform authority, re-run with ` +
+        `--confirm ${id.authorityId} (the public authorityId shown above). Nothing was pinned.`
+    );
+  }
+  const record: TrustPin = {
+    trustVersion: 1,
+    provider: id.provider,
+    authorityId: id.authorityId,
+    nvIndex: id.nvIndex,
+    nvName: id.nvName,
+    statePath: id.statePath
+  };
+  writeTrustPin(record);
+  err(`Pinned as this installation's trusted TruePad platform authority (${trustStorePath()}).`);
+  out(JSON.stringify({ pinned: true, authorityId: id.authorityId, nvIndex: id.nvIndex, statePath: id.statePath }));
+}
+
+function authorityShow(): void {
+  const pin = readTrustPin();
+  if (pin === null) {
+    err("No trusted platform authority is pinned for this installation.");
+    out(JSON.stringify({ pinned: false }));
+    return;
+  }
+  err("Trusted platform authority (pinned):");
+  err(`  provider:     ${pin.provider}`);
+  err(`  NV index:     ${pin.nvIndex}`);
+  err(`  NV Name:      ${pin.nvName}`);
+  err(`  authorityId:  ${pin.authorityId}`);
+  err(`  state file:   ${pin.statePath}`);
+  out(JSON.stringify({ pinned: true, authorityId: pin.authorityId, nvIndex: pin.nvIndex, statePath: pin.statePath }));
+}
+
+function authorityUnpin(): void {
+  const pin = readTrustPin();
+  removeTrustPin();
+  err(
+    pin === null
+      ? "No trusted platform authority was pinned; nothing to remove."
+      : "Removed the pinned trusted platform authority. Maximum-assurance platform pairs are unpinned until re-pinned."
+  );
+  out(JSON.stringify({ pinned: false, removed: pin !== null }));
+}
+
 function witness(args: Args2): void {
   const sub = args.positional[1];
   if (sub === "platform") {
@@ -2300,6 +2417,7 @@ const ALLOWED_FLAGS: Record<string, readonly string[]> = {
   retire: ["direction", "through-sequence", "through-offset", "reason"],
   destroy: ["confirm", "reason"],
   witness: ["nv-index", "provider"],
+  authority: ["nv-index", "confirm"],
   ceremony: [
     ...GEN_FLAGS,
     "medium-a",
@@ -2358,6 +2476,7 @@ export function main(argv: string[]): number {
     retire,
     destroy,
     witness,
+    authority,
     ceremony
   };
   if (command === undefined || !Object.hasOwn(commands, command)) {

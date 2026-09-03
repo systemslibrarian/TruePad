@@ -541,6 +541,9 @@ describe("(13, 15) the store format is unchanged and carries no randomness claim
       // The durable withdrawal authority records an irreversible downgrade FACT,
       // never a verdict flag either.
       ["src", "cli", "v2", "withdrawal.ts"],
+      // The host trust store pins a public platform-authority IDENTITY, never a
+      // verdict flag and never a pad-derived value.
+      ["src", "cli", "v2", "trust-store.ts"],
       // The single deployment evaluator DERIVES, it never persists a verdict:
       // its source (comments aside) must carry none of these identifiers either.
       ["src", "claims", "shannon-deployment.ts"],

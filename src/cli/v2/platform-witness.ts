@@ -56,6 +56,7 @@ import {
   type WitnessSnapshot
 } from "./witness.ts";
 import { PROVIDER_ID, UINT64_MAX, parseNvIndex, tpm2ToolsProvider, type TpmProvider } from "./tpm.ts";
+import { readTrustPin } from "./trust-store.ts";
 
 export const PLATFORM_STATE_VERSION = 1;
 
@@ -936,6 +937,96 @@ export function platformRecordAssurance(
 // deployment evaluator. A stale/restored state file is caught by the anchor
 // relation and reads `inconsistent`; an unreachable authority reads
 // `unavailable`; an absent entry reads `ordinary`.
+/* ---- root of trust: resolve the pair's claimed authority against the pin -----
+ * A pair MUST NOT choose its own root of trust. `resolvePlatformAuthority`
+ * compares the authority the pair CLAIMS (from its unauthenticated head.json)
+ * against the installation's PINNED trusted authority (trust-store.ts, outside
+ * every pair directory), and returns a trusted config built from the PIN — so the
+ * state file actually read is the PINNED location, never the one head.json names.
+ * A pair that names any other authority is `mismatched`; with no pin it is
+ * `unpinned`. This decision is TPM-free (it is a public-identity comparison); the
+ * LIVE verification happens in platformAssurance/platformHealth/platformPreflight
+ * using the returned trusted config.
+ */
+export type PlatformResolution =
+  | { trust: "trusted"; config: PlatformConfig }
+  | { trust: "unpinned" }
+  | { trust: "mismatched"; message: string };
+
+export function resolvePlatformAuthority(pairConfig: PlatformConfig): PlatformResolution {
+  const pin = readTrustPin();
+  if (pin === null) return { trust: "unpinned" };
+  if (
+    pairConfig.provider !== pin.provider ||
+    pairConfig.authorityId !== pin.authorityId ||
+    pairConfig.nvIndex !== pin.nvIndex ||
+    pairConfig.nvName !== pin.nvName
+  ) {
+    return {
+      trust: "mismatched",
+      message:
+        `this pair names platform authority ${pairConfig.authorityId} (NV ${pairConfig.nvIndex}, Name ${pairConfig.nvName}), ` +
+        `but this installation's pinned trusted authority is ${pin.authorityId} (NV ${pin.nvIndex}, Name ${pin.nvName}). ` +
+        "A pair may reference an authority, but it may not choose the trust root."
+    };
+  }
+  // Trusted: build the config from the PIN. The pair's own statePath is NEVER
+  // used — the pinned location is (so a redirect to a forged in-pair/foreign
+  // state file is moot).
+  return {
+    trust: "trusted",
+    config: { provider: pin.provider, statePath: pin.statePath, nvIndex: pin.nvIndex, nvName: pin.nvName, authorityId: pin.authorityId }
+  };
+}
+
+/** The canonical public identity of a platform authority, for pinning. */
+export type AuthorityIdentity = { provider: string; authorityId: string; nvIndex: string; nvName: string; statePath: string };
+
+/**
+ * Inspect a real, live platform authority so the operator can PIN it as this
+ * installation's trusted root (`truepad2 authority pin`). Validates the live TPM
+ * NV index (a non-orderly 8-octet COUNTER), reads the state file at `statePath`,
+ * and requires them to be the same authority (Name, index) in a consistent
+ * anchor relation. Returns the canonical public identity — no secret, nothing
+ * pad-derived. Fails closed on any mismatch.
+ */
+export function inspectAuthorityForPin(
+  statePath: string,
+  nvIndex: string,
+  tpm: TpmProvider = tpm2ToolsProvider()
+): PlatformResult<AuthorityIdentity> {
+  if (!isAbsolute(statePath)) return { ok: false, message: `the platform witness state path must be absolute; found ${JSON.stringify(statePath)}` };
+  const index = parseNvIndex(nvIndex);
+  if (!index.ok) return { ok: false, message: index.why };
+  const ready = tpm.available();
+  if (!ready.ok) return ready;
+  const pub = tpm.readPublic(index.index);
+  if (!pub.ok) return { ok: false, message: `the TPM NV index ${index.index} could not be read (${pub.message})` };
+  if (!pub.value.isCounter) return { ok: false, message: `${index.index} is not a TPM NV COUNTER (${pub.value.attributesFriendly})` };
+  if (pub.value.isOrderly) return { ok: false, message: `${index.index} has TPMA_NV_ORDERLY set; an orderly counter can lose increments and is refused` };
+  if (pub.value.sizeBytes !== 8) return { ok: false, message: `${index.index} is ${pub.value.sizeBytes} octets; a TPM NV counter must be exactly 8` };
+  const state = readState(statePath);
+  if (!state.ok) return state;
+  if (state.value.nvIndex !== index.index || state.value.nvName !== pub.value.name) {
+    return {
+      ok: false,
+      message:
+        `the state file at ${statePath} names NV index ${state.value.nvIndex} (Name ${state.value.nvName}), which does ` +
+        `not match the live TPM index ${index.index} (Name ${pub.value.name}). This is not one authority.`
+    };
+  }
+  const counter = tpm.readCounter(index.index);
+  if (!counter.ok) return { ok: false, message: `the TPM NV counter at ${index.index} could not be read (${counter.message})` };
+  const fileAnchor = parseAnchor(state.value.anchor);
+  if (fileAnchor === null) return { ok: false, message: `the state file at ${statePath} has a malformed anchor` };
+  const classified = classifyAnchor(fileAnchor, counter.value);
+  if (!classified.ok) return { ok: false, message: `the state file and TPM are not in a valid anchor relation. ${classified.message}` };
+  return {
+    ok: true,
+    value: { provider: PROVIDER_ID, authorityId: state.value.authorityId, nvIndex: index.index, nvName: pub.value.name, statePath }
+  };
+}
+
 export type PlatformAssurance = AssuranceLevel | "ordinary" | "unavailable" | "inconsistent";
 
 export function platformAssurance(

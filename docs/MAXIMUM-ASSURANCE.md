@@ -67,8 +67,13 @@ record transplanted beside another pair does not apply to it (see
 Only this exact conjunction reaches the strongest label, and it exists only on the
 native CLI. Each step records a fact the previous one could not:
 
-1. **Generate by the physical ceremony, anchored to a TPM.** `truepad2 ceremony
-   create <workspace> --medium-a A --medium-b B --source … --source …
+0. **Pin the installation's trusted platform authority** (once) — `truepad2
+   authority pin …` (see below). Ceremony operations and the strongest verdict
+   are refused until an authority is pinned; a pair may never choose the trust
+   root.
+
+1. **Generate by the physical ceremony, anchored to the pinned TPM.** `truepad2
+   ceremony create <workspace> --medium-a A --medium-b B --source … --source …
    --record-bytes F --encryption-bytes E --auth-records N --witness-class
    platform-monotonic --witness-path … --assert-offline --assert-distinct-physics
    --assert-tmpfs-workspace --assert-no-persistent-copy`. This records `creation =
@@ -186,25 +191,57 @@ authority, not the JSON.** The rollback and ceremony authorities are both checke
 **live** under the pair lock, so a witness or authority that has gone unreachable,
 regressed, or inconsistent drops the verdict immediately rather than leaving a
 stale green. A durable withdrawal on a platform pair cannot be undone by deleting
-or corrupting the sidecar or by restoring old provenance. Every one of these is
-exercised by the falsification, hostile-input, concurrency, pair-substitution,
-same-pair-forgery, and platform-assurance guards under `tests/`.
+or corrupting the sidecar or by restoring old provenance. **A pair that names any
+platform authority other than the installation's pinned one — including an
+attacker's own external, internally-valid TPM authority pre-loaded with the
+victim `pairId` — is NOT ELIGIBLE and cannot burn, because the trust root is the
+pin, not the pair.** Every one of these is exercised by the falsification,
+hostile-input, concurrency, pair-substitution, same-pair-forgery,
+platform-assurance, and root-of-trust guards under `tests/`.
 
-## Known residual (closure in progress)
+## The root of trust: an operator-pinned authority (a pair cannot choose it)
 
-The load-bearing ceremony facts live in the platform authority, and a forged
-authority placed **inside** the pair directory is rejected (an authority must be
-external), closing same-pair provenance forgery via an in-pair state file. One
-residual remains under active work: because `head.json` is unauthenticated and
-names the authority's location and identity, an attacker who can both edit a
-pair's `head.json` **and** supply their own *external* TPM authority pre-loaded
-with the victim pair's `pairId` could point the pair at that foreign authority.
-Closing this requires the operator to **pin their trusted authority** at
-assessment time (so the evaluator uses the operator's authority, not the one
-`head.json` names) rather than trusting the in-header authority identity. Until
-that lands, the maximum-assurance verdict should be read only against an
-operator-verified platform authority. This is tracked as the TruePad 3.0
-authority-binding follow-up.
+`head.json` is unauthenticated pair-directory data, so it may only *reference* a
+platform authority — it may never *define* which authority is trusted. The
+installation's trusted authority is instead **pinned by the operator**, once,
+into a host trust store OUTSIDE every pair directory (`~/.config/truepad/
+platform-trust.json`, or `$TRUEPAD_TRUST_STORE`):
+
+```
+truepad2 authority pin <trusted-state-path> --nv-index 0xHANDLE --confirm <authorityId>
+```
+
+The command inspects the live TPM index (a non-orderly 8-octet counter), reads
+the state file, shows the public identity (provider, NV index, NV Name,
+authorityId, path), and writes the pin only after the operator re-confirms the
+authorityId. There is **no trust-on-first-use**: opening or `status`-ing a pair
+never enrolls its authority. `authority show` prints the pin; `authority unpin`
+removes it.
+
+Every platform operation then **resolves** a pair's *claimed* authority against
+the pin, through one shared function, and reads the **pinned** state file — never
+the one `head.json` names:
+
+- pair claims the pinned authority → **trusted** (the pinned state's attestation
+  is read);
+- pair claims **any other** authority → **untrusted** → NOT ELIGIBLE, and
+  burn/open/retire/ceremony all refuse;
+- no pin, or an unreachable pinned TPM → INSUFFICIENT (never gold);
+- the live TPM at the pinned index no longer has the pinned Name → inconsistent
+  → NOT ELIGIBLE.
+
+So an attacker who edits `head.json` to point at their **own** external TPM
+authority (even one pre-loaded with the victim `pairId`) is rejected: that
+authority is not the pinned one. And redirecting only the state-file path is
+moot, because resolution reads the pinned location, not `head.json`'s.
+
+> **Trust-store boundary.** The pin is durable and outside the pair-directory
+> writable domain, so an attacker bounded to pair-directory writes cannot forge
+> or redirect it. It is **not** a claim against a hostile OS, a malicious
+> administrator, root compromise, a replaced TruePad binary, or host-level
+> configuration tampering — those can change the host trust config and are
+> outside the claim. Deleting the pin makes the platform authority unavailable
+> (a refusal/loss), never a false trust: loss is acceptable, false trust is not.
 
 ## Physical-TPM validation is a separate, outstanding gate
 
