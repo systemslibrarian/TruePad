@@ -183,13 +183,24 @@ jobs:
           node-version: 24
           cache: npm
 
-      # No `npm ci` here on purpose. This branch predates the release's
-      # @noble/post-quantum dependency, so installing THIS package.json would
-      # not provide it. The script installs the release's own pinned tree inside
-      # the v2.0.0 worktree instead, which is the correct authority anyway.
+      # master DOES pin @noble/post-quantum, which the current-source generator
+      # needs (verbs.ts transitively imports the sealed-transfer module). Install
+      # it for the current-source check below. The released-v2.0.0 check installs
+      # the RELEASE's own pinned tree inside its throwaway worktree regardless, so
+      # this install does not affect what "released" means.
+      - name: Install pinned dependencies
+        run: npm ci --no-audit --no-fund
+
       - name: Verify the golden vectors still match the released v2.0.0
         working-directory: android
         run: ./tools/regenerate-vectors.sh --check
+
+      # And that master itself has not drifted from those fixtures — the wire is
+      # supposed to be byte-identical to v2.0.0, and this proves it instead of
+      # assuming it, so the Kotlin twin keeps matching the code it ships beside.
+      - name: Verify the vectors match the CURRENT source tree (master)
+        working-directory: android
+        run: ./tools/verify-vectors-current.sh
 
   instrumentation:
     # The on-device gate. Separate from `engine` so a slow emulator never hides
