@@ -2,13 +2,16 @@ package dev.systemslibrarian.truepad.storage
 
 import dev.systemslibrarian.truepad.core.AUTH_RECORD_BYTES
 import dev.systemslibrarian.truepad.core.CanonicalFields
+import dev.systemslibrarian.truepad.core.DeploymentAssessment
 import dev.systemslibrarian.truepad.core.Direction
 import dev.systemslibrarian.truepad.core.EnvelopeDecode
 import dev.systemslibrarian.truepad.core.EnvelopeV2
 import dev.systemslibrarian.truepad.core.FREEZE_THRESHOLD_DEFAULT
 import dev.systemslibrarian.truepad.core.MAX_AUTH_LOOKAHEAD_DEFAULT
 import dev.systemslibrarian.truepad.core.MAX_CIPHERTEXT_BYTES
+import dev.systemslibrarian.truepad.core.SourceClass
 import dev.systemslibrarian.truepad.core.VERIFY_ATTEMPT_LIMIT_DEFAULT
+import dev.systemslibrarian.truepad.core.assessDeployment
 import dev.systemslibrarian.truepad.core.bytesToHex
 import dev.systemslibrarian.truepad.core.buildFrame
 import dev.systemslibrarian.truepad.core.combineSources
@@ -96,6 +99,12 @@ class DirectionMeters(
     val limitedBy: String,
     val witnessKind: WitnessKind,
     val witnessState: WitnessState,
+    // The DERIVED deployment classification for this direction (§ shannon), and
+    // the source class it was built from. NOT a stored verdict: recomputed from
+    // live facts on every summary, never persisted. Always INSUFFICIENT or NOT
+    // ELIGIBLE on Android — an Android pad is never CONDITIONALLY ELIGIBLE.
+    val deployment: DeploymentAssessment,
+    val sourceClass: SourceClass,
 )
 
 class PairSummary(
@@ -103,6 +112,7 @@ class PairSummary(
     val label: String,
     val createdAt: String,
     val destroyed: Boolean,
+    val origin: PairOrigin,
     val meters: Map<Direction, DirectionMeters>,
 )
 
@@ -270,7 +280,7 @@ class Engine(
 
     /* ---- meters & summaries -------------------------------------------------- */
 
-    private fun directionMeters(store: LoadedStore, kind: WitnessKind): DirectionMeters {
+    private fun directionMeters(store: LoadedStore, kind: WitnessKind, origin: PairOrigin): DirectionMeters {
         val h = store.head
         val e = store.effective
         val remainingBytes = h.capacity - e.nextOffset
@@ -282,6 +292,11 @@ class Engine(
         val ceilRecordsForBytes = (remainingBytes + MAX_CIPHERTEXT_BYTES - 1) / MAX_CIPHERTEXT_BYTES
         val limitedBy = if (remainingRecords <= ceilRecordsForBytes) "AUTHENTICATION" else "ENCRYPTION"
         val state = witnessFor(witnessFs, kind).report(h.pairId, h.direction, highWaters(store))
+        // Derive — never store — this direction's deployment classification from
+        // the live facts assembled under this same lock (source declarations,
+        // provenance, witness kind/state). The evaluator is core.assessDeployment,
+        // the ONE authority; the Android facts can never reach the strongest verdict.
+        val facts = deploymentFactsFor(h.sourceDeclarations, origin, kind, state)
         return DirectionMeters(
             direction = h.direction,
             capacity = h.capacity, nextOffset = e.nextOffset, remainingBytes = remainingBytes,
@@ -290,6 +305,7 @@ class Engine(
             failureCount = e.failureCount, frozen = frozenHalf(store),
             maxRemainingSends = remainingRecords, limitedBy = limitedBy,
             witnessKind = kind, witnessState = state,
+            deployment = assessDeployment(facts), sourceClass = facts.source,
         )
     }
 
@@ -300,9 +316,10 @@ class Engine(
         val meta = readPairMeta(fs, pairId)
         return PairSummary(
             pairId = pairId, label = meta.label, createdAt = meta.createdAt, destroyed = false,
+            origin = meta.origin,
             meters = mapOf(
-                Direction.A_TO_B to directionMeters(pair.getValue(Direction.A_TO_B), meta.witness),
-                Direction.B_TO_A to directionMeters(pair.getValue(Direction.B_TO_A), meta.witness),
+                Direction.A_TO_B to directionMeters(pair.getValue(Direction.A_TO_B), meta.witness, meta.origin),
+                Direction.B_TO_A to directionMeters(pair.getValue(Direction.B_TO_A), meta.witness, meta.origin),
             ),
         )
     }

@@ -30,6 +30,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.systemslibrarian.truepad.app.Claims
+import dev.systemslibrarian.truepad.core.ASSESSMENT_LABEL
+import dev.systemslibrarian.truepad.core.SOURCE_LABEL
+import dev.systemslibrarian.truepad.core.UNPROVEN_PREMISES
 import dev.systemslibrarian.truepad.app.OpResult
 import dev.systemslibrarian.truepad.app.PadSize
 import dev.systemslibrarian.truepad.app.PadViewModel
@@ -503,7 +506,21 @@ fun DetailsScreen(state: UiState, vm: PadViewModel) {
         KeyValue("Paused", if (m.frozen) "yes" else "no")
         KeyValue("Rollback protection", m.witnessKind.wire)
         KeyValue("Rollback state", m.witnessState.wire)
+        // The DERIVED deployment assessment (§ shannon). Never a stored verdict;
+        // recomputed from live facts every time this screen is shown. On Android
+        // it is always INSUFFICIENT EVIDENCE or NOT ELIGIBLE — never a positive
+        // maximum-assurance verdict — and the reason is shown beside the label so
+        // the label can never be read alone.
+        KeyValue("Assessment", ASSESSMENT_LABEL.getValue(m.deployment.assessment))
+        KeyValue("Source", SOURCE_LABEL.getValue(m.sourceClass))
+        m.deployment.knownReason?.let { Faint(it) }
     }
+
+    Rule()
+    SectionTitle("What the assessment means")
+    Faint(Claims.DEPLOYMENT_CONTEXT)
+    Faint(Claims.DEPLOYMENT_UNPROVEN_HEADING)
+    for (premise in UNPROVEN_PREMISES) Faint("• $premise")
 
     Rule()
     SectionTitle("On this device")

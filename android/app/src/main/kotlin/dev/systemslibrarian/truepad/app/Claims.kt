@@ -158,6 +158,28 @@ object Claims {
         "TruePad asks Android to keep its screens out of screenshots and the recent-apps preview. That is a " +
             "request to the system, not a defence against a device someone else controls."
 
+    /* ---- deployment assessment (§ shannon) --------------------------------- */
+
+    /**
+     * What the deployment classification means, and — load-bearing — the ceiling
+     * an Android device imposes on it. This DENIES the strong claim rather than
+     * asserting it: an Android pad is never the maximum-assurance profile, because
+     * the device has no hardware-monotonic authority to attest that a pad was
+     * never rolled back. The strongest result here is "insufficient evidence,"
+     * never a positive maximum-assurance verdict, and TruePad says so plainly.
+     */
+    const val DEPLOYMENT_CONTEXT =
+        "This is TruePad's own reading of whether this pad could still support an information-theoretic secrecy " +
+            "claim, derived from what it can record — never a stored verdict. It is not a score, and a strong " +
+            "result would still not prove the physical premises below. An Android pad is never TruePad's maximum-" +
+            "assurance profile: this device has no hardware-monotonic authority to attest a pad was never restored " +
+            "from a backup, so the strongest result you will see here is \"insufficient evidence,\" never a positive " +
+            "maximum-assurance verdict."
+
+    /** The heading over the premises TruePad never establishes, even at its best. */
+    const val DEPLOYMENT_UNPROVEN_HEADING =
+        "Even at its strongest, TruePad does not establish these — they are yours:"
+
     /** Backup posture, in one sentence a person can act on. */
     const val BACKUP_NOTE =
         "TruePad is excluded from Android backup and device-to-device transfer. A pad is one-time material, and a " +
