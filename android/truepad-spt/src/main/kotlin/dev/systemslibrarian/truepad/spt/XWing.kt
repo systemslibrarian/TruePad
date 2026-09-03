@@ -1,5 +1,7 @@
 package dev.systemslibrarian.truepad.spt
 
+import org.bouncycastle.crypto.digests.SHAKEDigest
+import org.bouncycastle.math.ec.rfc7748.X25519
 import org.bouncycastle.pqc.crypto.xwing.XWingKEMExtractor
 import org.bouncycastle.pqc.crypto.xwing.XWingKEMGenerator
 import org.bouncycastle.pqc.crypto.xwing.XWingKeyGenerationParameters
@@ -78,13 +80,75 @@ object XWing {
         return XWingEncapsulation(ciphertext, sharedSecret)
     }
 
-    /** Decapsulate — fully deterministic given [ciphertext] and the 32-byte seed. */
+    /** Decapsulate — fully deterministic given [ciphertext] and the 32-byte seed.
+     *
+     *  MATCH THE WEB (Decision 2). The reference build's X25519
+     *  (@noble/post-quantum via @noble/curves) ABORTS when the X25519 agreement
+     *  yields the all-zero shared secret — a low-order/small-subgroup `ct_X`, which
+     *  RFC 7748 §6.1 explicitly permits rejecting. Bouncy Castle's X-Wing
+     *  decapsulator does NOT abort. For honest ciphertexts the two are byte-
+     *  identical; they differ only on a deliberately-forged low-order `ct_X`.
+     *
+     *  So Android rejects the same adversarial case with the NARROWEST correct
+     *  check: recompute `ss_X = X25519(sk_X, ct_X)` using BC's OWN X25519 — whose
+     *  `calculateAgreement` returns false on an all-zero result — and refuse if it
+     *  does, BEFORE delegating the authoritative shared secret to BC's X-Wing.
+     *  This forks no X-Wing, redesigns nothing, and changes no valid wire byte.
+     */
     fun decapsulate(ciphertext: ByteArray, decapsulationSeed: ByteArray): ByteArray {
         requireLength(ciphertext, XWING_CIPHERTEXT_BYTES, "ciphertext")
         requireLength(decapsulationSeed, XWING_SEED_BYTES, "decapsulationSeed")
+        if (yieldsAllZeroX25519(ciphertext, decapsulationSeed)) {
+            throw IllegalArgumentException(
+                "X-Wing: X25519 agreement is all-zero (low-order ct_X); rejected to match the reference implementation",
+            )
+        }
         val sk = XWingPrivateKeyParameters(decapsulationSeed)
         val sharedSecret = XWingKEMExtractor(sk).extractSecret(ciphertext)
         requireLength(sharedSecret, XWING_SHARED_SECRET_BYTES, "sharedSecret")
         return sharedSecret
+    }
+
+    /* ---- TEST-ONLY derandomized surfaces (draft-10 §2.2 GenerateKeyPairDerand /
+     *      EncapsulateDerand). Not for production: a chosen RNG chooses the shared
+     *      secret. Used for the KAT corpus and reference-vector reproduction. ---- */
+
+    fun generateKeyPairDerand(seed: ByteArray): XWingKeyPair {
+        requireLength(seed, XWING_SEED_BYTES, "seed")
+        return generateKeyPair(FixedRandom(seed))
+    }
+
+    fun encapsulateDerand(encapsulationKey: ByteArray, eseed: ByteArray): XWingEncapsulation {
+        requireLength(eseed, XWING_ESEED_BYTES, "eseed")
+        return encapsulate(encapsulationKey, FixedRandom(eseed))
+    }
+
+    /** A SecureRandom returning pre-loaded bytes in order — the derandomization
+     *  hook. Throws if the KEM ever draws more than supplied (which would itself
+     *  be a finding about the draw size/order versus the reference). */
+    private class FixedRandom(private val data: ByteArray) : SecureRandom() {
+        private var offset = 0
+        override fun nextBytes(bytes: ByteArray) {
+            if (offset + bytes.size > data.size) throw IllegalStateException("FixedRandom exhausted")
+            System.arraycopy(data, offset, bytes, 0, bytes.size)
+            offset += bytes.size
+        }
+    }
+
+    /** True iff `X25519(sk_X, ct_X)` is the all-zero point, where `sk_X` is the
+     *  X25519 private scalar the draft derives as `SHAKE256(seed, 96)[64:96]` and
+     *  `ct_X` is the X25519 half of the ciphertext (`ct[1088:1120]`). BC's X25519
+     *  clamps the scalar and returns false exactly when the agreement is all-zero. */
+    private fun yieldsAllZeroX25519(ciphertext: ByteArray, seed: ByteArray): Boolean {
+        val expanded = ByteArray(96)
+        SHAKEDigest(256).apply { update(seed, 0, seed.size) }.doFinal(expanded, 0, 96)
+        val skX = expanded.copyOfRange(64, 96)
+        val ctX = ciphertext.copyOfRange(MLKEM_CIPHERTEXT_BYTES, MLKEM_CIPHERTEXT_BYTES + X25519_BYTES)
+        val agreement = ByteArray(X25519_BYTES)
+        val nonZero = X25519.calculateAgreement(skX, 0, ctX, 0, agreement, 0)
+        java.util.Arrays.fill(expanded, 0)
+        java.util.Arrays.fill(skX, 0)
+        java.util.Arrays.fill(agreement, 0)
+        return !nonZero
     }
 }
