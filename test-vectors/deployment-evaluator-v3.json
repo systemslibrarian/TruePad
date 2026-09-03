@@ -1,0 +1,953 @@
+{
+  "generator": "scripts/gen-evaluator-corpus.ts",
+  "source": "src/claims/shannon-deployment.ts (assessDeployment)",
+  "note": "Canonical TypeScript evaluator output. A second implementation MUST reproduce `expected` for each `facts`.",
+  "count": 56,
+  "cases": [
+    {
+      "name": "strongest",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "conditionally-eligible"
+    },
+    {
+      "name": "creation:browser-generated",
+      "facts": {
+        "creation": "browser-generated",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "creation:cli-gen",
+      "facts": {
+        "creation": "cli-gen",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "creation:cli-ceremony",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "conditionally-eligible"
+    },
+    {
+      "name": "creation:imported",
+      "facts": {
+        "creation": "imported",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "creation:unknown",
+      "facts": {
+        "creation": "unknown",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "source:software-csprng",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "software-csprng",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "source:external-declared",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "conditionally-eligible"
+    },
+    {
+      "name": "source:unknown",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "unknown",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "delivery:local-only",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "local-only",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "delivery:physical-private-operator-asserted",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "conditionally-eligible"
+    },
+    {
+      "name": "delivery:sealed-tps2",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "sealed-tps2",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "delivery:raw-import-unknown",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "raw-import-unknown",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "delivery:unknown",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "unknown",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "sealedAncestor:true",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": true,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "sealedAncestor:false",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "conditionally-eligible"
+    },
+    {
+      "name": "sealedAncestor:unknown",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": "unknown",
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "premises:accepted",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "conditionally-eligible"
+    },
+    {
+      "name": "premises:absent",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "absent",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "premises:withdrawn",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "withdrawn",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "premises:unknown",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "unknown",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "storage:native",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "conditionally-eligible"
+    },
+    {
+      "name": "storage:browser-opfs",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "browser-opfs",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "storage:unknown",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "unknown",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "assurance:unavailable",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "unavailable"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "assurance:untrusted-authority",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "untrusted-authority"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "assurance:ordinary",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "ordinary"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "assurance:ceremony-created",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "ceremony-created"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "assurance:handoff-accepted",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "conditionally-eligible"
+    },
+    {
+      "name": "assurance:withdrawn",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "withdrawn"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "assurance:inconsistent",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "inconsistent"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "rollback:none",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "none"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "rollback:unknown",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "unknown"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "rollback:browser-local",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "browser-local"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "rollback:ssf:healthy",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "separate-state-file",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "rollback:platform:healthy",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "conditionally-eligible"
+    },
+    {
+      "name": "rollback:ssf:unreachable",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "separate-state-file",
+          "health": "unreachable"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "rollback:platform:unreachable",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "unreachable"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "rollback:ssf:regressed",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "separate-state-file",
+          "health": "regressed"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "rollback:platform:regressed",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "regressed"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "rollback:ssf:inconsistent",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "separate-state-file",
+          "health": "inconsistent"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "rollback:platform:inconsistent",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "inconsistent"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "rollback:ssf:unsupported",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "separate-state-file",
+          "health": "unsupported"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "rollback:platform:unsupported",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "unsupported"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "browser-generated-pad",
+      "facts": {
+        "creation": "browser-generated",
+        "source": "software-csprng",
+        "delivery": "local-only",
+        "sealedAncestor": false,
+        "ceremonyPremises": "absent",
+        "storage": "browser-opfs",
+        "rollback": {
+          "kind": "browser-local"
+        },
+        "assuranceAuthority": "unavailable"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "plain-gen-native",
+      "facts": {
+        "creation": "cli-gen",
+        "source": "external-declared",
+        "delivery": "local-only",
+        "sealedAncestor": false,
+        "ceremonyPremises": "absent",
+        "storage": "native",
+        "rollback": {
+          "kind": "none"
+        },
+        "assuranceAuthority": "unavailable"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "sealed-import",
+      "facts": {
+        "creation": "imported",
+        "source": "unknown",
+        "delivery": "sealed-tps2",
+        "sealedAncestor": true,
+        "ceremonyPremises": "absent",
+        "storage": "native",
+        "rollback": {
+          "kind": "none"
+        },
+        "assuranceAuthority": "unavailable"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "android-generated-here-external",
+      "facts": {
+        "creation": "unknown",
+        "source": "external-declared",
+        "delivery": "local-only",
+        "sealedAncestor": false,
+        "ceremonyPremises": "absent",
+        "storage": "native",
+        "rollback": {
+          "kind": "separate-state-file",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "unavailable"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "android-generated-here-no-witness",
+      "facts": {
+        "creation": "unknown",
+        "source": "external-declared",
+        "delivery": "local-only",
+        "sealedAncestor": false,
+        "ceremonyPremises": "absent",
+        "storage": "native",
+        "rollback": {
+          "kind": "none"
+        },
+        "assuranceAuthority": "unavailable"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "android-external-source",
+      "facts": {
+        "creation": "imported",
+        "source": "external-declared",
+        "delivery": "raw-import-unknown",
+        "sealedAncestor": false,
+        "ceremonyPremises": "absent",
+        "storage": "native",
+        "rollback": {
+          "kind": "separate-state-file",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "unavailable"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "android-software-source",
+      "facts": {
+        "creation": "unknown",
+        "source": "software-csprng",
+        "delivery": "local-only",
+        "sealedAncestor": false,
+        "ceremonyPremises": "absent",
+        "storage": "native",
+        "rollback": {
+          "kind": "separate-state-file",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "unavailable"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "android-imported-unknown-source",
+      "facts": {
+        "creation": "imported",
+        "source": "unknown",
+        "delivery": "raw-import-unknown",
+        "sealedAncestor": "unknown",
+        "ceremonyPremises": "unknown",
+        "storage": "native",
+        "rollback": {
+          "kind": "separate-state-file",
+          "health": "unreachable"
+        },
+        "assuranceAuthority": "unavailable"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "accepted-ceremony-ssf",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "separate-state-file",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "handoff-accepted"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "accepted-ceremony-platform-unpinned",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "unavailable"
+      },
+      "expected": "insufficient-evidence"
+    },
+    {
+      "name": "accepted-ceremony-untrusted-authority",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "untrusted-authority"
+      },
+      "expected": "not-eligible"
+    },
+    {
+      "name": "withdrawn-platform",
+      "facts": {
+        "creation": "cli-ceremony",
+        "source": "external-declared",
+        "delivery": "physical-private-operator-asserted",
+        "sealedAncestor": false,
+        "ceremonyPremises": "accepted",
+        "storage": "native",
+        "rollback": {
+          "kind": "platform-monotonic",
+          "health": "healthy"
+        },
+        "assuranceAuthority": "withdrawn"
+      },
+      "expected": "not-eligible"
+    }
+  ]
+}
