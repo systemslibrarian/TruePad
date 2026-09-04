@@ -1,0 +1,30 @@
+diff -ruN pristine/Package.swift vendored/Package.swift
+--- pristine/Package.swift
++++ vendored/Package.swift
+@@ -27,7 +27,11 @@
+ import class Foundation.ProcessInfo
+ 
+ // To develop this on Apple platforms, set this to true
+-let development = false
++// TRUEPAD VENDOR PATCH 1 of 2: forced true so the open-source BoringSSL API is built on
++// Darwin instead of re-exporting CryptoKit. This is upstream's own switch. It gives
++// us (a) the iOS 13 availability floor rather than CryptoKit's iOS 26, and (b) the
++// OpenSSL X-Wing impl whose derandomized encaps we need for the draft-10 KAT.
++let development = true
+ 
+ // Ideally, we should use `.when(platforms:)` to set `swiftSettings` and
+ // `dependencies` like on other platforms. However, `Platform.freebsd` is not
+@@ -95,6 +99,13 @@
+         /* This target is used only for symbol mangling. It's added and removed automatically because it emits build warnings. MANGLE_START
+             .library(name: "CCryptoBoringSSL", type: .static, targets: ["CCryptoBoringSSL"]),
+             MANGLE_END */
++        // TRUEPAD VENDOR PATCH 2 of 2: expose the BoringSSL C target as a product.
++        // TruePad's KAT-support target -- which is linked ONLY by tests, never by
++        // the shipping app -- calls XWING_encap_external_entropy directly to drive
++        // the draft-10 Appendix-C deterministic vectors. Exposing the C target lets
++        // that hook live entirely outside the production module graph, instead of
++        // being patched into Sources/Crypto where the app would link it.
++        .library(name: "CCryptoBoringSSL", targets: ["CCryptoBoringSSL"]),
+     ],
+     dependencies: [
+         // Dependencies are added below so that they can be switched between local and absolute URLs

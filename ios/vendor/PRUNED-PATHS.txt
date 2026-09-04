@@ -1,0 +1,31 @@
+# Upstream paths intentionally NOT vendored into TruePad.
+#
+# Rationale: TruePad vendors swift-crypto to BUILD it, not to develop it. Copying
+# upstream's own test corpus, benchmarks, CI and lint configuration would add
+# ~35 MB of material that TruePad neither compiles nor reviews, and would make the
+# real vendor delta harder to find. Every path below is upstream development or
+# generated tooling, never a source of compiled code.
+#
+# verify-vendor.sh removes exactly these paths from a pristine upstream checkout
+# before diffing, so a reviewer sees only the intentional patch.
+#
+# One path per line; '#' comments and blank lines ignored.
+
+.git
+.swiftpm
+Tests
+Benchmarks
+dev
+scripts
+cmake
+CMakeLists.txt
+.github
+.editorconfig
+.gitattributes
+.gitignore
+.licenseignore
+.mailmap
+.spi.yml
+.swift-format
+.swiftformatignore
+.unacceptablelanguageignore

@@ -1,0 +1,59 @@
+// swift-tools-version:6.0
+import PackageDescription
+
+let package = Package(
+    name: "TruePadKit",
+    platforms: [.macOS(.v14), .iOS(.v16)],
+    products: [
+        // The ONLY product. A shipping app links this and nothing else from
+        // this package, so it cannot reach TruePadKATSupport (below).
+        .library(name: "TruePadSPT", targets: ["TruePadSPT"]),
+    ],
+    dependencies: [
+        // Vendored apple/swift-crypto 4.5.2 (Apache-2.0), upstream commit
+        // da9d28d69ebe3894b18376c8f2395c2f37b8448f. Two intentional patches, both
+        // in its Package.swift; see ios/vendor/README.md and ios/vendor/verify-vendor.sh.
+        .package(path: "../vendor/swift-crypto"),
+    ],
+    targets: [
+        // ---- Production -------------------------------------------------
+        .target(
+            name: "TruePadSPT",
+            dependencies: [
+                // Crypto alone: SPT needs X-Wing, HKDF-SHA-256, AES-256-GCM and
+                // SHA-2/SHA-3, all of which live here. _CryptoExtras is deliberately
+                // omitted -- it would put SwiftASN1 and a large RSA/PAKE surface into
+                // the shipping module graph for no benefit. (SwiftPM still resolves
+                // and compiles them as part of the dependency package; what this
+                // controls is what the app's module graph actually links.)
+                .product(name: "Crypto", package: "swift-crypto"),
+            ]
+        ),
+
+        // ---- Test support: NOT a product, NOT a dependency of TruePadSPT --
+        // Deterministic (caller-supplied-entropy) X-Wing encapsulation, needed to
+        // drive the frozen draft-10 Appendix-C vectors and TruePad's deterministic
+        // interop fixtures. Because this is not a product and TruePadSPT does not
+        // depend on it, it is absent from the shipping module graph by
+        // construction -- not by naming convention. Guarded by TRUEPAD_KAT_SUPPORT
+        // as belt-and-braces so the file cannot compile anywhere else.
+        .target(
+            name: "TruePadKATSupport",
+            dependencies: [
+                .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "CCryptoBoringSSL", package: "swift-crypto"),
+            ],
+            swiftSettings: [.define("TRUEPAD_KAT_SUPPORT")]
+        ),
+
+        // ---- Tests ------------------------------------------------------
+        .testTarget(
+            name: "TruePadSPTTests",
+            dependencies: [
+                "TruePadSPT",
+                "TruePadKATSupport",
+                .product(name: "Crypto", package: "swift-crypto"),
+            ]
+        ),
+    ]
+)

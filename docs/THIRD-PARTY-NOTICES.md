@@ -225,3 +225,74 @@ INTERNET permission for them to leave by.
 Both are licensed under the Apache License, Version 2.0. The full license text is
 reproduced above (see jsQR) and is available at
 `http://www.apache.org/licenses/LICENSE-2.0`.
+
+## iOS Edition — post-quantum hybrid KEM (swift-crypto / BoringSSL)
+
+The iOS Edition (`ios/**`) implements the **same** Sealed Pad Transfer protocol
+and the **same** X-Wing hybrid KEM (ML-KEM-768 + X25519) as the Browser and
+Android Editions. On Apple platforms it uses **swift-crypto**, whose X-Wing is
+implemented by the **BoringSSL** copy vendored inside that package. The bytes are
+identical: the iOS package reproduces the X-Wing draft-10 Appendix-C known-answer
+vectors (`android/vectors/xwing-draft10-appendix-c.json` — the same fixture the
+other two editions are held to) and the cross-language SPT interop corpus.
+
+TruePad hand-rolls no ML-KEM, X25519, X-Wing, SHA-3/SHAKE, AES-GCM or HKDF on
+iOS; every primitive is BoringSSL's.
+
+### swift-crypto (vendored)
+
+- **Package:** `apple/swift-crypto` **4.5.2**, upstream commit
+  `da9d28d69ebe3894b18376c8f2395c2f37b8448f` (exact pin).
+- **Provider:** Apple Inc. and the SwiftCrypto project authors
+- **Repository:** https://github.com/apple/swift-crypto
+- **License:** Apache License 2.0 — AGPL-3.0-only compatible. The full license
+  text ships in the vendored tree at `ios/vendor/swift-crypto/LICENSE.txt`, with
+  upstream's attribution notice at `ios/vendor/swift-crypto/NOTICE.txt`.
+- **Vendored, not resolved:** the package is copied into `ios/vendor/swift-crypto`
+  rather than fetched, because ordinary resolution cannot build the
+  implementation TruePad needs on Darwin (swift-crypto re-exports CryptoKit
+  there, which supplies Apple's own X-Wing with an iOS 26 floor and no
+  derandomized encapsulation). The rationale is recorded in full in
+  `ios/vendor/README.md`.
+- **Local modifications:** two, both in the vendored `Package.swift`; no file
+  under `Sources/` is modified. The complete delta is recorded in
+  `ios/vendor/EXPECTED-PATCH.diff` (30 lines) and enforced by
+  `ios/vendor/verify-vendor.sh`, which fails on any unreviewed drift.
+  1. `let development = true` — upstream's own documented switch, which builds
+     the open-source BoringSSL-backed API on Apple platforms.
+  2. Exporting the `CCryptoBoringSSL` target as a product, so TruePad's
+     test-only deterministic-encapsulation helper can live outside the shipping
+     module graph rather than being patched into `Sources/Crypto`.
+- **Not vendored:** upstream's tests, benchmarks, CI, lint configuration and
+  CMake build are deliberately excluded; see `ios/vendor/PRUNED-PATHS.txt`.
+
+### BoringSSL (vendored inside swift-crypto)
+
+- **Component:** `ios/vendor/swift-crypto/Sources/CCryptoBoringSSL`, a
+  swift-crypto-maintained copy of BoringSSL at upstream commit
+  `0226f30467f540a3f62ef48d453f93927da199b6` (recorded in swift-crypto's own
+  `Package.swift` header).
+- **Provider:** The BoringSSL Authors / Google LLC
+- **Repository:** https://boringssl.googlesource.com/boringssl
+- **License:** Apache License 2.0, as stated in the per-file headers throughout
+  that directory (for example `crypto/xwing/xwing.cc`). AGPL-3.0-only compatible.
+- **X-Wing note:** BoringSSL's `crypto/xwing/xwing.cc` header comment cites
+  draft-connolly-cfrg-xwing-kem-**06**. The *code* implements the construction
+  TruePad froze: SHA3-256 over
+  `mlkem_ss ‖ x25519_ss ‖ x25519_ct ‖ x25519_pk ‖ 0x5c2e2f2f5e5c`, with the
+  label last, over a seed expanded by SHAKE256 into a 64-byte ML-KEM seed then a
+  32-byte X25519 key. The comment is stale; the bytes are the ones the
+  Appendix-C corpus pins, and the corpus — not the comment — is what TruePad
+  tests against.
+
+### fiat-crypto (vendored inside BoringSSL)
+
+- **Component:** `Sources/CCryptoBoringSSL/third_party/fiat` — machine-generated,
+  formally verified field arithmetic used by BoringSSL's Curve25519 and P-256.
+- **Provider:** the fiat-crypto project (MIT CSAIL)
+- **Repository:** https://github.com/mit-plv/fiat-crypto
+- **License:** fiat-crypto is distributed by its authors under the MIT license
+  (also offered as Apache-2.0 / BSD-1-Clause). The generated files redistributed
+  inside BoringSSL carry generator provenance headers rather than a per-file
+  license notice, and swift-crypto's copy of that directory ships no separate
+  LICENSE file; the authoritative terms are upstream's.
