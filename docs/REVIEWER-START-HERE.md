@@ -67,16 +67,32 @@ npm run test:tpm-interop    # OPTIONAL, needs Linux + swtpm + tpm2-tools (emulat
 ```
 
 The falsification/mutation approach and the guard tests are described in the
-review brief. Reproduced counts at this SHA: **1563 unit tests / 69 files**, **36
-Playwright tests**, a **43-mutation** falsification matrix with **0 real escapes**.
+review brief. Reproduced counts at this SHA: **1585 unit tests / 72 files** and
+**36 Playwright tests / 6 files**. The falsification matrix is described in the
+review brief; its count is not restated here, because a number quoted without
+being re-run is exactly the kind of stale claim this page exists to avoid.
+
+The mobile editions carry their own suites: **Android 184 JVM + 19 app unit
+tests**, and **iOS 109 tests** (`swift test --package-path ios/TruePadKit`), plus
+the iOS supply-chain and isolation gates in `ios/scripts/` and `ios/vendor/`.
 
 ## Known limitations and what is still open
 
 - **swtpm is not a physical TPM.** All TPM evidence here is emulator
   interoperability. Physical-TPM hardware validation is **outstanding**
   (`docs/RELEASE-CHECKLIST-3.0.md`, `docs/PHYSICAL-TPM-VALIDATION.md`).
-- **Mobile** (Android completion, native iOS) is not built; Secure Enclave is not
-  assumed equivalent to a TPM monotonic authority (`docs/MOBILE-3.0-HANDOFF.md`).
+- **Mobile is partly built, and the two platforms are at different stages.** The
+  **Android 3.0-dev app exists on master** — engine, storage, SPT, QR and UI —
+  with emulator instrumentation and single-device physical validation done. The
+  **iOS Edition has a native Swift kernel and kit** (`ios/TruePadKit`: the OTP
+  core, the durable store, Sealed Pad Transfer) proven byte-identical to the
+  frozen wire in all four cross-edition directions, but **no iOS application yet**.
+  Neither platform is released; there is no App Store build and no 3.0 tag.
+  **Physical mobile validation is outstanding on both** — the two-device
+  Android↔iPhone ceremony, human TalkBack and human VoiceOver have not been
+  performed. Secure Enclave is **not** assumed equivalent to a TPM monotonic
+  authority (`docs/IOS-SECURITY.md`, `docs/ANDROID-SECURITY.md`,
+  `docs/MOBILE-3.0-HANDOFF.md`).
 - **Browser is never maximum-assurance** and a browser profile restore can rewind
   local state.
 - Real-handheld QR-camera validation and human accessibility (TalkBack/VoiceOver)

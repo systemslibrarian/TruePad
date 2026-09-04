@@ -5,11 +5,29 @@ Status: **development only.** No App Store build, no 3.0 tag, no release.
     ios/
       TruePadKit/            the Swift package
         Sources/
-          TruePadSPT/        production — the only package product
-          TruePadKATSupport/ test-only; NOT a product, NOT a dependency of TruePadSPT
+          TruePadCore/       the OTP kernel — depends on NOTHING
+          TruePadStorage/    the durable store, witness, and Fs backings
+          TruePadSPT/        Sealed Pad Transfer (the only module linking swift-crypto)
+          TruePadKATSupport/ test-only; NOT a product, NOT a dependency of any product
+          spt-vector-tool/   host-only vector generator; not a product
         Tests/TruePadSPTTests/
       vendor/                apple/swift-crypto 4.5.2, pinned and patch-audited
-      scripts/               isolation gate
+      vectors/               this edition's own cross-edition SPT corpus
+      scripts/               isolation, notices and supply-chain gates
+
+## What exists, and what does not
+
+**Built:** the OTP kernel (POLYVAL, `wc-one-time-v1`, the four-slice partition,
+fixed-record frames, the strict envelope grammar), the durable store (Store Format
+v2 with byte-identical `head.json`, `F_FULLFSYNC` durability, the rollback
+witness), and Sealed Pad Transfer — all held to the frozen vectors and
+cross-checked against the Browser and Android Editions in both directions.
+
+**Not built:** the OTP verbs over the store, the SPT durable state machine, the
+deployment evaluator, and the SwiftUI application.
+
+**Not claimed:** nothing has run on a physical iPhone; human VoiceOver validation
+has not happened; there is no App Store build and no 3.0 tag.
 
 ## The X-Wing gate
 

@@ -28,6 +28,13 @@ Only the **Browser Edition** column is populated today. **Operational
 here; the **Android** and **Desktop** *product* columns are marked
 `forthcoming` and must not be read as present guarantees.
 
+**Read `forthcoming` as "not yet assessed against this table", not as "does not
+exist".** That distinction has become material: an Android 3.0-dev application
+exists on master, and the iOS Edition has a native Swift kernel and kit. Neither
+has been evaluated row-by-row here, so neither column is populated — and an
+unpopulated column is not a claim in either direction. Their current security
+boundaries live in `docs/ANDROID-SECURITY.md` and `docs/IOS-SECURITY.md`.
+
 ---
 
 ## The four classifications

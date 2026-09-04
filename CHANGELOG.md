@@ -2,6 +2,40 @@
 
 ## Unreleased — planned v3.0.0 (development)
 
+### iOS Edition (new, in progress)
+
+- Native Swift kernel and kit under `ios/TruePadKit`: `TruePadCore` (the OTP
+  kernel, linking no cryptography library at all), `TruePadStorage` (Store Format
+  v2, `F_FULLFSYNC` durability, the rollback witness) and `TruePadSPT` (Sealed Pad
+  Transfer). Held to the frozen v2.0.0 wire vectors and the draft-10 Appendix-C
+  X-Wing corpus.
+- Cross-edition interop proven in **all four directions** (Browser↔iOS,
+  Android↔iOS), including corpora sealed with each edition's real CSPRNG rather
+  than only with injected test entropy.
+- `apple/swift-crypto` 4.5.2 vendored at commit `da9d28d6` with a 65-line reviewed
+  patch, enforced byte-for-byte by `ios/vendor/verify-vendor.sh`.
+- Deterministic X-Wing encapsulation is **structurally** test-only: it is not a
+  package product, and a shipping app cannot import it.
+- No iOS application yet, no App Store build, no physical-iPhone or VoiceOver
+  validation.
+
+### Security fixes
+
+- **Android SPT:** `requirePadSealable` now tests `attemptsReserved` alongside the
+  two cursors, matching the frozen authority. A pad that took a failed open at
+  genesis is no longer sealable.
+- **Android storage:** a path that exists but is not a regular file no longer
+  reads as absence. `Absent` is the state that permits a second handoff, so this
+  was a fail-open in the reuse direction.
+- **Vendored swift-crypto:** added the entropy-length guard upstream's
+  CVE-2026-28815 fix omitted on the encapsulation side.
+
+### Supply chain
+
+- All 28 GitHub Actions references pinned to immutable commit SHAs; Dependabot
+  added for `github-actions`; the Gradle distribution is now checksum-verified.
+  Full audit in `docs/SUPPLY-CHAIN.md`.
+
 **`master` carries TruePad 3.0 development; the latest FORMAL release remains
 2.0.0.** This line is not released, not tagged, and not published to npm; the
 public demo stays on the 2.0.0 release. It gathers the maximum-assurance work

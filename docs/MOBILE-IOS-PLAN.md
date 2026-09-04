@@ -1,8 +1,31 @@
 # TruePad 3.0 — Native iOS implementation plan
 
-There is **no** native iOS implementation yet. This is the plan, not code. It
-specifies the architecture, the platform choices, the honest deployment
-classification iOS can support, and the invariants it MUST inherit.
+**Status: partly implemented.** This page was written before any iOS code
+existed and remains the architectural plan; the sections below still describe the
+intended shape. What has since been built, and what has not:
+
+**Built** (`ios/TruePadKit`, on master, with CI):
+
+- `TruePadCore` — the OTP kernel, depending on NO cryptography library at all:
+  POLYVAL/GF(2^128), `wc-one-time-v1` canonical bytes and tag, the §7 four-slice
+  partition, the §16.1 fixed-record frame, a strict JSON reader and the §6.2
+  envelope grammar. Held to the frozen v2.0.0 vectors.
+- `TruePadStorage` — the durable-file layer (`F_FULLFSYNC`, atomic replace, Data
+  Protection, bounded locks), Store Format v2 with byte-identical `head.json`,
+  and the rollback witness.
+- `TruePadSPT` — Sealed Pad Transfer, reproducing the draft-10 Appendix-C
+  known-answer vectors and the cross-edition SPT corpora in **all four**
+  directions (Browser↔iOS, Android↔iOS).
+
+**Not built yet:** the OTP verbs (gen/send/open/retire/destroy) over the store,
+the SPT durable state machine, the deployment evaluator, and the entire SwiftUI
+application — including QR, the share sheet and accessibility.
+
+**Not claimed:** nothing has run on a physical iPhone. No App Store build exists,
+there is no 3.0 tag, and human VoiceOver validation has not been performed.
+
+See `docs/IOS-SECURITY.md` for the security and durability boundaries, which is
+the document that governs where these claims stop.
 
 ## 1. Language & UI
 

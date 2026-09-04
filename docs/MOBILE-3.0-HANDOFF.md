@@ -1,14 +1,31 @@
 # TruePad 3.0 — Mobile handoff (Android completion + native iOS)
 
-This is the handoff for the next implementation milestone: finishing Android and
-building a native iOS app. It is **not** the apps. It states what Android already
-has, what 3.0 master changed after Android forked, what is compatible, what a
-mobile platform can and cannot honestly claim, and the shared invariants both
-platforms MUST inherit.
+This was the handoff written for the next implementation milestone: finishing
+Android and building a native iOS app. **Both milestones have since moved**, so
+the status block below is corrected; the rest of the page — what a mobile platform
+can and cannot honestly claim, and the shared invariants both platforms MUST
+inherit — still stands and is still the governing text.
 
-- **master (3.0 dev):** `a6a8b6…`
-- **Android branch:** `android-phase-2`, tip `099f5b356a3289e45e46b2ff21120e7ea7d69616` (**untouched by this pass**).
-- **Android merge-base with master:** `2908d58` (an ancestor of the `v2.0.0` tag `240d7f0`) — Android forked just before the 2.0.0 release commit and deliberately builds/verifies against the released `v2.0.0` tag.
+**Corrected status (the original block named a branch that no longer exists):**
+
+- **Android:** the `android-phase-2` branch was proven an ancestor of master and
+  then DELETED, local and remote. The Android 3.0-dev application lives on
+  **master**, not on a branch. Its engine, storage, SPT, QR and UI are built;
+  emulator instrumentation and single-device physical validation on a real
+  handset are done.
+- **iOS:** a native Swift kernel and kit exist on master (`ios/TruePadKit` —
+  `TruePadCore`, `TruePadStorage`, `TruePadSPT`), byte-identical to the frozen
+  wire and cross-checked against the Browser and Android editions in all four
+  directions. There is **no iOS application yet**.
+- **Neither is released.** No App Store build, no Play production build, no 3.0
+  tag.
+- **Still outstanding on both, and not substitutable by any automated evidence:**
+  the two-device Android↔iPhone optical ceremony, human TalkBack, human
+  VoiceOver, and physical-iPhone validation.
+
+Because the original block pinned specific SHAs that have long since advanced, it
+is deliberately not replaced with new ones here — a SHA written into prose goes
+stale the next commit. `git log` is the authority for where master is.
 
 ## 1. What Android already implements (v2.0.0-level)
 

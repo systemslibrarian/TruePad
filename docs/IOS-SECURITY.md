@@ -34,8 +34,9 @@ part of the point.
 | v2 envelope wire + strict JSON | **BUILT**, 20-case refusal corpus green |
 | Durable file layer (`DarwinFs`) | **BUILT**, both backings tested |
 | Store Format v2 (head/journal/reconcile) | **BUILT**, byte-exact vs frozen fixture |
+| Rollback witness (Fs-backed, engine level) | **BUILT**, incl. the weak-configuration test |
 | OTP verbs (gen/send/open/retire/destroy) | NOT YET BUILT |
-| Rollback witness | NOT YET BUILT — designed in §5 below |
+| Rollback witness — separate failure domain on iOS | NOT YET BUILT — see §5 |
 | SPT durable state machine | NOT YET BUILT |
 | SwiftUI application layer | NOT YET BUILT |
 | Deployment evaluator | NOT YET BUILT |
