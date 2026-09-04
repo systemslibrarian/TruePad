@@ -127,17 +127,36 @@ jobs:
         working-directory: ios/TruePadKit
         run: swift build -c release 2>&1 | tail -5
 
-      # A host build proves nothing about the device. This is the step that would
-      # catch an availability floor regression - for instance a change that
+      # A host build proves nothing about the device. These steps are what would
+      # catch an availability-floor regression - for instance a change that
       # silently reverted to the system CryptoKit X-Wing, which demands iOS 26.
-      - name: Real iOS device build
+      #
+      # The resolve is not optional. xcodebuild GENERATES the package's schemes
+      # as a side effect of resolving, so on a clean checkout a build that names
+      # a scheme fails with "does not contain a scheme named ...". Resolving
+      # first, and listing the schemes into the log, makes that failure mode
+      # impossible to hit silently again.
+      - name: Resolve the package and record its schemes
+        working-directory: ios/TruePadKit
+        run: |
+          xcodebuild -resolvePackageDependencies 2>&1 | tail -3
+          xcodebuild -list 2>&1 | sed -n '/Schemes:/,$p'
+
+      # Each SHIPPING product is built for a real device, by name. Building the
+      # whole-package scheme instead would also try to build spt-vector-tool -
+      # an executable target that exists only to generate vectors on the host -
+      # which is not a thing an iOS device build should be asked to produce.
+      - name: Real iOS device build of every shipping product
         working-directory: ios/TruePadKit
         run: |
           set -o pipefail
-          xcodebuild -scheme TruePadKit \
-                     -destination 'generic/platform=iOS' \
-                     -derivedDataPath "$RUNNER_TEMP/dd-ios" \
-                     build 2>&1 | tail -20
+          for scheme in TruePadCore TruePadStorage TruePadSPT; do
+            echo "=== $scheme ==="
+            xcodebuild -scheme "$scheme" \
+                       -destination 'generic/platform=iOS' \
+                       -derivedDataPath "$RUNNER_TEMP/dd-ios" \
+                       build 2>&1 | tail -5
+          done
 
       # The BoringSSL-backed path must be what actually got linked for iOS. If a
       # change ever reverted to the CryptoKit re-export, the X-Wing symbols would
