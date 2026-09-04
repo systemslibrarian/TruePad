@@ -13,10 +13,15 @@ inherit — still stands and is still the governing text.
   **master**, not on a branch. Its engine, storage, SPT, QR and UI are built;
   emulator instrumentation and single-device physical validation on a real
   handset are done.
-- **iOS:** a native Swift kernel and kit exist on master (`ios/TruePadKit` —
-  `TruePadCore`, `TruePadStorage`, `TruePadSPT`), byte-identical to the frozen
-  wire and cross-checked against the Browser and Android editions in all four
-  directions. There is **no iOS application yet**.
+- **iOS:** the whole engine exists on master (`ios/TruePadKit` — `TruePadCore`,
+  `TruePadClaims`, `TruePadStorage`, `TruePadSPT`, `TruePadUI`), byte-identical to
+  the frozen wire and cross-checked against the Browser and Android editions in
+  all four directions. It carries the §12 verbs, the courier bundle, the SPT
+  durable state machine and the full sealed-transfer ceremony, the deployment
+  evaluator, the TP2 compact transport, and a SwiftUI view layer whose
+  security-carrying decisions are tested. There is still **no installable iOS
+  app**: the app shell (Xcode app target, Info.plist, entitlements, entry point)
+  and the pad-creation and ceremony screens are not built.
 - **Neither is released.** No App Store build, no Play production build, no 3.0
   tag.
 - **Still outstanding on both, and not substitutable by any automated evidence:**

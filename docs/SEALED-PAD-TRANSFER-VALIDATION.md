@@ -20,6 +20,17 @@ divergence. It makes no claim beyond what was executed.
 | **Not** implemented in this phase | persisted receive requests, sender handoff enforcement, provenance enforcement, receive state machine, cross-tab session, Browser UI, courier integration, CLI verbs |
 | Validation status | valid/honest X-Wing interop **validated**; adversarial low-order decapsulation **intentionally not byte-identical** (§6); product transfer flow **still not implemented** |
 
+> **Scope note, added later.** The two "not implemented" rows above describe the
+> state **at the time of that validation phase**, and are kept as the historical
+> record rather than edited. Since then the product transfer flow HAS been built:
+> the Browser Edition (`src/browser/engine/spt-verbs.ts`), the Android Edition
+> (`:truepad-spt` plus `SptEngine.kt`), and the iOS Edition (`TruePadSPT` plus
+> `SptEngine.swift`) all carry the persisted receive requests, the sender handoff
+> enforcement, the provenance enforcement and the receive state machine. What
+> remains genuinely unimplemented is **CLI verbs** — `truepad-pad` and `truepad2`
+> still have no sealed-transfer command. The cryptographic validation recorded
+> below is unaffected either way: it is about the wire, not about the product.
+
 This is **not** a NIST CAVP validation, not a FIPS validation, and not an audit.
 It is a conformance and cross-implementation check that was run and whose
 results are written down.

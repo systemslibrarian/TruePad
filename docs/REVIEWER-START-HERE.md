@@ -73,8 +73,11 @@ review brief; its count is not restated here, because a number quoted without
 being re-run is exactly the kind of stale claim this page exists to avoid.
 
 The mobile editions carry their own suites: **Android 184 JVM + 19 app unit
-tests**, and **iOS 109 tests** (`swift test --package-path ios/TruePadKit`), plus
-the iOS supply-chain and isolation gates in `ios/scripts/` and `ios/vendor/`.
+tests**, and **iOS 307 tests** (`swift test --package-path ios/TruePadKit`), plus
+the iOS supply-chain and isolation gates in `ios/scripts/` and `ios/vendor/`. The
+iOS suite also runs under AddressSanitizer and ThreadSanitizer on every push, and
+CI checks the generated SBOM against the tree and inspects what a device Release
+build actually contains.
 
 ## Known limitations and what is still open
 
@@ -84,9 +87,14 @@ the iOS supply-chain and isolation gates in `ios/scripts/` and `ios/vendor/`.
 - **Mobile is partly built, and the two platforms are at different stages.** The
   **Android 3.0-dev app exists on master** — engine, storage, SPT, QR and UI —
   with emulator instrumentation and single-device physical validation done. The
-  **iOS Edition has a native Swift kernel and kit** (`ios/TruePadKit`: the OTP
-  core, the durable store, Sealed Pad Transfer) proven byte-identical to the
-  frozen wire in all four cross-edition directions, but **no iOS application yet**.
+  **iOS Edition now has the whole engine** (`ios/TruePadKit`: the OTP core, the
+  durable store, the §12 verbs, the courier bundle, the Sealed Pad Transfer state
+  machine and ceremony, the deployment evaluator, and a SwiftUI view layer) proven
+  byte-identical to the frozen wire in all four cross-edition directions. There is
+  still **no installable iOS app**: the app SHELL — the Xcode app target, its
+  Info.plist and entitlements, the App entry point — is not built, and neither are
+  the pad-creation and ceremony screens. The view layer compiles for a real device
+  in CI, which is not the same as running on one.
   Neither platform is released; there is no App Store build and no 3.0 tag.
   **Physical mobile validation is outstanding on both** — the two-device
   Android↔iPhone ceremony, human TalkBack and human VoiceOver have not been
