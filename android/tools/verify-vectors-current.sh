@@ -18,7 +18,11 @@
 # deployment-evaluator-v3.json (scripts/gen-evaluator-corpus.ts; DeploymentCorpusTest
 # + the TS deployment-evaluator-corpus test), spt-interop.json (scripts/gen-spt-interop.ts;
 # SptInteropTest + tests/spt-interop-corpus, which re-seals and compares so a stale
-# corpus cannot survive), and xwing-draft10-appendix-c.json (the vendored X-Wing
+# corpus cannot survive), spt-android-generated.json (the Android Edition's own
+# seal output, written by SptAndroidCorpusTest and opened + resealed byte-
+# identically by the iOS SptCrossEditionCorpusTests; it also carries
+# production-entropy cases that are unreproducible by construction), and
+# xwing-draft10-appendix-c.json (the vendored X-Wing
 # draft-10 Appendix C KATs; XWingKatTest + tests/spt-xwing).
 # (The deployment-evaluator corpus is additionally pinned byte-identical to the
 #  canonical test-vectors/ copy at the end of this script.)
@@ -47,11 +51,11 @@ trap cleanup EXIT
 cp "$here/generate-vectors.mjs" "$gendir/generate-vectors.mjs"
 ( cd "$repo" && node "$gendir/generate-vectors.mjs" "$out" >/dev/null )
 
-if diff -ru "$android/vectors" "$out" -x deployment-evaluator-v3.json -x spt-interop.json -x xwing-draft10-appendix-c.json >/dev/null; then
+if diff -ru "$android/vectors" "$out" -x deployment-evaluator-v3.json -x spt-interop.json -x xwing-draft10-appendix-c.json -x spt-android-generated.json >/dev/null; then
   echo "vectors are byte-identical to what THIS source tree ($(git -C "$repo" rev-parse --short HEAD)) produces"
 else
   echo "VECTORS DRIFTED FROM THE CURRENT SOURCE TREE:" >&2
-  diff -ru "$android/vectors" "$out" -x deployment-evaluator-v3.json -x spt-interop.json -x xwing-draft10-appendix-c.json >&2 || true
+  diff -ru "$android/vectors" "$out" -x deployment-evaluator-v3.json -x spt-interop.json -x xwing-draft10-appendix-c.json -x spt-android-generated.json >&2 || true
   exit 1
 fi
 

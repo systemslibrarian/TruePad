@@ -99,7 +99,16 @@ node "$work/_gen/generate-vectors.mjs" "$out" >/dev/null
 #   - xwing-draft10-appendix-c.json: the X-Wing draft-10 Appendix C known-answer
 #     vectors, vendored byte-identical to the draft; proven by XWingKatTest and
 #     tests/spt-xwing.test.ts.
-exclude=(-x deployment-evaluator-v3.json -x spt-interop.json -x xwing-draft10-appendix-c.json)
+#   - spt-android-generated.json: the Android Edition's OWN seal output, written by
+#     SptAndroidCorpusTest (regenerate with TRUEPAD_REGENERATE_ANDROID_CORPUS=1).
+#     It points the opposite way from spt-interop.json: those are TypeScript
+#     packages the other editions must open, these are Kotlin packages THEY must
+#     open. Proven by SptAndroidCorpusTest (reseals the deterministic cases and
+#     opens every case) and by the iOS SptCrossEditionCorpusTests, which opens it
+#     and reseals it byte-identically -- so a stale corpus cannot survive either.
+#     It also carries production-entropy cases that no generator can reproduce by
+#     construction, which is a second reason it can never be a v2.0.0 artifact.
+exclude=(-x deployment-evaluator-v3.json -x spt-interop.json -x xwing-draft10-appendix-c.json -x spt-android-generated.json)
 if (( check )); then
   if diff -ru "${exclude[@]}" "$android/vectors" "$out" >/dev/null; then
     echo "vectors are byte-identical to what $tag produces"
