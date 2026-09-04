@@ -46,6 +46,15 @@ let package = Package(
             swiftSettings: [.define("TRUEPAD_KAT_SUPPORT")]
         ),
 
+        // ---- Vector generation: a tool, not a product --------------------
+        // The twin of scripts/gen-spt-interop.ts. It links TruePadKATSupport, so
+        // it is an executable TARGET with no product: a shipping app cannot
+        // depend on it any more than it can depend on the KAT support itself.
+        .executableTarget(
+            name: "spt-vector-tool",
+            dependencies: ["TruePadSPT", "TruePadKATSupport"]
+        ),
+
         // ---- Tests ------------------------------------------------------
         .testTarget(
             name: "TruePadSPTTests",

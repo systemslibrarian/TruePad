@@ -64,6 +64,44 @@ final class ProductionIsolationTests: XCTestCase {
                        "TruePadKATSupport must never be exported as a product")
     }
 
+    /// Strip Swift comments — `//` to end of line, and nested `/* ... */` — from
+    /// source text.
+    ///
+    /// The audit below must judge CODE, not prose. The production sources
+    /// deliberately explain this very boundary, and naming the forbidden surface
+    /// in a doc comment is exactly how that explanation is written. An audit that
+    /// cannot tell an explanation from a call site would force the code to stop
+    /// documenting its own security property, which is the wrong trade.
+    static func strippingComments(_ text: String) -> String {
+        var out = ""
+        var depth = 0
+        var inLineComment = false
+        var chars = Array(text)
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            let next: Character? = i + 1 < chars.count ? chars[i + 1] : nil
+
+            if inLineComment {
+                if c == "\n" { inLineComment = false; out.append(c) }
+                i += 1
+                continue
+            }
+            if depth > 0 {
+                if c == "/", next == "*" { depth += 1; i += 2; continue }
+                if c == "*", next == "/" { depth -= 1; i += 2; continue }
+                if c == "\n" { out.append(c) }   // keep line numbering meaningful
+                i += 1
+                continue
+            }
+            if c == "/", next == "/" { inLineComment = true; i += 2; continue }
+            if c == "/", next == "*" { depth = 1; i += 2; continue }
+            out.append(c)
+            i += 1
+        }
+        return out
+    }
+
     /// Every `.target(...)` / `.testTarget(...)` declaration in the manifest, each
     /// as a balanced-parenthesis block. Searching for `name: "TruePadSPT"` directly
     /// is WRONG -- the products array declares a library of the same name first,
@@ -140,7 +178,8 @@ final class ProductionIsolationTests: XCTestCase {
         XCTAssertFalse(files.isEmpty, "no production sources found to audit")
 
         for file in files {
-            let text = try String(contentsOf: sources.appendingPathComponent(file), encoding: .utf8)
+            let raw = try String(contentsOf: sources.appendingPathComponent(file), encoding: .utf8)
+            let text = Self.strippingComments(raw)
             for needle in forbidden {
                 XCTAssertFalse(text.contains(needle),
                                "production source \(file) references forbidden symbol '\(needle)'")

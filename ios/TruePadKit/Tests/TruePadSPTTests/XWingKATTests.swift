@@ -29,6 +29,7 @@ final class XWingKATTests: XCTestCase {
         b.map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Shared by the SPT interop tests too.
     static var repoRoot: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // TruePadSPTTests

@@ -100,15 +100,20 @@ fi
 
 echo
 echo "== 4. No production source names the deterministic surface =="
-HITS=$(grep -rInE 'encap_external_entropy|DeterministicXWing|TruePadKATSupport|CCryptoBoringSSL|encapsulateWithOptionalEntropy|TRUEPAD_KAT_SUPPORT|dlsym|NSClassFromString|NSSelectorFromString' "$KIT/Sources/TruePadSPT" || true)
-if [ -n "$HITS" ]; then
-    echo "$HITS" | sed 's/^/        /'
-    fail "a production source names the deterministic surface"
+# Delegated to ProductionIsolationTests rather than re-grepped here. That test
+# strips Swift comments before auditing, because the production sources document
+# this very boundary and naming the forbidden surface in a doc comment is how
+# that explanation is written. Two implementations of a security check are two
+# chances to disagree about what counts as a reference, so there is one.
+if swift test --package-path "$KIT" \
+        --filter 'ProductionIsolationTests' > "$WORK/audit.log" 2>&1; then
+    pass "production sources are clean, and the package graph isolates the hook"
+    grep -E "Executed [0-9]+ tests" "$WORK/audit.log" | tail -1 | sed 's/^[[:space:]]*/        /'
 else
-    pass "production sources are clean (no call, import, or dynamic lookup)"
+    grep -E "error:|XCTAssert" "$WORK/audit.log" | head -10 | sed 's/^/        /'
+    fail "the production isolation tests did not pass"
 fi
 
-echo
 echo "== 5. Vendored dependency carries no TruePad source patch =="
 HITS=$(find "$HERE/../vendor/swift-crypto/Sources" -iname '*truepad*' 2>/dev/null || true)
 if [ -n "$HITS" ]; then
