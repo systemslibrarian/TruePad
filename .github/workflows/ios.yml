@@ -150,7 +150,7 @@ jobs:
         working-directory: ios/TruePadKit
         run: |
           set -o pipefail
-          for scheme in TruePadCore TruePadStorage TruePadSPT; do
+          for scheme in TruePadCore TruePadClaims TruePadStorage TruePadSPT TruePadUI; do
             echo "=== $scheme ==="
             xcodebuild -scheme "$scheme" \
                        -destination 'generic/platform=iOS' \

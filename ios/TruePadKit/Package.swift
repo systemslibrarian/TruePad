@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "TruePadClaims", targets: ["TruePadClaims"]),
         .library(name: "TruePadStorage", targets: ["TruePadStorage"]),
         .library(name: "TruePadSPT", targets: ["TruePadSPT"]),
+        .library(name: "TruePadUI", targets: ["TruePadUI"]),
     ],
     dependencies: [
         // Vendored apple/swift-crypto 4.5.2 (Apache-2.0), upstream commit
@@ -73,6 +74,15 @@ let package = Package(
             ]
         ),
 
+        // ---- Production: the presentation layer ---------------------------
+        // SwiftUI views are impossible to test on CI without a device, so every
+        // decision in the UI that can be wrong in a way that MATTERS -- what may
+        // go in a QR code, whether a verdict was derived or stored, whether a
+        // limitation was softened, whether a confirmation prompt echoes the value
+        // it asks for -- lives in plain Swift here and is tested. It does not
+        // link TruePadSPT: the UI has no business reaching the KEM.
+        .target(name: "TruePadUI", dependencies: ["TruePadCore", "TruePadClaims", "TruePadStorage"]),
+
         // ---- Test support: NOT a product, NOT a dependency of TruePadSPT --
         // Deterministic (caller-supplied-entropy) X-Wing encapsulation, needed to
         // drive the frozen draft-10 Appendix-C vectors and TruePad's deterministic
@@ -105,6 +115,7 @@ let package = Package(
                 "TruePadCore",
                 "TruePadClaims",
                 "TruePadStorage",
+                "TruePadUI",
                 "TruePadSPT",
                 "TruePadKATSupport",
                 .product(name: "Crypto", package: "swift-crypto"),

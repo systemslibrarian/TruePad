@@ -12,7 +12,8 @@ final class PostureGuardTests: XCTestCase {
 
     /// The shipping products. The test-only and host-only targets are excluded on
     /// purpose and named here so the exclusion is deliberate rather than implicit.
-    static let shippingTargets = ["TruePadCore", "TruePadClaims", "TruePadStorage", "TruePadSPT"]
+    static let shippingTargets = ["TruePadCore", "TruePadClaims", "TruePadStorage", "TruePadSPT",
+                                  "TruePadUI"]
 
     func manifestCode() throws -> String {
         try String(contentsOf: Self.kitRoot.appendingPathComponent("Package.swift"), encoding: .utf8)
