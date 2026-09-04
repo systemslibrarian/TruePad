@@ -150,6 +150,9 @@ jobs:
       - name: Third-party notices describe what is vendored
         run: ios/scripts/check-notices.sh
 
+      - name: The SBOM matches the tree
+        run: ios/scripts/gen-sbom.sh --check
+
       - name: Release-configuration build
         working-directory: ios/TruePadKit
         run: swift build -c release 2>&1 | tail -5
@@ -189,6 +192,9 @@ jobs:
       # change ever reverted to the CryptoKit re-export, the X-Wing symbols would
       # be absent and the availability floor would jump to iOS 26 - a regression
       # that a passing test suite on macOS would not reveal.
+      - name: Inspect what the release binary actually contains
+        run: ios/scripts/inspect-release-binary.sh
+
       - name: Prove the iOS binary links the vendored BoringSSL X-Wing
         run: |
           OBJ="$RUNNER_TEMP/dd-ios/Build/Products/Debug-iphoneos/CCryptoBoringSSL.o"

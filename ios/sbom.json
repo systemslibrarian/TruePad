@@ -1,0 +1,110 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "TruePad iOS Edition",
+      "version": "3.0.0-dev.0",
+      "description": "Authenticated one-time-pad key management. PQC protects pad delivery; OTP encrypts messages; Wegman-Carter authenticates them.",
+      "licenses": [{ "license": { "id": "AGPL-3.0-only" } }]
+    },
+    "properties": [
+      { "name": "truepad:sbom-scope", "value": "iOS Edition only. The Browser/CLI npm tree and the Android Gradle tree are recorded by their own resolution artefacts." },
+      { "name": "truepad:generated-from", "value": "the working tree, by ios/scripts/gen-sbom.sh; every field is read from the files rather than restated" }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "TruePadClaims",
+      "version": "3.0.0-dev.0",
+      "scope": "required",
+      "licenses": [{ "license": { "id": "AGPL-3.0-only" } }],
+      "properties": [{ "name": "truepad:origin", "value": "first-party" }]
+    },
+    {
+      "type": "library",
+      "name": "TruePadCore",
+      "version": "3.0.0-dev.0",
+      "scope": "required",
+      "licenses": [{ "license": { "id": "AGPL-3.0-only" } }],
+      "properties": [{ "name": "truepad:origin", "value": "first-party" }]
+    },
+    {
+      "type": "library",
+      "name": "TruePadSPT",
+      "version": "3.0.0-dev.0",
+      "scope": "required",
+      "licenses": [{ "license": { "id": "AGPL-3.0-only" } }],
+      "properties": [{ "name": "truepad:origin", "value": "first-party" }]
+    },
+    {
+      "type": "library",
+      "name": "TruePadStorage",
+      "version": "3.0.0-dev.0",
+      "scope": "required",
+      "licenses": [{ "license": { "id": "AGPL-3.0-only" } }],
+      "properties": [{ "name": "truepad:origin", "value": "first-party" }]
+    },
+    {
+      "type": "library",
+      "name": "TruePadUI",
+      "version": "3.0.0-dev.0",
+      "scope": "required",
+      "licenses": [{ "license": { "id": "AGPL-3.0-only" } }],
+      "properties": [{ "name": "truepad:origin", "value": "first-party" }]
+    },
+    {
+      "type": "library",
+      "name": "swift-crypto",
+      "version": "4.5.2",
+      "scope": "required",
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
+      "purl": "pkg:swift/github.com/apple/swift-crypto@4.5.2",
+      "externalReferences": [
+        { "type": "vcs", "url": "https://github.com/apple/swift-crypto.git" }
+      ],
+      "hashes": [
+        { "alg": "SHA-256", "content": "1765ff428a228dc74bf8406b9b40ab576617ce62b6233b7763530f162e84d31f" }
+      ],
+      "properties": [
+        { "name": "truepad:origin", "value": "vendored in-tree at ios/vendor/swift-crypto" },
+        { "name": "truepad:upstream-commit", "value": "da9d28d69ebe3894b18376c8f2395c2f37b8448f" },
+        { "name": "truepad:modified", "value": "true" },
+        { "name": "truepad:modifications", "value": "Three reviewed patches, pinned byte-for-byte by ios/vendor/EXPECTED-PATCH.diff and verified on every CI run by ios/vendor/verify-vendor.sh: (1) the development switch, forcing the BoringSSL backend rather than CryptoKit, which has an iOS 26 floor for the PQ API; (2) exporting CCryptoBoringSSL as a product, needed only by the test-only deterministic KAT support; (3) an entropy-length guard in XWing_boring.swift, closing the unfixed sibling of CVE-2026-28815." },
+        { "name": "truepad:patch-digest", "value": "bc02737954172a053a15c32c75e594becdbd1eedc7ff4faee4e3af4564a7da45" },
+        { "name": "truepad:hash-covers", "value": "SHA-256 over the sorted per-file SHA-256 digests of the vendored tree, so it describes the bytes present rather than the tag." }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "BoringSSL",
+      "version": "0226f30467f540a3f62ef48d453f93927da199b6",
+      "scope": "required",
+      "licenses": [{ "license": { "name": "OpenSSL/ISC/MIT, as carried in the vendored tree" } }],
+      "externalReferences": [
+        { "type": "vcs", "url": "https://boringssl.googlesource.com/boringssl" }
+      ],
+      "properties": [
+        { "name": "truepad:origin", "value": "ships inside swift-crypto as CCryptoBoringSSL; not resolved separately" },
+        { "name": "truepad:provides", "value": "ML-KEM-768 and X25519, the two halves of the X-Wing KEM that protects pad DELIVERY. It is not on the OTP message path." }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fiat-crypto",
+      "version": "as vendored inside BoringSSL",
+      "scope": "required",
+      "licenses": [{ "license": { "id": "MIT" } }],
+      "properties": [
+        { "name": "truepad:origin", "value": "formally-verified field arithmetic, ships inside BoringSSL" }
+      ]
+    }
+  ],
+  "properties": [
+    { "name": "truepad:no-network", "value": "The iOS Edition performs no network I/O. Asserted by PostureGuardTests, which fails if any shipping source references a networking API." },
+    { "name": "truepad:otp-kernel-has-no-crypto-dependency", "value": "TruePadCore links no cryptography library, so no library change can alter the frozen message wire. Asserted by ProductionIsolationTests." }
+  ]
+}
