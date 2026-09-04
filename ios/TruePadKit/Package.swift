@@ -42,7 +42,7 @@ let package = Package(
         // the kernel and on Foundation/Darwin, but NOT on any crypto library:
         // the durable consumption state is where reuse safety actually lives,
         // and it is written against the platform, not against a cipher.
-        .target(name: "TruePadStorage", dependencies: ["TruePadCore"]),
+        .target(name: "TruePadStorage", dependencies: ["TruePadCore", "TruePadClaims"]),
 
         // ---- Production: Sealed Pad Transfer ------------------------------
         .target(
