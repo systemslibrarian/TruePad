@@ -1,0 +1,160 @@
+# Build and test the iOS Edition, and re-verify the supply-chain and isolation
+# gates that its security argument depends on.
+#
+# WHAT THIS WORKFLOW DOES AND DOES NOT COVER, stated plainly so nobody reads a
+# green tick as more than it is.
+#
+#   1. `swift build` and `swift test` — the whole engine. TruePadCore (the OTP
+#      kernel), TruePadStorage (the durable store) and TruePadSPT (Sealed Pad
+#      Transfer) are plain Swift with no UIKit dependency, so the entire security
+#      state machine is tested on the runner with no simulator, and the SAME
+#      compiled code runs on a device. Includes the X-Wing draft-10 Appendix-C
+#      known-answer vectors, the frozen v2.0.0 OTP wire vectors, the cross-edition
+#      SPT corpora in all four directions, and the malformed-length corpus.
+#
+#   2. `ios/scripts/check-release-isolation.sh` — builds a stand-in app as an
+#      EXTERNAL package consumer and proves it cannot import, link, or name the
+#      deterministic X-Wing encapsulation used to reproduce frozen vectors. That
+#      capability is a reuse machine, and "test-only by convention" is not
+#      protection; this is the gate that makes it structural.
+#
+#   3. `ios/vendor/verify-vendor.sh` — re-clones pristine apple/swift-crypto at
+#      the pinned COMMIT (a moved tag is treated as a supply-chain event, not a
+#      merge conflict), prunes the recorded development-only paths, and requires
+#      the diff against the vendored tree to equal EXPECTED-PATCH.diff byte for
+#      byte. Unreviewed vendor drift fails here in either direction.
+#
+#   4. `ios/scripts/check-notices.sh` — the third-party notices must still name
+#      the versions actually vendored. A notices file that names a version no
+#      longer present is not merely stale; it is a false statement about what the
+#      product contains.
+#
+#   5. A release-configuration build and a real `generic/platform=iOS` device
+#      build, so a change that only compiles for the host cannot pass.
+#
+#   This job is written to be UNABLE to go green over an empty run. `swift test`
+#   exits 0 when it discovers no tests, so the summary line is parsed afterwards
+#   and the count must meet a floor with zero failures. A suite that vanished is
+#   not a passing suite.
+#
+# STILL NOT COVERED: a physical iPhone. Everything here is a macOS runner, which
+# says nothing about real Data Protection with a passcode, real flash, a real
+# backup/restore path, the camera, or VoiceOver. Those are human and hardware
+# gates and remain OUTSTANDING. See docs/IOS-SECURITY.md.
+name: iOS
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'ios/**'
+      - 'docs/IOS-SECURITY.md'
+      - 'docs/THIRD-PARTY-NOTICES.md'
+      # The iOS suites are held to the SHARED cross-edition fixtures, so a change
+      # to them must re-run this workflow, not just the Android one.
+      - 'android/vectors/**'
+      - '.github/workflows/ios.yml'
+  pull_request:
+    paths:
+      - 'ios/**'
+      - 'docs/IOS-SECURITY.md'
+      - 'docs/THIRD-PARTY-NOTICES.md'
+      - 'android/vectors/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kit:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record the toolchain
+        run: |
+          echo "available Xcode versions:"
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          echo
+          xcodebuild -version
+          swift --version
+          sw_vers
+
+      - name: Build
+        working-directory: ios/TruePadKit
+        run: swift build 2>&1 | tail -5
+
+      # The floor exists because `swift test` exits 0 on an empty discovery. It
+      # is set below the current count so ordinary additions do not have to touch
+      # CI, but high enough that a suite which stopped being compiled in cannot
+      # pass unnoticed.
+      - name: Test, with a floor and a zero-failure requirement
+        working-directory: ios/TruePadKit
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee /tmp/ios-tests.log | tail -40
+          python3 - <<'PY'
+          import re, sys
+          FLOOR = 80
+          text = open('/tmp/ios-tests.log').read()
+          runs = re.findall(r'Executed (\d+) tests?, with (\d+) failures?', text)
+          if not runs:
+              sys.exit("no 'Executed N tests' summary found — the suite did not run")
+          total, failures = max(int(t) for t, _ in runs), max(int(f) for _, f in runs)
+          print(f"executed {total} tests, {failures} failures (floor {FLOOR})")
+          if failures:
+              sys.exit(f"{failures} test failures")
+          if total < FLOOR:
+              sys.exit(f"only {total} tests ran, below the floor of {FLOOR} — "
+                       "a suite is missing, not passing")
+          PY
+
+      - name: KAT-support isolation is structural
+        run: ios/scripts/check-release-isolation.sh
+
+      - name: Vendored swift-crypto matches the reviewed patch exactly
+        run: ios/vendor/verify-vendor.sh
+
+      - name: Third-party notices describe what is vendored
+        run: ios/scripts/check-notices.sh
+
+      - name: Release-configuration build
+        working-directory: ios/TruePadKit
+        run: swift build -c release 2>&1 | tail -5
+
+      # A host build proves nothing about the device. This is the step that would
+      # catch an availability floor regression - for instance a change that
+      # silently reverted to the system CryptoKit X-Wing, which demands iOS 26.
+      - name: Real iOS device build
+        working-directory: ios/TruePadKit
+        run: |
+          set -o pipefail
+          xcodebuild -scheme TruePadKit \
+                     -destination 'generic/platform=iOS' \
+                     -derivedDataPath "$RUNNER_TEMP/dd-ios" \
+                     build 2>&1 | tail -20
+
+      # The BoringSSL-backed path must be what actually got linked for iOS. If a
+      # change ever reverted to the CryptoKit re-export, the X-Wing symbols would
+      # be absent and the availability floor would jump to iOS 26 - a regression
+      # that a passing test suite on macOS would not reveal.
+      - name: Prove the iOS binary links the vendored BoringSSL X-Wing
+        run: |
+          OBJ="$RUNNER_TEMP/dd-ios/Build/Products/Debug-iphoneos/CCryptoBoringSSL.o"
+          if [ ! -f "$OBJ" ]; then
+            echo "expected CCryptoBoringSSL.o in the iOS build products; found:"
+            find "$RUNNER_TEMP/dd-ios/Build/Products" -maxdepth 2 -name '*.o' | head -20
+            exit 1
+          fi
+          echo "--- platform and deployment target ---"
+          otool -l "$OBJ" | grep -A4 LC_BUILD_VERSION | head -8
+          echo "--- X-Wing symbols ---"
+          nm "$OBJ" | grep -E 'XWING_(encap|decap|generate_key)' | head -10
+          nm "$OBJ" | grep -q 'CCryptoBoringSSL_XWING_encap' \
+            || { echo "the vendored BoringSSL X-Wing is NOT linked for iOS"; exit 1; }
+          echo "OK: the iOS build links the vendored BoringSSL X-Wing"
