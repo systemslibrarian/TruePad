@@ -4,7 +4,8 @@
 # WHAT THIS WORKFLOW DOES AND DOES NOT COVER, stated plainly so nobody reads a
 # green tick as more than it is.
 #
-#   1. `swift build` and `swift test` — the whole engine. TruePadCore (the OTP
+#   1. `swift build`, `swift test`, and the same suite again under
+#      AddressSanitizer and ThreadSanitizer — the whole engine. TruePadCore (the OTP
 #      kernel), TruePadStorage (the durable store) and TruePadSPT (Sealed Pad
 #      Transfer) are plain Swift with no UIKit dependency, so the entire security
 #      state machine is tested on the runner with no simulator, and the SAME
@@ -100,7 +101,7 @@ jobs:
           swift test 2>&1 | tee /tmp/ios-tests.log | tail -40
           python3 - <<'PY'
           import re, sys
-          FLOOR = 80
+          FLOOR = 260
           text = open('/tmp/ios-tests.log').read()
           runs = re.findall(r'Executed (\d+) tests?, with (\d+) failures?', text)
           if not runs:
@@ -113,6 +114,32 @@ jobs:
               sys.exit(f"only {total} tests ran, below the floor of {FLOOR} — "
                        "a suite is missing, not passing")
           PY
+
+      # SANITIZERS. The suite is small and fast, so there is no reason to run it
+      # only in the plain configuration. AddressSanitizer covers the vendored
+      # BoringSSL C that the X-Wing path calls into; ThreadSanitizer covers the
+      # engine's locking, which is what stops two concurrent burns taking the same
+      # one-time key. ConcurrencyTests exists so TSan has real contention to look
+      # at rather than a single-threaded run that would pass vacuously.
+      - name: Test under AddressSanitizer
+        working-directory: ios/TruePadKit
+        run: |
+          set -o pipefail
+          swift test --sanitize=address 2>&1 | tee /tmp/ios-asan.log | tail -20
+          if grep -qE 'ERROR: AddressSanitizer|runtime error:' /tmp/ios-asan.log; then
+            echo "AddressSanitizer reported a finding"; exit 1
+          fi
+          grep -qE 'Executed [0-9]+ tests, with 0 failures' /tmp/ios-asan.log
+
+      - name: Test under ThreadSanitizer
+        working-directory: ios/TruePadKit
+        run: |
+          set -o pipefail
+          swift test --sanitize=thread 2>&1 | tee /tmp/ios-tsan.log | tail -20
+          if grep -qE 'WARNING: ThreadSanitizer|data race' /tmp/ios-tsan.log; then
+            echo "ThreadSanitizer reported a finding"; exit 1
+          fi
+          grep -qE 'Executed [0-9]+ tests, with 0 failures' /tmp/ios-tsan.log
 
       - name: KAT-support isolation is structural
         run: ios/scripts/check-release-isolation.sh
