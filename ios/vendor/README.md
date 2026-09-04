@@ -104,3 +104,57 @@ To update the vendored copy: change the pins in `verify-vendor.sh`, re-vendor,
 re-apply the two patches, run `--write`, **review the regenerated diff**, then
 re-run the full X-Wing gate — the Appendix-C vectors and the SPT interop corpus
 are the authority on whether a bump changed any byte.
+
+## Security review of the pinned versions
+
+Reviewed against published advisories at the pin `swift-crypto 4.5.2` /
+BoringSSL `0226f30`. In each case the fix was confirmed **in the vendored
+source**, not inferred from a version number.
+
+| Advisory | Verdict |
+| --- | --- |
+| CVE-2026-28815 / GHSA-9m44-rr2w-ppp7 — X-Wing decapsulation accepts malformed ciphertext length (fixed 4.3.1) | **Not affected.** The Swift-layer guard is present at `Sources/Crypto/KEM/BoringSSL/XWing_boring.swift`. The BoringSSL side never needed fixing: `XWING_decap` takes no length parameter by design, so the guard is necessarily Swift-side. TruePad guards it independently too — see below. |
+| CVE-2026-43823 / GHSA-8q93-f6xh-4f6f — double-free parsing an RSA public key (CRITICAL, fixed 4.5.1) | **Not affected**, on two independent grounds. The pin POSTDATES the fix, and TruePad does not link `_CryptoExtras`, where RSA lives. |
+| CVE-2022-37454 — XKCP Keccak sponge integer overflow | **Not affected.** `Sources/CXKCP/FIPS202-opt64/KeccakSponge.inc` carries the post-fix form. |
+| ML-KEM / X25519 / AES-GCM in the vendored BoringSSL | No advisory found. These are on TruePad's hot path, so a future advisory here would be directly reachable and should be treated as high priority. |
+
+### One unpatched sibling defect, not reachable from TruePad
+
+`OpenSSLXWingPublicKeyImpl.encapsulateWithOptionalEntropy` at 4.5.2 still passes
+the caller's `entropy` array to `CCryptoBoringSSL_XWING_encap_external_entropy`
+**without a length check** — the symmetric twin of the buffer CVE-2026-28815 was
+filed for, on the encapsulation side, which upstream's fix did not cover.
+
+It is not reachable here. Upstream the method is internal with a single caller
+that passes `nil`, and TruePad never calls it at all: the deterministic hook goes
+straight to the C entry point through `DeterministicXWing`, which validates the
+64-byte entropy length **before** forming a pointer. `XWingMalformedLengthTests`
+asserts exactly that, and asserts the refusal comes from TruePad rather than the
+library — so this class of defect is guarded here independently of upstream.
+
+Worth reporting upstream as a latent trap for future callers.
+
+### Two currency items to watch
+
+- **The BoringSSL pin is about a year old** (commit dated 2025-09-07). Upstream
+  BoringSSL does not issue CVEs for most fixes, so "no advisory" is not the same
+  as "no relevant fix". When swift-crypto rolls BoringSSL past `0226f30`, re-run
+  the Appendix-C and SPT interop corpora against the new tree before adopting it.
+- **`Sources/CXKCP` is a second C dependency** inside swift-crypto, with its own
+  provenance (`vendored-sources.txt` names an XKCP *master commit*, not a
+  release). A future vendor-currency review should look at it separately.
+
+### The draft-06 / draft-10 label, settled
+
+Upstream's header (`CCryptoBoringSSL_xwing.h`) and `XWing.swift` both cite
+draft-connolly-cfrg-xwing-kem-**06**, while TruePad's frozen contract is
+draft-**10**. This is recorded so a future reviewer does not have to rediscover
+it and does not mistake it for a mismatch.
+
+The labels are not the evidence. What settles it is
+`android/vectors/xwing-draft10-appendix-c.json`: the committed draft-10
+Appendix-C corpus, which this vendored code reproduces byte-for-byte in all three
+directions, alongside the cross-edition SPT corpora. The combiner was read
+directly and is the frozen construction — SHA3-256 over
+`mlkem_ss ‖ x25519_ss ‖ x25519_ct ‖ x25519_pk ‖ 5c2e2f2f5e5c`, label last. The
+header comment is stale; the bytes are not.
