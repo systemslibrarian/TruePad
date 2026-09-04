@@ -187,6 +187,41 @@ final class ProductionIsolationTests: XCTestCase {
         }
     }
 
+    /// The authenticated-OTP kernel must link NO cryptography library.
+    ///
+    /// This is the iOS statement of Decision 19. The OTP message path -- the
+    /// literal XOR, the four-slice partition, POLYVAL and the Wegman-Carter tag --
+    /// is information-theoretic and owes nothing to any library. Keeping
+    /// TruePadCore dependency-free means no library change can alter the frozen
+    /// message wire, and no library has to be trusted for it. The Android Edition
+    /// keeps the same separation: truepad-core is pure Kotlin and Bouncy Castle is
+    /// reachable only from the separate truepad-spt module.
+    func testOtpKernelLinksNoCryptographyLibrary() throws {
+        let code = try manifestCode()
+        let decls = targetDeclarations(in: code).filter { $0.contains("name: \"TruePadCore\"") }
+        XCTAssertEqual(decls.count, 1, "expected exactly one TruePadCore target")
+        let forbiddenDeps = ["Crypto", "CCryptoBoringSSL", "_CryptoExtras", "TruePadSPT",
+                             "TruePadKATSupport", "swift-crypto"]
+        for forbidden in forbiddenDeps where decls[0].contains(forbidden) {
+            XCTFail("TruePadCore must not depend on \(forbidden)")
+        }
+
+        // And no kernel source may import one either, whatever the manifest says.
+        let sources = Self.kitRoot.appendingPathComponent("Sources/TruePadCore")
+        let files = try FileManager.default.subpathsOfDirectory(atPath: sources.path)
+            .filter { $0.hasSuffix(".swift") }
+        XCTAssertFalse(files.isEmpty, "no kernel sources found to audit")
+        for file in files {
+            let raw = try String(contentsOf: sources.appendingPathComponent(file), encoding: .utf8)
+            let text = Self.strippingComments(raw)
+            for bad in ["import Crypto", "import CryptoKit", "import CCryptoBoringSSL",
+                        "import _CryptoExtras", "import TruePadSPT"] {
+                XCTAssertFalse(text.contains(bad),
+                               "kernel source \(file) has a forbidden \(bad)")
+            }
+        }
+    }
+
     /// The vendored dependency must carry NO TruePad source patch. Both intentional
     /// changes live in its Package.swift; if a future change smuggles a hook into
     /// Sources/, the app would link it, so fail loudly here.

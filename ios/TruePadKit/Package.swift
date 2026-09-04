@@ -5,8 +5,9 @@ let package = Package(
     name: "TruePadKit",
     platforms: [.macOS(.v14), .iOS(.v16)],
     products: [
-        // The ONLY product. A shipping app links this and nothing else from
+        // The two shipping products. An app links these and nothing else from
         // this package, so it cannot reach TruePadKATSupport (below).
+        .library(name: "TruePadCore", targets: ["TruePadCore"]),
         .library(name: "TruePadSPT", targets: ["TruePadSPT"]),
     ],
     dependencies: [
@@ -16,7 +17,17 @@ let package = Package(
         .package(path: "../vendor/swift-crypto"),
     ],
     targets: [
-        // ---- Production -------------------------------------------------
+        // ---- Production: the authenticated-OTP kernel --------------------
+        // Deliberately depends on NOTHING. The OTP message path -- the literal
+        // XOR, the four-slice partition, POLYVAL and the Wegman-Carter tag --
+        // links no cryptography library at all, so no library can be blamed for
+        // it and no library change can alter it. This mirrors the Android
+        // Edition, where truepad-core is a pure-Kotlin module and Bouncy Castle
+        // is reachable only from the separate Sealed Pad Transfer module
+        // (Decision 19). SptKernelIsolationTests enforces it.
+        .target(name: "TruePadCore"),
+
+        // ---- Production: Sealed Pad Transfer ------------------------------
         .target(
             name: "TruePadSPT",
             dependencies: [
@@ -59,6 +70,7 @@ let package = Package(
         .testTarget(
             name: "TruePadSPTTests",
             dependencies: [
+                "TruePadCore",
                 "TruePadSPT",
                 "TruePadKATSupport",
                 .product(name: "Crypto", package: "swift-crypto"),
