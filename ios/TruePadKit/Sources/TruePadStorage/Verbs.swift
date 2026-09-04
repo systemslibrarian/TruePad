@@ -146,29 +146,27 @@ public struct ExportResult: Sendable { public let container: [UInt8]; public let
 ///     engine draws randomness, and a pairId is public metadata — never pad
 ///     material. Pad material comes exclusively from the operator's declared
 ///     sources (§7); the engine never manufactures a pad byte.
-///   - arrivedSealed: whether this pad was DELIVERED by sealed transfer. Injected
-///     rather than assumed: the durable receiver marker lives in the SPT layer,
-///     which iOS does not have yet, and a default of `false` here would be a
-///     claim. It is wired to the real reader when that layer lands, and until
-///     then the only sealed-ancestry iOS can observe is the SENDER side, which is
-///     read from the handoff marker below.
+///
+/// SEALED ANCESTRY IS READ, NOT INJECTED. Both halves of the fact now come from
+/// durable markers this engine can see: the RECEIVER side from the SPT layer's
+/// consumed.json markers (`sptPairArrivedSealed`), the SENDER side from the pad's
+/// own handoff marker. There is no constructor parameter for it, deliberately —
+/// anything that can be supplied can be supplied wrongly, and this fact only ever
+/// disqualifies.
 public final class Engine: @unchecked Sendable {
     let fs: Fs
     let witnessFs: Fs
     let clock: () -> Date
     let pairIdSource: () -> [UInt8]
-    let arrivedSealed: (String) -> Bool
 
     public init(fs: Fs,
                 witnessFs: Fs? = nil,
                 clock: @escaping () -> Date = { Date() },
-                pairIdSource: @escaping () -> [UInt8] = { randomBytes(16) },
-                arrivedSealed: @escaping (String) -> Bool = { _ in false }) {
+                pairIdSource: @escaping () -> [UInt8] = { randomBytes(16) }) {
         self.fs = fs
         self.witnessFs = witnessFs ?? fs
         self.clock = clock
         self.pairIdSource = pairIdSource
-        self.arrivedSealed = arrivedSealed
     }
 
     func now() -> String { isoNow(clock()) }
@@ -341,7 +339,7 @@ public final class Engine: @unchecked Sendable {
         // The sealed-ancestry fact, read once under this lock. Computational
         // delivery means NOT ELIGIBLE, permanently, for BOTH ends of a sealed
         // transfer and for both directions of the pad.
-        let sealedAncestor = arrivedSealed(pairId) || sentSealed(pairId)
+        let sealedAncestor = sptPairArrivedSealed(pairId) || sentSealed(pairId)
         return PairSummary(
             pairId: pairId, label: meta.label, createdAt: meta.createdAt, destroyed: false,
             origin: meta.origin,

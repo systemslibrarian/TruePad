@@ -38,11 +38,20 @@ let package = Package(
         .target(name: "TruePadClaims"),
 
         // ---- Production: the durable store ------------------------------
-        // The v2 store state machine over a filesystem abstraction. Depends on
-        // the kernel and on Foundation/Darwin, but NOT on any crypto library:
-        // the durable consumption state is where reuse safety actually lives,
-        // and it is written against the platform, not against a cipher.
-        .target(name: "TruePadStorage", dependencies: ["TruePadCore", "TruePadClaims"]),
+        // The v2 store state machine over a filesystem abstraction, plus the SPT
+        // orchestration verbs that compose the durable transfer protocol over it.
+        //
+        // It links TruePadSPT (and so, transitively, swift-crypto) because
+        // SptEngine.swift lives here -- the same layering as Android, where
+        // SptEngine.kt is in :truepad-storage and imports :truepad-spt. The
+        // isolation that is claimed, tested, and load-bearing is one level down:
+        // the OTP KERNEL links no cryptography library, so no library change can
+        // alter the frozen message wire (ProductionIsolationTests). The store
+        // itself does reach a cipher, through the transfer verbs, and this
+        // comment says so rather than repeating a tidier claim that stopped
+        // being true when those verbs landed.
+        .target(name: "TruePadStorage",
+                dependencies: ["TruePadCore", "TruePadClaims", "TruePadSPT"]),
 
         // ---- Production: Sealed Pad Transfer ------------------------------
         .target(
