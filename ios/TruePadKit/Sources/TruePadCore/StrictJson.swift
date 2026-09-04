@@ -212,10 +212,42 @@ struct StrictJsonParser {
                     guard let code = UInt32(hex, radix: 16) else {
                         throw JsonParseError(message: "bad \\u escape '\(hex)'")
                     }
-                    // Lone surrogates are preserved as replacement, matching how a
-                    // permissive reader would treat them; the envelope grammar
-                    // refuses every escaped spelling anyway.
-                    out.append(Unicode.Scalar(code) ?? Unicode.Scalar(0xfffd)!)
+                    // A LONE SURROGATE IS REFUSED, and this is a deliberate
+                    // divergence worth stating.
+                    //
+                    // Kotlin and JavaScript strings are UTF-16 and can hold an
+                    // unpaired surrogate; a well-formed JSON.stringify (ES2019)
+                    // re-emits it as \udXXX, so head.json bytes round-trip. Swift's
+                    // String cannot represent one at all. Substituting U+FFFD would
+                    // parse such a file happily and then RE-SERIALIZE DIFFERENT
+                    // BYTES — silently breaking the byte-exact interop that
+                    // head.json's whole claim rests on, in a way no test on this
+                    // edition alone would catch.
+                    //
+                    // So the reader fails closed instead. A store this refuses is
+                    // one no ordinary text input can produce, and refusing to read
+                    // it is the LOSS-over-REUSE answer; quietly rewriting it is not.
+                    if code >= 0xd800 && code <= 0xdfff {
+                        // A valid pair: consume the low half too.
+                        let lowStart = pos + 5
+                        if code <= 0xdbff, lowStart + 5 < s.count,
+                           s[lowStart] == "\\", s[lowStart + 1] == "u",
+                           let low = UInt32(String(String.UnicodeScalarView(
+                               s[(lowStart + 2)...(lowStart + 5)])), radix: 16),
+                           low >= 0xdc00, low <= 0xdfff {
+                            let combined = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00)
+                            out.append(Unicode.Scalar(combined)!)
+                            pos = lowStart + 6
+                            continue
+                        }
+                        throw JsonParseError(message:
+                            "lone surrogate escape \\u\(hex): this reader refuses rather than "
+                            + "substitute a replacement character and re-serialize different bytes")
+                    }
+                    guard let scalar = Unicode.Scalar(code) else {
+                        throw JsonParseError(message: "bad \\u escape '\(hex)'")
+                    }
+                    out.append(scalar)
                     pos += 5
                 default:
                     throw JsonParseError(message: "invalid escape '\\\(e)'")
