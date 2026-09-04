@@ -36,7 +36,7 @@ part of the point.
 | Store Format v2 (head/journal/reconcile) | **BUILT**, byte-exact vs frozen fixture |
 | Rollback witness (Fs-backed, engine level) | **BUILT**, incl. the weak-configuration test |
 | OTP verbs (gen/send/open/retire/destroy) | NOT YET BUILT |
-| Rollback witness — separate failure domain on iOS | NOT YET BUILT — see §5 |
+| Rollback witness — Keychain failure domain | **BUILT**; logic tested, PLATFORM behaviour unverified (see §5) |
 | SPT durable state machine | NOT YET BUILT |
 | SwiftUI application layer | NOT YET BUILT |
 | Deployment evaluator | NOT YET BUILT |
@@ -225,7 +225,8 @@ hidden.
 
 ## 5. Rollback witness on iOS — the design, and why it is weaker than Android's
 
-**NOT YET IMPLEMENTED. This section is the specification.**
+**IMPLEMENTED, with one honest gap: the logic is tested, the platform behaviour
+is not, and cannot be from here. Read §5.1 before citing any of this.**
 
 A restore is the classic pad-reuse vector: put yesterday's store back, and every
 byte spent since becomes spendable again. Worse, restoring only the header
@@ -290,6 +291,43 @@ If a same-device restore from an **encrypted local backup** reinstates both the
 container and the keychain together, the witness is restored alongside the store
 and **detects nothing**. This is the exact analogue of Android's weak
 configuration, and it will be demonstrated by a test rather than argued away.
+
+### 5.1 What is verified, what is relied upon, and what is measured-impossible
+
+`KeychainWitnessFs` implements the witness domain as an `Fs` over the
+data-protection Keychain with
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, bound as the Engine's
+`witnessFs`. `AfterFirstUnlock` so a verb can still advance the witness while the
+device is locked; `ThisDeviceOnly` so the item is device-bound.
+
+**VERIFIED HERE (8 tests):** that only the witness journal path shape is accepted
+and every store path — `secret.bin` above all — is refused outright, so pad
+material cannot reach the Keychain by construction rather than by discipline;
+that store operations are refused, so this cannot be mis-bound as the store's
+`Fs`; that wiping the container leaves the witness intact and the rewind is
+caught; that a vanished witness fails closed rather than reading as fresh; and
+that compaction preserves the high-water exactly.
+
+**MEASURED, AND IT SHAPES THE DESIGN:** the data-protection Keychain returns
+`errSecMissingEntitlement` (-34018) to an unsigned binary. This was probed
+directly, not assumed. Consequently **neither `swift test` nor CI can exercise the
+real Keychain backend at all** — only a signed app on a device can. That is why
+the backend is an injected protocol: the logic above it is fully testable, and the
+untestable part is isolated to one small type and named.
+
+**RELIED UPON, NOT VERIFIED HERE:** that a `ThisDeviceOnly` item is genuinely
+device-bound and does not migrate in a restore. That is Apple's documented
+contract. It stays on the physical-iPhone gate.
+
+**EXPLICITLY NOT RELIED UPON:** that Keychain items survive app deletion. Apple
+states this is an implementation detail. The design assumes they may vanish and
+fails closed when they do — which on iOS is a case that will actually occur.
+
+**Compaction.** A Keychain item cannot grow without bound. Above a threshold the
+journal is folded to its per-direction maximum, which is the same fold
+reconciliation already performs, pre-computed — so it can only move the recorded
+high-water UP and can never mask a rollback. A blob that does not parse is
+preserved rather than folded away, and the reader fails closed on it.
 
 ### And to be explicit about what this is NOT
 
