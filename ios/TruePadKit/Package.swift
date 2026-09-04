@@ -5,9 +5,10 @@ let package = Package(
     name: "TruePadKit",
     platforms: [.macOS(.v14), .iOS(.v16)],
     products: [
-        // The two shipping products. An app links these and nothing else from
+        // The shipping products. An app links these and nothing else from
         // this package, so it cannot reach TruePadKATSupport (below).
         .library(name: "TruePadCore", targets: ["TruePadCore"]),
+        .library(name: "TruePadClaims", targets: ["TruePadClaims"]),
         .library(name: "TruePadStorage", targets: ["TruePadStorage"]),
         .library(name: "TruePadSPT", targets: ["TruePadSPT"]),
     ],
@@ -27,6 +28,14 @@ let package = Package(
         // is reachable only from the separate Sealed Pad Transfer module
         // (Decision 19). SptKernelIsolationTests enforces it.
         .target(name: "TruePadCore"),
+
+        // ---- Production: the deployment/assurance evaluator ---------------
+        // The Swift twin of src/claims/shannon-deployment.ts. Like the kernel it
+        // depends on NOTHING -- it is a pure total function from recorded facts
+        // to a verdict, so it cannot read a file, reach a platform API, or cache
+        // anything between calls. The committed deployment-evaluator-v3 corpus
+        // holds every edition to the same answers.
+        .target(name: "TruePadClaims"),
 
         // ---- Production: the durable store ------------------------------
         // The v2 store state machine over a filesystem abstraction. Depends on
@@ -79,6 +88,7 @@ let package = Package(
             name: "TruePadSPTTests",
             dependencies: [
                 "TruePadCore",
+                "TruePadClaims",
                 "TruePadStorage",
                 "TruePadSPT",
                 "TruePadKATSupport",
