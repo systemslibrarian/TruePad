@@ -71,7 +71,11 @@ let package = Package(
                 // and compiles them as part of the dependency package; what this
                 // controls is what the app's module graph actually links.)
                 .product(name: "Crypto", package: "swift-crypto"),
-            ]
+            ],
+            // The comparison wordlist, byte-identical to the Browser and Android
+            // Editions'. Index position IS the protocol mapping, so its SHA-256
+            // is pinned by test to the same value Android pins.
+            resources: [.process("Resources")]
         ),
 
         // ---- Production: the presentation layer ---------------------------

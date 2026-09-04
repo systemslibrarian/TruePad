@@ -150,6 +150,34 @@ extension Engine {
                              + "was created.")
     }
 
+    /// The recipient withdraws a request they published.
+    ///
+    /// TERMINAL AND PERMANENT. The one-time key behind it is never usable again,
+    /// and the identifier is never reissued — cancelling is as final as using it,
+    /// which is what makes "cancel" a safe thing to offer.
+    @discardableResult
+    public func sptCancelReceiveRequest(requestIdHex: String,
+                                        reason: CancelReason = .operatorCancelled) throws -> ReceiverState {
+        try fs.withLock("spt-req:\(requestIdHex)") {
+            let millis = nowMillis()
+            return try cancelPendingReceiveRequest(vfs: sptVfs, idHex: requestIdHex,
+                                                   reason: reason,
+                                                   at: SptTime.format(epochMillis: millis),
+                                                   nowMillis: millis)
+        }
+    }
+
+    /// The recipient compared the eight words and they did NOT match.
+    ///
+    /// This is a distinct outcome from an ordinary cancellation, and it is
+    /// recorded as one: `rejected` says a human looked at a package and said it
+    /// was wrong, which is the single most important signal this protocol can
+    /// carry. Nothing is imported, and the request is spent.
+    @discardableResult
+    public func sptRejectReceiveRequest(requestIdHex: String) throws -> ReceiverState {
+        try sptCancelReceiveRequest(requestIdHex: requestIdHex, reason: .rejected)
+    }
+
     // ---- SENDER: review, confirm, seal --------------------------------------
 
     /// Decode a scanned or pasted TPR2 and return the twelve words to compare.
