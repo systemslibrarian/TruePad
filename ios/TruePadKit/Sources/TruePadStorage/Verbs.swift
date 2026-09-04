@@ -637,8 +637,12 @@ public final class Engine: @unchecked Sendable {
             let prefix = storeDir(pairId, direction)
 
             // O0 — structural, free, before any secret is touched.
+            // EITHER SPELLING, with no mode selector: canonical §6.2 JSON, or the
+            // TP2 compact transport, which decodes to an EnvelopeV2 and then goes
+            // through exactly this pipeline. A malformed TP2 input is refused AS
+            // COMPACT and never re-tried as JSON.
             let envelope: EnvelopeV2
-            switch EnvelopeCodec.decode(envelopeText) {
+            switch CompactEnvelope.decodeTransport(envelopeText) {
             case .refused(let reason, let message):
                 throw EngineRefused(reason: reason.rawValue, message: message)
             case .ok(let e):

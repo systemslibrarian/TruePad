@@ -35,11 +35,15 @@ part of the point.
 | Durable file layer (`DarwinFs`) | **BUILT**, both backings tested |
 | Store Format v2 (head/journal/reconcile) | **BUILT**, byte-exact vs frozen fixture |
 | Rollback witness (Fs-backed, engine level) | **BUILT**, incl. the weak-configuration test |
-| OTP verbs (gen/send/open/retire/destroy) | NOT YET BUILT |
+| OTP verbs (gen/send/open/retire/destroy) | **BUILT**, orderings tested by interruption |
+| Product bookkeeping (pair.json, tombstone, handoff) | **BUILT**, byte-exact vs the released CLI and Android |
+| Courier bundle (export/import) | **BUILT**, byte-exact vs the released v2.0.0 container |
 | Rollback witness — Keychain failure domain | **BUILT**; logic tested, PLATFORM behaviour unverified (see §5) |
-| SPT durable state machine | NOT YET BUILT |
+| SPT durable state machine | **BUILT**, receiver + sender gates tested by fault injection |
+| SPT verbs (review / confirm / seal / open / commit) | **BUILT**, ceremony green end to end on two engines |
+| Deployment evaluator | **BUILT**, held to the shared cross-edition corpus |
+| TP2 compact envelope transport | NOT YET BUILT (QR carriage; `open` takes canonical §6.2 JSON) |
 | SwiftUI application layer | NOT YET BUILT |
-| Deployment evaluator | NOT YET BUILT |
 | Human VoiceOver validation | **OUTSTANDING** (human gate) |
 | Physical iPhone validation | **OUTSTANDING** (hardware gate) |
 | Android↔iPhone two-device ceremony | **OUTSTANDING** (human gate) |
