@@ -114,13 +114,13 @@ else
     fail "the production isolation tests did not pass"
 fi
 
-echo "== 5. Vendored dependency carries no TruePad source patch =="
+echo "== 5. No TruePad-authored file lives in the vendored Sources =="
 HITS=$(find "$HERE/../vendor/swift-crypto/Sources" -iname '*truepad*' 2>/dev/null || true)
 if [ -n "$HITS" ]; then
     echo "$HITS" | sed 's/^/        /'
-    fail "vendored Sources/ contains TruePad files; the app would link them"
+    fail "vendored Sources/ contains a TruePad-authored FILE; the app would link it"
 else
-    pass "vendored Sources/ is unpatched (both TruePad patches are in its Package.swift)"
+    pass "no TruePad-authored file in vendored Sources/; the one source patch is a reviewed hardening of upstream's own file, pinned by EXPECTED-PATCH.diff"
 fi
 
 echo

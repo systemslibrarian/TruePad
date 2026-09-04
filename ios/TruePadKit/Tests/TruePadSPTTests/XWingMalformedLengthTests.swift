@@ -151,6 +151,50 @@ final class XWingMalformedLengthTests: XCTestCase {
         }
     }
 
+    /// The exact entropy-length boundary, stated as its own case because it is the
+    /// defect the vendored swift-crypto patch closes.
+    ///
+    /// TWO INDEPENDENT LAYERS now guard this, and they are worth distinguishing:
+    ///
+    ///   1. TruePad's own `DeterministicXWing.encapsulate` validates 64 bytes
+    ///      before forming a pointer. This is the layer that protects TruePad,
+    ///      because TruePad calls the C entry point directly and never goes
+    ///      through swift-crypto's `encapsulateWithOptionalEntropy`.
+    ///   2. The vendored patch adds the guard swift-crypto itself was missing —
+    ///      upstream fixed the DECAPSULATION length (CVE-2026-28815) but left the
+    ///      symmetric encapsulation buffer unguarded. That path is not reachable
+    ///      from here, so it cannot be asserted from this test target; what IS
+    ///      asserted below is that a correct 64 bytes still reproduces the frozen
+    ///      vectors exactly, which is what shows the patch changed no behaviour.
+    func testEntropyLengthBoundaryIsRefusedAndSixtyFourStillReproducesTheKAT() throws {
+        let k = try SptInteropTests().corpus().cases[0]
+        let pk = H.hex(k.requestBodyHex).suffix(from: 19)   // the encapsulation key
+        let publicKey = Array(pk)
+        let goodEseed = H.hex(k.eseedHex)
+        XCTAssertEqual(goodEseed.count, 64, "the corpus entropy is the expected length")
+
+        // 0, 1, expected-1, expected+1, and a large bounded hostile input.
+        for length in [0, 1, 63, 65, 1_048_576] {
+            do {
+                _ = try DeterministicXWing.encapsulate(
+                    publicKey: publicKey,
+                    eseed: [UInt8](repeating: 0xa7, count: length))
+                XCTFail("entropy of \(length) bytes was accepted")
+            } catch let error as DeterministicXWing.Failure {
+                guard case .badEntropyLength(let got) = error else {
+                    return XCTFail("\(length): expected badEntropyLength, got \(error)")
+                }
+                XCTAssertEqual(got, length)
+            }
+        }
+
+        // expectedLength: still byte-identical to the committed vector.
+        let enc = try DeterministicXWing.encapsulate(publicKey: publicKey, eseed: goodEseed)
+        XCTAssertEqual(H.hexString(enc.ciphertext.suffix(32)),
+                       H.hexString(H.hex(k.packageHex)[55..<1175].suffix(32)),
+                       "64 bytes of entropy must still produce the frozen ciphertext")
+    }
+
     // MARK: - the SPT layer above it
 
     /// A malformed package is refused STRUCTURALLY, before any decapsulation is

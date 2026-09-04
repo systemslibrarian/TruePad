@@ -222,14 +222,25 @@ final class ProductionIsolationTests: XCTestCase {
         }
     }
 
-    /// The vendored dependency must carry NO TruePad source patch. Both intentional
-    /// changes live in its Package.swift; if a future change smuggles a hook into
-    /// Sources/, the app would link it, so fail loudly here.
-    func testVendoredSourcesCarryNoTruePadPatch() throws {
+    /// No TruePad-authored FILE may live in the vendored Sources/.
+    ///
+    /// This is deliberately narrower than "Sources/ is untouched", because it is
+    /// no longer untouched: one reviewed patch adds an entropy-length guard to
+    /// swift-crypto's own XWing_boring.swift, closing the unfixed sibling of
+    /// CVE-2026-28815. That is a hardening of upstream's code in place, and it is
+    /// pinned byte-for-byte by ios/vendor/EXPECTED-PATCH.diff.
+    ///
+    /// What must never happen is a TruePad FILE appearing there — that is how the
+    /// deterministic encapsulation hook would end up inside a module the shipping
+    /// app links, which is exactly the arrangement TruePadKATSupport exists to
+    /// avoid.
+    func testNoTruePadAuthoredFileLivesInTheVendoredSources() throws {
         let vendorSources = Self.iosRoot.appendingPathComponent("vendor/swift-crypto/Sources")
         let paths = try FileManager.default.subpathsOfDirectory(atPath: vendorSources.path)
         let truePadFiles = paths.filter { $0.lowercased().contains("truepad") }
         XCTAssertTrue(truePadFiles.isEmpty,
-                      "vendored swift-crypto Sources/ must contain no TruePad files, found: \(truePadFiles)")
+                      "vendored swift-crypto Sources/ must contain no TruePad-authored FILE "
+                      + "(patches to upstream files are fine and are pinned by "
+                      + "EXPECTED-PATCH.diff); found: \(truePadFiles)")
     }
 }

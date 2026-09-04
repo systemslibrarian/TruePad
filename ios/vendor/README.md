@@ -9,7 +9,7 @@ else was changed.
     commit      da9d28d69ebe3894b18376c8f2395c2f37b8448f
     license     Apache-2.0 (AGPL-3.0-only compatible)
     vendored at ios/vendor/swift-crypto
-    delta       ios/vendor/EXPECTED-PATCH.diff  (30 lines, both in Package.swift)
+    delta       ios/vendor/EXPECTED-PATCH.diff  (65 lines: 2 in Package.swift, 1 source hardening)
     verify      ios/vendor/verify-vendor.sh
 
 ## Why vendor at all?
@@ -41,17 +41,32 @@ package's own annotation; TruePadKit currently sets iOS 16).
 
 ## What was changed — the whole delta
 
-Two changes, both in `swift-crypto/Package.swift`. **No file under `Sources/` was
-modified, added, or removed.** That is asserted by a test
-(`ProductionIsolationTests.testVendoredSourcesCarryNoTruePadPatch`) and by
-`ios/scripts/check-release-isolation.sh`, because a patch hidden in `Sources/`
-would be linked by the shipping app.
+Three changes: two in `swift-crypto/Package.swift`, and one hardening patch to
+upstream's own `Sources/Crypto/KEM/BoringSSL/XWing_boring.swift`.
+
+**No TruePad-authored FILE is added to `Sources/`.** That is the property the
+tests enforce (`ProductionIsolationTests.testNoTruePadAuthoredFileLivesInTheVendoredSources`
+and `ios/scripts/check-release-isolation.sh`), because a TruePad file there would
+be linked by the shipping app — which is exactly the arrangement `TruePadKATSupport`
+exists to avoid. Patching an upstream file in place is a different thing, and is
+pinned byte-for-byte by `EXPECTED-PATCH.diff`.
 
 **Patch 1 — `let development = false` → `true`.**
 This is *upstream's own switch*, commented in the manifest as "To develop this on
 Apple platforms, set this to true". It defines `CRYPTO_IN_SWIFTPM_FORCE_BUILD_API`
 on Darwin, which builds the open-source API instead of re-exporting CryptoKit.
 TruePad did not invent a mechanism; it selected one upstream provides.
+
+**Patch 3 — an entropy-length guard in `XWing_boring.swift`.**
+`encapsulateWithOptionalEntropy` passed the caller's `entropy` array straight to
+`XWING_encap_external_entropy`, which is declared `const uint8_t eseed[64]` and
+reads exactly 64 bytes with no length parameter — so a shorter array is an
+out-of-bounds read inside C. Upstream's fix for the X-Wing DECAPSULATION length
+bug (CVE-2026-28815) guarded the decapsulation side of this same file and left
+this one unguarded; it is still unguarded at 4.5.2. The patch adds the symmetric
+check. Randomized encapsulation is untouched, and a correct 64-byte entropy still
+produces byte-identical output — the Appendix-C corpus and every SPT interop
+corpus are unchanged, which is the evidence that it altered no behaviour.
 
 **Patch 2 — export `CCryptoBoringSSL` as a product.**
 Upstream keeps this product commented out (it exists for symbol mangling).

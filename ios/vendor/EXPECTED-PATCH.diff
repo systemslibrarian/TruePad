@@ -28,3 +28,38 @@ diff -ruN pristine/Package.swift vendored/Package.swift
      ],
      dependencies: [
          // Dependencies are added below so that they can be switched between local and absolute URLs
+diff -ruN pristine/Sources/Crypto/KEM/BoringSSL/XWing_boring.swift vendored/Sources/Crypto/KEM/BoringSSL/XWing_boring.swift
+--- pristine/Sources/Crypto/KEM/BoringSSL/XWing_boring.swift
++++ vendored/Sources/Crypto/KEM/BoringSSL/XWing_boring.swift
+@@ -48,6 +48,31 @@
+     }
+ 
+     func encapsulateWithOptionalEntropy(entropy: [UInt8]?) throws -> KEM.EncapsulationResult {
++        // TRUEPAD VENDOR PATCH 3 of 3 — entropy length guard.
++        //
++        // CCryptoBoringSSL_XWING_encap_external_entropy is declared
++        // `const uint8_t eseed[64]` and reads exactly 64 bytes. It has no length
++        // parameter, so a shorter array is an out-of-bounds read inside C.
++        //
++        // Upstream's fix for the X-Wing DECAPSULATION length bug
++        // (CVE-2026-28815) added the matching guard on the decapsulation side of
++        // this same file, but left this encapsulation buffer unguarded. This is
++        // that defect on the other side, still present at 4.5.2.
++        //
++        // It is unreachable upstream, because the only in-tree caller is
++        // encapsulate() passing nil; and unreachable from TruePad, which never
++        // calls this method and validates its own 64 bytes before reaching C.
++        // It is patched anyway: it is a fixable boundary defect in code TruePad
++        // vendors, and carrying a known one forward is not acceptable.
++        //
++        // Randomized encapsulation — the entropy == nil path — is untouched, and
++        // a correct 64-byte entropy still produces byte-identical output, so no
++        // known-answer vector moves.
++        let expectedEntropyBytes = 64  // ML-KEM-768 coins (32) ‖ ephemeral X25519 key (32)
++        if let entropy, entropy.count != expectedEntropyBytes {
++            throw CryptoKitError.incorrectParameterSize
++        }
++
+         let (sharedSecret, encapsulatedSecret) = try self.publicKeyBytes.withUnsafeBytes { publicKeyBuffer in
+             try withUnsafeTemporaryAllocation(byteCount: Int(XWING_CIPHERTEXT_BYTES), alignment: 1) {
+                 ciphertextBuffer in
