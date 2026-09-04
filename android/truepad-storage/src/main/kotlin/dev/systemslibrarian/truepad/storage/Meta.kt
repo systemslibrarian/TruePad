@@ -284,7 +284,17 @@ internal fun parseHandoffMarker(bytes: ByteArray, pairId: String): HandoffState 
 }
 
 fun readHandoffState(fs: Fs, pairId: String): HandoffState {
-    val bytes = fs.readFile(handoffMarkerPath(pairId)) ?: return HandoffState.Absent
+    // The READ itself is wrapped, not just the parse. `Absent` is the one state
+    // that permits a second handoff, so anything that is present-but-unreadable —
+    // a directory or other non-regular file at the marker path, an I/O failure —
+    // must land on UnreadableSpent. Only a genuinely absent path is Absent.
+    // This mirrors Handoff.readHandoffState, which already had the right shape,
+    // and the frozen authority's readOrThrow in src/browser/engine/handoff.ts.
+    val bytes = try {
+        fs.readFile(handoffMarkerPath(pairId))
+    } catch (e: Exception) {
+        return HandoffState.UnreadableSpent("$UNREADABLE_ADVICE (${e.message})")
+    } ?: return HandoffState.Absent
     return try {
         parseHandoffMarker(bytes, pairId)
     } catch (e: Exception) {

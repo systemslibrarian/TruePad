@@ -5,6 +5,7 @@ import java.io.RandomAccessFile
 import java.nio.channels.FileChannel
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.PosixFilePermissions
@@ -182,7 +183,39 @@ class NioFs(private val root: File) : Fs {
 
     override fun readFile(path: String): ByteArray? {
         val f = full(path)
-        return if (f.isFile) f.readBytes() else null
+        if (f.isFile) return f.readBytes()
+        /*
+         * PRESENT-BUT-NOT-A-REGULAR-FILE IS NOT ABSENCE.
+         *
+         * This returned null for a directory, a FIFO, a device node or a dangling
+         * symlink, which is indistinguishable from "no such path" to every caller.
+         * That is a fail-OPEN on the one distinction several state readers exist to
+         * make: `absent` is the value that PERMITS an action. A directory at
+         * <pairId>/handoff.json read as Absent, and Absent is what lets a pad that
+         * has already left be handed off a SECOND time.
+         *
+         * The SPT readers were already written for this: readRequestClaim says "a
+         * read that throws becomes `unreadable`, never `absent`", and
+         * Handoff.readHandoffState wraps this call for exactly that reason. They
+         * simply never got an exception to catch, because the adapter swallowed the
+         * condition. Throwing here is what makes those readers work as designed.
+         *
+         * NOFOLLOW_LINKS is deliberate: a DANGLING symlink reports false from both
+         * isFile() and exists(), so without it the most obviously planted path of
+         * all would still read as absence.
+         *
+         * Every other caller that does not catch propagates the exception instead,
+         * which aborts the operation having consumed nothing — the fail-CLOSED
+         * direction. LOSS IS ACCEPTABLE; REUSE IS NOT.
+         */
+        if (Files.exists(f.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+            throw IllegalStateException(
+                "$path exists but is not a regular file, so it cannot be read as state. " +
+                    "This is NOT the same as absence and must never be treated as absence: " +
+                    "absence is what permits an action. Nothing was touched.",
+            )
+        }
+        return null
     }
 
     override fun writeFileAtomic(path: String, data: ByteArray) {

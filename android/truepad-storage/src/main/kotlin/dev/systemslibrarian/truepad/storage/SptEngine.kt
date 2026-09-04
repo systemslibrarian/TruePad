@@ -182,7 +182,19 @@ private fun Engine.requirePadSealable(pairId: String) {
         throw SptRefused("spt-pad-ineligible", "This pad did not originate on this device, so it will not be sent by sealed transfer. Generate a new pad to share.")
     }
     val pair = loadPair(pairId)
-    val atGenesis = pair.values.all { it.effective.nextOffset == 0L && it.effective.nextSequence == 0L }
+    // ALL THREE counters, both directions. `attemptsReserved` is not optional and
+    // is not a bookkeeping detail: a pad that took a FAILED OPEN at genesis still
+    // reads nextOffset == 0 and nextSequence == 0, but it has already spent part of
+    // its freeze budget and one record already carries a recorded verification
+    // attempt. Sealing it hands the receiver a store that is NOT pristine and whose
+    // §5 forgery bound is already partly consumed, without them being able to tell.
+    // The frozen authority (src/browser/engine/verbs.ts requirePadSealable) tests
+    // all three; omitting one here made Android seal pads the Browser refuses.
+    val atGenesis = pair.values.all {
+        it.effective.nextOffset == 0L &&
+            it.effective.nextSequence == 0L &&
+            it.effective.attemptsReserved == 0L
+    }
     if (!atGenesis) {
         throw SptRefused("spt-pad-ineligible", "This pad has already been used, so it cannot be sent by sealed transfer — a sealed transfer sends the whole pad. Generate a fresh pad to share.")
     }
