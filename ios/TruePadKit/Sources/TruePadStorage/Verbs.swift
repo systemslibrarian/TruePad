@@ -40,7 +40,11 @@ public func storeDir(_ pairId: String, _ direction: PadDirection) -> String {
 
 func filePath(_ prefix: String, _ name: String) -> String { "\(prefix)/\(name)" }
 
-public enum Party: Sendable, Equatable { case a, b }
+// `Party` is TruePadCore's, re-exported here so callers of the engine do not have
+// to import the kernel for one two-case enum. It was briefly DECLARED again in
+// this file, which made the name ambiguous for anything importing both modules --
+// a compile error rather than a silent divergence, but a duplicate all the same.
+public typealias Party = TruePadCore.Party
 
 enum Op { case burn, open }
 
@@ -480,6 +484,18 @@ public final class Engine: @unchecked Sendable {
     }
 
     // MARK: - status & list
+
+    /// This pad's handoff state, for a caller deciding whether to OFFER a
+    /// hand-over at all.
+    ///
+    /// Exposed so the UI does not have to reach into `fs`: a view that can touch
+    /// the filesystem is a view that will eventually read a store file directly.
+    /// Non-mutating, and it answers the same question `exportPair` will answer
+    /// authoritatively under the lock — this only spares the operator a button
+    /// that could only refuse.
+    public func handoffState(pairId: String) -> HandoffState {
+        readHandoffState(fs: fs, pairId: pairId)
+    }
 
     public func status(_ pairId: String) throws -> PairSummary {
         try fs.withLock(pairId) { try buildSummary(pairId) }
