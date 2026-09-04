@@ -1,0 +1,29 @@
+# Dependabot — so security-relevant dependency movement arrives as a REVIEWABLE
+# pull request rather than being silently inherited.
+#
+# This exists because the workflows are now pinned to immutable commit SHAs. That
+# pinning is the security property: CI executes exactly the reviewed code, and a
+# compromised or retagged upstream release cannot change what runs. The cost is
+# that pins go stale on their own, and a stale pin is how a fixed vulnerability
+# stays unfixed. Dependabot pays that cost by proposing the bumps.
+#
+# github-actions is enabled here deliberately and alone. The npm, Gradle and
+# SwiftPM surfaces are already exactly pinned by their lockfiles / version
+# catalogue / Package.resolved, and are audited against advisories as part of the
+# release flow; adding them here now would generate routine version churn without
+# adding a security signal the existing gates do not already provide. That is a
+# considered omission, not an oversight — revisit it if the audit cadence changes.
+#
+# Nothing here auto-merges. Every update is a PR a human reads.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "CI"
+    labels:
+      - dependencies
+      - security

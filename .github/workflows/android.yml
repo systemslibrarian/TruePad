@@ -61,20 +61,20 @@ jobs:
   engine:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # The vector check checks tag v2.0.0 out into a worktree, so the tag
           # and its history must be present — a shallow clone cannot do it.
           fetch-depth: 0
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           # The engine targets JVM 17 bytecode (Android-consumable) but builds
           # on 21, matching the JDK gradle.properties pins locally.
           distribution: temurin
           java-version: '21'
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
 
       # gradle.properties pins org.gradle.java.home to Android Studio's bundled
       # JBR so local builds do not depend on a registered system JDK. CI has no
@@ -85,7 +85,7 @@ jobs:
 
       # The Android SDK the app module needs. The engine modules do not, but the
       # app's manifest, resources and lint do.
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
 
       - name: Install the pinned SDK components
         run: |
@@ -160,7 +160,7 @@ jobs:
           print(f"release APK: {len(found)} exported component ({found[0][1]}), no INTERNET")
           CHECK
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
           name: android-reports
@@ -172,11 +172,11 @@ jobs:
   vectors:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           # The released src/ is TypeScript imported directly by the generator,
           # which needs node's native type stripping (>= 22.18).
@@ -208,16 +208,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           distribution: temurin
           java-version: '21'
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
 
       - name: Use the CI JDK instead of the local Android Studio JBR
         working-directory: android
@@ -262,7 +262,7 @@ jobs:
         run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --console=plain
 
       - name: Instrumentation suite and on-device security checks
-        uses: reactivecircus/android-emulator-runner@v2.38.0
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 35
           target: google_apis
@@ -276,7 +276,7 @@ jobs:
           # ONE command, and it is the same one used locally.
           script: android/tools/ci-instrumentation.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
           name: instrumentation-reports
