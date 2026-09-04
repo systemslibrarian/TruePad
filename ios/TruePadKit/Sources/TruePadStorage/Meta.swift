@@ -351,70 +351,21 @@ public func commitPhysicalHandoff(fs: Fs, pairId: String, at: String) throws {
 // MARK: - timestamps
 
 /// The exact `YYYY-MM-DDTHH:mm:ss.sssZ` spelling `new Date().toISOString()`
-/// emits, built by hand rather than by DateFormatter so it cannot pick up a
-/// locale, a calendar, or a time zone from the device.
+/// emits.
+///
+/// The arithmetic lives in `TruePadCore.IsoTime` — dependency-free, and shared
+/// with the SPT durable records — so there is ONE implementation to disagree
+/// with itself. This is only the `Date` boundary.
 public func isoNow(_ date: Date) -> String {
     // NEAREST, not floor. `Date` holds seconds as a Double, so a value built from
     // an integer number of milliseconds does not multiply back exactly: -0.001 s
     // becomes -1.0000000000000002 ms, and flooring that yields -2 — one
     // millisecond in the past, and a timestamp that no longer round-trips.
-    // Rounding to the nearest millisecond reconstructs the intended instant and
-    // keeps `parseIsoInstant(isoNow(d))` exact.
-    let millis = Int((date.timeIntervalSince1970 * 1000).rounded())
-    let (seconds, ms) = (Int(floor(Double(millis) / 1000.0)), ((millis % 1000) + 1000) % 1000)
-
-    var days = Int(floor(Double(seconds) / 86_400.0))
-    var rem = seconds - days * 86_400
-    let hh = rem / 3600; rem -= hh * 3600
-    let mm = rem / 60
-    let ss = rem - mm * 60
-
-    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
-    days += 719_468
-    let era = (days >= 0 ? days : days - 146_096) / 146_097
-    let doe = days - era * 146_097
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365
-    let y = yoe + era * 400
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
-    let mp = (5 * doy + 2) / 153
-    let d = doy - (153 * mp + 2) / 5 + 1
-    let m = mp < 10 ? mp + 3 : mp - 9
-    let year = m <= 2 ? y + 1 : y
-
-    func pad(_ v: Int, _ width: Int) -> String {
-        let s = String(v)
-        return s.count >= width ? s : String(repeating: "0", count: width - s.count) + s
-    }
-    return "\(pad(year, 4))-\(pad(m, 2))-\(pad(d, 2))T\(pad(hh, 2)):\(pad(mm, 2)):\(pad(ss, 2)).\(pad(ms, 3))Z"
+    IsoTime.format(epochMillis: Int((date.timeIntervalSince1970 * 1000).rounded()))
 }
 
-/// Parse exactly the canonical spelling and nothing else. Anything that is not
-/// `YYYY-MM-DDTHH:mm:ss.sssZ` is rejected here rather than coerced, which is what
-/// makes the round-trip check in `requireIsoTimestamp` meaningful.
+/// Parse exactly the canonical spelling and nothing else.
 func parseIsoInstant(_ text: String) -> Date? {
-    let chars = Array(text)
-    guard chars.count == 24, chars[4] == "-", chars[7] == "-", chars[10] == "T",
-          chars[13] == ":", chars[16] == ":", chars[19] == ".", chars[23] == "Z" else { return nil }
-    func num(_ from: Int, _ to: Int) -> Int? {
-        let slice = String(chars[from..<to])
-        guard slice.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
-        return Int(slice)
-    }
-    guard let year = num(0, 4), let month = num(5, 7), let day = num(8, 10),
-          let hour = num(11, 13), let minute = num(14, 16), let second = num(17, 19),
-          let milli = num(20, 23) else { return nil }
-    guard (1...12).contains(month), (1...31).contains(day),
-          hour < 24, minute < 60, second < 60 else { return nil }
-
-    // Days from civil (Howard Hinnant), the inverse of the algorithm above.
-    let y = month <= 2 ? year - 1 : year
-    let era = (y >= 0 ? y : y - 399) / 400
-    let yoe = y - era * 400
-    let mp = month > 2 ? month - 3 : month + 9
-    let doy = (153 * mp + 2) / 5 + day - 1
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
-    let days = era * 146_097 + doe - 719_468
-
-    let seconds = days * 86_400 + hour * 3600 + minute * 60 + second
-    return Date(timeIntervalSince1970: Double(seconds) + Double(milli) / 1000.0)
+    guard let millis = IsoTime.parseMillis(text) else { return nil }
+    return Date(timeIntervalSince1970: Double(millis) / 1000.0)
 }

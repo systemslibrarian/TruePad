@@ -48,6 +48,12 @@ let package = Package(
         .target(
             name: "TruePadSPT",
             dependencies: [
+                // The pure kernel, for the strict JSON reader and the canonical
+                // ISO-8601 arithmetic the durable records are re-validated
+                // against. It depends on nothing itself, so this adds no library
+                // to the graph -- the same shape as Android, where :truepad-spt
+                // imports truepad.core for exactly these.
+                "TruePadCore",
                 // Crypto alone: SPT needs X-Wing, HKDF-SHA-256, AES-256-GCM and
                 // SHA-2/SHA-3, all of which live here. _CryptoExtras is deliberately
                 // omitted -- it would put SwiftASN1 and a large RSA/PAKE surface into
