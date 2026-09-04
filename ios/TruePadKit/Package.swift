@@ -8,6 +8,7 @@ let package = Package(
         // The two shipping products. An app links these and nothing else from
         // this package, so it cannot reach TruePadKATSupport (below).
         .library(name: "TruePadCore", targets: ["TruePadCore"]),
+        .library(name: "TruePadStorage", targets: ["TruePadStorage"]),
         .library(name: "TruePadSPT", targets: ["TruePadSPT"]),
     ],
     dependencies: [
@@ -26,6 +27,13 @@ let package = Package(
         // is reachable only from the separate Sealed Pad Transfer module
         // (Decision 19). SptKernelIsolationTests enforces it.
         .target(name: "TruePadCore"),
+
+        // ---- Production: the durable store ------------------------------
+        // The v2 store state machine over a filesystem abstraction. Depends on
+        // the kernel and on Foundation/Darwin, but NOT on any crypto library:
+        // the durable consumption state is where reuse safety actually lives,
+        // and it is written against the platform, not against a cipher.
+        .target(name: "TruePadStorage", dependencies: ["TruePadCore"]),
 
         // ---- Production: Sealed Pad Transfer ------------------------------
         .target(
@@ -71,6 +79,7 @@ let package = Package(
             name: "TruePadSPTTests",
             dependencies: [
                 "TruePadCore",
+                "TruePadStorage",
                 "TruePadSPT",
                 "TruePadKATSupport",
                 .product(name: "Crypto", package: "swift-crypto"),
