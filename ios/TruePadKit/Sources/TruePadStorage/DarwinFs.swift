@@ -185,13 +185,35 @@ public final class DarwinFs: Fs, @unchecked Sendable {
 
     // ---- Fs -----------------------------------------------------------------
 
+    /// ABSENT AND MALFORMED ARE DIFFERENT ANSWERS.
+    ///
+    /// `nil` means "definitively nothing here" and callers are entitled to treat
+    /// it as a fresh, unwritten path. Anything else at the path — a directory, a
+    /// symlink to a deleted target, a device node — is NOT absence and must not
+    /// be reported as one: for a terminal marker that would turn a destroyed pair
+    /// back into a usable one. It throws instead. This is the twin of the
+    /// `NioFs.readFile` fix on Android; the two editions now answer alike.
     public func readFile(_ path: String) throws -> [UInt8]? {
         let target = url(path)
-        guard FileManager.default.fileExists(atPath: target.path) else { return nil }
-        var isDir: ObjCBool = false
-        _ = FileManager.default.fileExists(atPath: target.path, isDirectory: &isDir)
-        if isDir.boolValue { return nil }
-        return [UInt8](try Data(contentsOf: target))
+
+        // A regular file -- including one reached through a symlink -- reads
+        // normally. This follows, exactly as Android's `File.isFile` does, so the
+        // two editions answer alike.
+        var resolved = stat()
+        if stat(target.path, &resolved) == 0, (resolved.st_mode & S_IFMT) == S_IFREG {
+            return [UInt8](try Data(contentsOf: target))
+        }
+
+        // Not a regular file. Is anything there at all? lstat does NOT follow, so
+        // a symlink whose target is gone is still SOMETHING.
+        var link = stat()
+        if lstat(target.path, &link) == 0 {
+            throw FsFailure.io(
+                "\(path) exists but is not a regular file (mode "
+                + "\(String(link.st_mode & S_IFMT, radix: 8))); refusing to report it as absent")
+        }
+        if errno == ENOENT { return nil }   // the one definitive absence
+        throw FsFailure.io("cannot stat \(path): errno \(errno)")
     }
 
     public func writeFileAtomic(_ path: String, _ data: [UInt8]) throws {
@@ -287,8 +309,19 @@ public final class DarwinFs: Fs, @unchecked Sendable {
         fullSync(fd)
     }
 
+    /// NOT KNOWN TO BE ABSENT — see the `Fs.exists` contract.
+    ///
+    /// `FileManager.fileExists` is WRONG here and this is a measured fact, not a
+    /// guess: it follows symlinks, so a `destroyed.json` that is a symlink to a
+    /// deleted target reads as FALSE and a destroyed pair becomes usable again.
+    /// `lstat` does not follow, and any failure other than a definitive "no such
+    /// path" is reported as present.
+    /// ENOENT is the ONLY negative, in every edition — deliberately conservative
+    /// and deliberately not dependent on how a platform maps any other errno.
     public func exists(_ path: String) -> Bool {
-        FileManager.default.fileExists(atPath: url(path).path)
+        var st = stat()
+        if lstat(url(path).path, &st) == 0 { return true }
+        return errno != ENOENT
     }
 
     public func remove(_ path: String) throws {

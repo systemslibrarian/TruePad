@@ -64,6 +64,7 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -74,6 +75,35 @@ import {
 } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { PadDirection } from "../../core/pad.ts";
+
+/**
+ * Is this path NOT KNOWN TO BE ABSENT?
+ *
+ * Deliberately not `existsSync`. This gates the §17 tombstone, and a terminal
+ * marker must fail CLOSED. `existsSync` follows symlinks, so a `destroyed.json`
+ * that is a symlink to a deleted target reads as FALSE — and a destroyed pair
+ * becomes usable again, which is the one outcome TruePad may never allow.
+ * (Measured, not assumed: Node, the JVM and Foundation all answer `false` there,
+ * which is why every edition needed the same correction.)
+ *
+ * `lstatSync` does not follow the link. Anything present — regular file,
+ * directory, dangling symlink, device node — is present; and any error other
+ * than a definitive "no such path" is ALSO reported as present, because a path
+ * whose status cannot be determined is not a path known to be clear.
+ *
+ * ENOENT is the ONLY negative, in every edition. That is deliberately
+ * conservative and deliberately not dependent on how a platform maps any other
+ * errno: the three editions have to agree, and ENOENT is the one answer all of
+ * them report identically.
+ */
+export function entryExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ENOENT";
+  }
+}
 
 export const HEAD_FILE = "head.json";
 export const SECRET_FILE = "secret.bin";

@@ -52,7 +52,7 @@ import {
 import { join, resolve, sep } from "node:path";
 import type { PadDirection } from "../../core/pad.ts";
 import { acquireLock, LOCK_FILE } from "../lock.ts";
-import { HEAD_FILE, JOURNAL_FILE, loadStore2, SECRET_FILE, type LoadedStore2 } from "./store2.ts";
+import { entryExists, HEAD_FILE, JOURNAL_FILE, loadStore2, SECRET_FILE, type LoadedStore2 } from "./store2.ts";
 import { gen, Refused2, SUBDIR2, withPair, type Args2, type LoadedPair } from "./truepad2.ts";
 import { ceremonyProvenance, PROVENANCE_FILE, provenanceBoundTo, readProvenance, writeProvenance } from "./provenance.ts";
 import { isWithdrawn, withdrawalRecord, writeWithdrawal } from "./withdrawal.ts";
@@ -416,7 +416,7 @@ function requireUnprovisioned(medium: string): void {
   // A tombstoned medium (§17.3) is past the destruction boundary: never
   // provision a fresh pair onto it. Typed pair-destroyed like every other
   // consuming path that meets a tombstone.
-  if (existsSync(join(medium, "destroyed.json"))) {
+  if (entryExists(join(medium, "destroyed.json"))) {
     throw new Refused2(
       "pair-destroyed",
       `${medium} carries a durable destroyed.json: this medium held a destroyed pair (§17.3) and must not be ` +
@@ -711,7 +711,7 @@ export function ceremonyVerify(args: Args2): void {
     // §17: a tombstoned pair is permanently unusable and must not be reported
     // as a verifiable medium, even if the store files still look structurally
     // valid. Checked before any secret is read.
-    if (existsSync(join(dir, "destroyed.json"))) {
+    if (entryExists(join(dir, "destroyed.json"))) {
       throw new Refused2(
         "pair-destroyed",
         `${dir} carries a durable destroyed.json: this pair was destroyed (§17) and is not a usable medium. ` +

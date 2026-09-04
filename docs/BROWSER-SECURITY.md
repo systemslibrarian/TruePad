@@ -240,6 +240,30 @@ SSD wear leveling, and the OS page cache may all preserve pre-overwrite
 blocks. The zero-overwrite is best-effort hygiene, **never** erasure, and the
 UI shows this sentence during destruction.
 
+### What "the tombstone is present" means, and why it is not `exists()`
+
+The gate asks **is this path NOT KNOWN TO BE ABSENT** — not "is there a readable
+regular file here". Only a definitive "no such entry" counts as absence; any
+failure to decide closes the boundary instead. On the CLI, Android and iOS,
+where the backing is a real filesystem, that means a bare `ENOENT` and nothing
+else.
+
+OPFS has no symlinks, so the shape that broke the other editions — a
+`destroyed.json` that is a link to a deleted target, which Node, the JVM and
+Foundation all report as absent — cannot occur here. The browser's own version
+of the same failure is different: `OpfsVfs.exists` resolves a file handle, and a
+directory standing where the file belongs makes that call THROW
+`TypeMismatchError` rather than return false. That throw must close the
+boundary; swallowing it into "absent" would be the identical fail-open in a
+different costume. All editions are held to the same list of shapes by
+`tests/terminal-marker-fail-closed.test.ts`,
+`TerminalMarkerFailClosedTest.kt` and `TerminalMarkerFailClosedTests.swift`.
+
+Content is deliberately NOT part of the question. A truncated, unparseable, or
+foreign-pairId tombstone still closes the boundary; the reader keeps `exists:
+true` through every parse failure. LOSS IS ACCEPTABLE; REUSE IS NOT.
+
+
 ---
 
 ## 6. Generation, sources, and randomness

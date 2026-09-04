@@ -65,6 +65,7 @@ import {
   JOURNAL_FILE,
   loadStore2,
   persistAuthFail,
+  entryExists,
   readAuthRecord,
   readEncryption,
   reserveAttempt,
@@ -388,7 +389,9 @@ function loadHalf2(dir: string, direction: PadDirection): LoadedStore2 {
 // secret is read, and there is no --force, restore, or clear that reopens
 // the pair. Deleting the tombstone by hand is outside TruePad's guarantees.
 function requireNotDestroyed(dir: string): void {
-  if (existsSync(join(dir, TOMBSTONE_FILE))) {
+  // entryExists, NOT existsSync: a tombstone that is a dangling symlink must
+  // still close the boundary. See its contract in store2.ts.
+  if (entryExists(join(dir, TOMBSTONE_FILE))) {
     throw new Refused2(
       "pair-destroyed",
       `${dir} carries a durable ${TOMBSTONE_FILE}: destruction of this pair was initiated (§17), so it is ` +
@@ -1932,7 +1935,7 @@ type ExistingTombstone = { exists: boolean; pairId: string | null; record: Recor
 
 function readTombstone(dir: string): ExistingTombstone {
   const path = join(dir, TOMBSTONE_FILE);
-  if (!existsSync(path)) {
+  if (!entryExists(path)) {
     return { exists: false, pairId: null, record: null };
   }
   try {

@@ -65,6 +65,13 @@ public protocol Fs: AnyObject {
     /// zero-overwrite. See DarwinFs for what this does and does not prove.
     func writeRange(_ path: String, offset: Int, data: [UInt8]) throws
 
+    /// Is this path NOT KNOWN TO BE ABSENT?
+    ///
+    /// Deliberately not "is there a readable regular file here". It gates the §17
+    /// tombstone, and a terminal marker must fail CLOSED: anything present at the
+    /// path — a regular file, a directory, a symlink whose target is gone — and
+    /// any inability to decide must all read as present. Only a definitive
+    /// "nothing is here" may return false.
     func exists(_ path: String) -> Bool
 
     /// Remove a file or directory tree. Idempotent.

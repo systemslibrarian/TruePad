@@ -1,13 +1,16 @@
 package dev.systemslibrarian.truepad.storage
 
 import java.io.File
+import java.io.IOException
 import java.io.RandomAccessFile
 import java.nio.channels.FileChannel
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.LinkOption
+import java.nio.file.NoSuchFileException
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -43,6 +46,15 @@ interface Fs {
     /** Positioned read of `length` bytes from `offset` (secret.bin reads, §1.2). */
     fun readRange(path: String, offset: Long, length: Int): ByteArray
 
+    /**
+     * Is this path NOT KNOWN TO BE ABSENT?
+     *
+     * This is deliberately not "is there a readable regular file here". It gates
+     * the §17 tombstone, and a terminal marker must fail CLOSED: anything present
+     * at the path — a regular file, a directory, a symlink whose target is gone —
+     * and any inability to decide must all read as present. Only a definitive
+     * "nothing is here" may return false.
+     */
     fun exists(path: String): Boolean
 
     /** Remove a file or directory tree. Idempotent. */
@@ -291,7 +303,33 @@ class NioFs(private val root: File) : Fs {
         }
     }
 
-    override fun exists(path: String): Boolean = full(path).exists()
+    /**
+     * NOT KNOWN TO BE ABSENT — see the [Fs.exists] contract.
+     *
+     * `File.exists()` is WRONG here and this is a measured fact, not a guess: it
+     * follows symlinks, so a `destroyed.json` that is a symlink to a deleted
+     * target reads as FALSE and a destroyed pair becomes usable again. That is a
+     * terminal-state fail-open, and reuse is the one outcome TruePad may never
+     * allow. `Files.notExists(NOFOLLOW_LINKS)` is true only when the path is
+     * definitively absent: it is false for a regular file, a directory, a
+     * dangling symlink, AND for any path whose status cannot be determined.
+     */
+    override fun exists(path: String): Boolean {
+        val p = full(path).toPath()
+        return try {
+            Files.readAttributes(p, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+            true
+        } catch (_: NoSuchFileException) {
+            false // the ONE definitive negative: there is no such path
+        } catch (_: IOException) {
+            // Anything else -- a permission failure, an I/O error, a path whose
+            // parent is not a directory -- is NOT a definitive "nothing is here",
+            // so it reads as present. Deliberately conservative, and deliberately
+            // not dependent on how a JDK happens to map a given errno: the
+            // editions must agree, and only ENOENT is portable enough to trust.
+            true
+        }
+    }
 
     override fun remove(path: String) {
         full(path).deleteRecursively()

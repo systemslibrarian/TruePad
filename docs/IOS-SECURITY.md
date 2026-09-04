@@ -437,6 +437,29 @@ counters decide liveness, and `secret.bin` is not rewritten.
 A destroyed or retired pair must never become usable again, including after a
 container copy or a restore.
 
+### What "the tombstone is present" means, and why it is not `exists()`
+
+The gate asks **is this path NOT KNOWN TO BE ABSENT** — not "is there a readable
+regular file here". Only a definitive `ENOENT` counts as absence. Anything else
+at the path (a directory, a symlink whose target is gone, a device node) and any
+failure to decide (a permission error, an I/O error) reads as PRESENT and closes
+the boundary.
+
+This is not a robustness nit. The gate previously used the platform's ordinary
+existence check, and every one of them — Node's `existsSync`, the JVM's
+`File.exists()`, Foundation's `fileExists` — FOLLOWS SYMLINKS and answers
+`false` for a link whose target is gone. A `destroyed.json` in that shape read
+as absent, and a destroyed pair became usable again. That is pad reuse, which is
+the one outcome TruePad may never allow, so all editions were corrected
+together and are held to the same list of shapes by
+`tests/terminal-marker-fail-closed.test.ts`,
+`TerminalMarkerFailClosedTest.kt` and `TerminalMarkerFailClosedTests.swift`.
+
+Content is deliberately NOT part of the question. A truncated, unparseable, or
+foreign-pairId tombstone still closes the boundary; the reader keeps `exists:
+true` through every parse failure. LOSS IS ACCEPTABLE; REUSE IS NOT.
+
+
 ---
 
 ## 11. What the iOS Edition does NOT claim today
