@@ -143,6 +143,46 @@ public final class DarwinFs: Fs, @unchecked Sendable {
         #endif
     }
 
+
+    // ---- the unsafe boundary, in one place ---------------------------------
+
+    /// Write all of `data` to `fd`, or return false.
+    ///
+    /// This is the ONLY raw-pointer write in the storage layer. Every unsafe
+    /// property it relies on is established here rather than at the call sites:
+    ///
+    ///   * `baseAddress` is unwrapped only after `count > 0` is established. An
+    ///     empty buffer legitimately has a nil base address, and an empty write
+    ///     is a real case -- a journal created by an empty append -- so it
+    ///     returns success without ever forming a pointer.
+    ///   * the loop advances by the bytes actually written, because `write(2)`
+    ///     may write fewer than requested on a signal or a full pipe.
+    ///   * a return of 0 or -1 ends the loop as a failure rather than spinning.
+    ///   * the pointer is never retained beyond the closure.
+    private func writeAll(_ fd: Int32, _ data: [UInt8]) -> Bool {
+        if data.isEmpty { return true }
+        return data.withUnsafeBytes { buf -> Bool in
+            guard let base = buf.baseAddress else { return false }  // count > 0, so unreachable
+            var offset = 0
+            while offset < buf.count {
+                let n = write(fd, base.advanced(by: offset), buf.count - offset)
+                if n <= 0 { return false }
+                offset += n
+            }
+            return true
+        }
+    }
+
+    /// The file's size, or nil if the descriptor cannot be seeked.
+    ///
+    /// `lseek` returns -1 on error. Converting that to Int and comparing it as a
+    /// size would make every range check fail with a bounds error that names the
+    /// wrong problem, so the error is separated from a legitimate size here.
+    private func fileSize(_ fd: Int32) -> Int? {
+        let end = lseek(fd, 0, SEEK_END)
+        return end < 0 ? nil : Int(end)
+    }
+
     // ---- Fs -----------------------------------------------------------------
 
     public func readFile(_ path: String) throws -> [UInt8]? {
@@ -168,17 +208,7 @@ public final class DarwinFs: Fs, @unchecked Sendable {
 
         let fd = open(tmp.path, O_WRONLY | O_TRUNC)
         guard fd >= 0 else { throw FsFailure.io("open \(tmp.path) failed (errno \(errno))") }
-        var wrote = false
-        data.withUnsafeBytes { buf in
-            var offset = 0
-            while offset < buf.count {
-                let n = write(fd, buf.baseAddress!.advanced(by: offset), buf.count - offset)
-                if n <= 0 { return }
-                offset += n
-            }
-            wrote = true
-        }
-        guard wrote else {
+        guard writeAll(fd, data) else {
             close(fd)
             throw FsFailure.io("short write to \(tmp.path)")
         }
@@ -213,17 +243,10 @@ public final class DarwinFs: Fs, @unchecked Sendable {
         }
         let fd = open(target.path, O_WRONLY | O_APPEND)
         guard fd >= 0 else { throw FsFailure.io("open \(target.path) failed (errno \(errno))") }
-        var wrote = false
-        data.withUnsafeBytes { buf in
-            var offset = 0
-            while offset < buf.count {
-                let n = write(fd, buf.baseAddress!.advanced(by: offset), buf.count - offset)
-                if n <= 0 { return }
-                offset += n
-            }
-            wrote = true
+        guard writeAll(fd, data) else {
+            close(fd)
+            throw FsFailure.io("short append to \(target.path)")
         }
-        guard wrote else { close(fd); throw FsFailure.io("short append to \(target.path)") }
         fullSync(fd)
         close(fd)
         if created { syncDirectory(dir) }
@@ -234,10 +257,10 @@ public final class DarwinFs: Fs, @unchecked Sendable {
         let fd = open(target.path, O_RDONLY)
         guard fd >= 0 else { throw FsFailure.noSuchFile(path) }
         defer { close(fd) }
-        let fileSize = Int(lseek(fd, 0, SEEK_END))
-        guard offset >= 0, length >= 0, offset + length <= fileSize else {
+        guard let size = fileSize(fd) else { throw FsFailure.io("lseek \(path) failed") }
+        guard offset >= 0, length >= 0, offset + length <= size else {
             throw FsFailure.rangeOutOfBounds(path: path, offset: offset,
-                                             length: length, size: fileSize)
+                                             length: length, size: size)
         }
         var out = [UInt8](repeating: 0, count: length)
         if length > 0 {
@@ -252,10 +275,10 @@ public final class DarwinFs: Fs, @unchecked Sendable {
         let fd = open(target.path, O_WRONLY)
         guard fd >= 0 else { throw FsFailure.noSuchFile(path) }
         defer { close(fd) }
-        let fileSize = Int(lseek(fd, 0, SEEK_END))
-        guard offset >= 0, offset + data.count <= fileSize else {
+        guard let size = fileSize(fd) else { throw FsFailure.io("lseek \(path) failed") }
+        guard offset >= 0, offset + data.count <= size else {
             throw FsFailure.rangeOutOfBounds(path: path, offset: offset,
-                                             length: data.count, size: fileSize)
+                                             length: data.count, size: size)
         }
         if !data.isEmpty {
             let n = data.withUnsafeBytes { pwrite(fd, $0.baseAddress, data.count, off_t(offset)) }

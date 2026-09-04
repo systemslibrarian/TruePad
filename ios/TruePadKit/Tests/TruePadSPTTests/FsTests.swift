@@ -111,6 +111,34 @@ final class FsTests: XCTestCase {
         }
     }
 
+    /// An EMPTY write is a real case — a journal created by an empty append — and
+    /// it is exactly the input on which a force-unwrapped `baseAddress` would
+    /// crash, because an empty buffer legitimately has a nil base address. Both
+    /// backings must handle it without forming a pointer at all.
+    func testEmptyWritesAndAppendsAreHandled() throws {
+        for (name, fs) in try backings() {
+            try fs.writeFileAtomic("e/empty.bin", [])
+            XCTAssertEqual(try fs.readFile("e/empty.bin"), [], "[\(name)] empty whole-file write")
+            XCTAssertEqual(try fs.size("e/empty.bin"), 0, "[\(name)]")
+
+            try fs.appendFile("e/journal.log", [])
+            XCTAssertTrue(fs.exists("e/journal.log"),
+                          "[\(name)] an empty append must still CREATE the file")
+            XCTAssertEqual(try fs.readFile("e/journal.log"), [], "[\(name)]")
+
+            // And a subsequent real append still lands.
+            try fs.appendFile("e/journal.log", Array("line\n".utf8))
+            XCTAssertEqual(try fs.readFile("e/journal.log"), Array("line\n".utf8), "[\(name)]")
+
+            // A zero-length positioned write is a no-op, not an error.
+            try fs.writeFileAtomic("e/s.bin", [1, 2, 3, 4])
+            XCTAssertNoThrow(try fs.writeRange("e/s.bin", offset: 2, data: []), "[\(name)]")
+            XCTAssertEqual(try fs.readFile("e/s.bin"), [1, 2, 3, 4], "[\(name)]")
+            XCTAssertEqual(try fs.readRange("e/s.bin", offset: 4, length: 0), [],
+                           "[\(name)] a zero-length read at EOF is legal")
+        }
+    }
+
     // MARK: - mutual exclusion
 
     /// The lock is real mutual exclusion, and it is BOUNDED: a verb that cannot
