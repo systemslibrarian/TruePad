@@ -62,7 +62,7 @@ jobs:
       # development code runs the full gate above but produces no Pages artifact,
       # so the released public demo is never silently replaced by 3.0-dev.
       - if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
         with:
           # Turns Pages on for the repo (source: GitHub Actions) if it is not
           # already enabled, so this workflow is the only setup step needed.
