@@ -53,9 +53,22 @@ TRUEPAD_VERSION="$(grep -oE '"version": *"[^"]+"' "$ROOT/package.json" | head -1
 # A stable digest of the vendored source tree: every file's path and content,
 # sorted, hashed once. This is what makes the SBOM a statement about THESE bytes
 # rather than about a version number someone typed.
+#
+# TWO THINGS MAKE IT REPRODUCIBLE, and the first was learned the hard way.
+#
+#   LC_ALL=C. The first version let `sort` use the ambient locale, so the digest
+#   DIFFERED between a C.UTF-8 machine and an en_US.UTF-8 CI runner — same 853
+#   files, same bytes, different answer. A supply-chain hash that changes with the
+#   builder's locale is worse than no hash: it makes a legitimate build look
+#   tampered with. Collation is now pinned to byte order.
+#
+#   git ls-files. The list comes from the COMMITTED tree, not from whatever is on
+#   disk, so local build detritus cannot enter the digest and the SBOM describes
+#   what is actually in the repository.
 vendored_digest() {
-    ( cd "$VENDOR/swift-crypto" && \
-      find . -type f -not -path './.git/*' -print0 | sort -z | xargs -0 shasum -a 256 ) \
+    ( cd "$ROOT" && \
+      LC_ALL=C git ls-files -z ios/vendor/swift-crypto | LC_ALL=C sort -z \
+        | xargs -0 shasum -a 256 ) \
       | shasum -a 256 | awk '{print $1}'
 }
 
@@ -164,6 +177,22 @@ build_sbom() {
 }
 
 if [ "$MODE" = "--check" ]; then
+    # REPRODUCIBILITY, checked rather than assumed. The digest was once
+    # locale-dependent, and the only symptom was a CI failure that looked like a
+    # stale SBOM. Recomputing it under a different collation makes a reintroduced
+    # dependency fail HERE, with a message that says what actually went wrong.
+    D1="$(LC_ALL=C vendored_digest)"
+    D2="$(LC_ALL=en_US.UTF-8 vendored_digest)"
+    if [ "$D1" != "$D2" ]; then
+        echo "FAIL: the vendored-tree digest depends on the locale." >&2
+        echo "      LC_ALL=C          -> $D1" >&2
+        echo "      LC_ALL=en_US.UTF-8 -> $D2" >&2
+        echo "      A supply-chain hash that changes with the builder's environment" >&2
+        echo "      makes a legitimate build look tampered with." >&2
+        exit 1
+    fi
+    echo "PASS: the vendored-tree digest is locale-independent"
+
     TMP="$(mktemp)"
     trap 'rm -f "$TMP"' EXIT
     build_sbom > "$TMP"

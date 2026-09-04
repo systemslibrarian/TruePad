@@ -67,7 +67,7 @@
         { "type": "vcs", "url": "https://github.com/apple/swift-crypto.git" }
       ],
       "hashes": [
-        { "alg": "SHA-256", "content": "1765ff428a228dc74bf8406b9b40ab576617ce62b6233b7763530f162e84d31f" }
+        { "alg": "SHA-256", "content": "649c93afadbd616f8eaf69093dce1203f5a30a6e398463fc30b95e8ce12508fc" }
       ],
       "properties": [
         { "name": "truepad:origin", "value": "vendored in-tree at ios/vendor/swift-crypto" },
