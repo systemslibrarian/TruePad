@@ -183,6 +183,64 @@ class DeploymentAssemblyTest {
         assertEquals(SourceClass.UNKNOWN, source(emptyList()))
     }
 
+    /**
+     * CROSS-EDITION SOURCE-CLASS PARITY, and the ONE difference, made explicit so
+     * it can never diverge silently again.
+     *
+     * The Browser Edition hard-codes `source = "software-csprng"` for any
+     * generated-here pad (src/browser/engine/verbs.ts deriveDeployment), even
+     * though its `gen` also accepts operator-supplied source files. Android
+     * instead derives the class from `sourceDeclarations[]`.
+     *
+     * THIS IS NOT A DIVERGENCE FROM THE FROZEN AUTHORITY, and it was checked
+     * rather than assumed:
+     *
+     *   - docs/SHANNON-DEPLOYMENT.md §12 documents fact assembly as EDITION-
+     *     SPECIFIC by construction: the CLI reads provenance.json, and "Browser
+     *     Edition reads the pad's `origin` (`generated-here` -> software CSPRNG)".
+     *     It is described as what the Browser does, not as a universal rule.
+     *   - §3 makes `sourceDeclarations[]` the normative record of the
+     *     external-source path: "the only record is the existing
+     *     sourceDeclarations[]".
+     *
+     * So Android's derivation is the more faithful reading of §3, and the
+     * Browser's is a documented simplification that UNDER-claims — safe for the
+     * Browser, which browser-opfs storage disqualifies regardless.
+     *
+     * Making Android copy the Browser would report "software random generator"
+     * for a pad built from operator-supplied dice rolls, which is a FALSE
+     * displayed fact. The truthfulness requirement wins over surface symmetry.
+     *
+     * What must stay identical across editions is the EVALUATOR: the same facts
+     * must yield the same verdict everywhere. That is enforced separately by the
+     * shared deployment-evaluator-v3 corpus, not here.
+     */
+    @Test
+    fun sourceClassFactAssemblyIsEditionSpecificAndAndroidUsesTheDeclarations() {
+        fun source(decls: List<SourceDeclaration>) =
+            deploymentFactsFor(decls, PairOrigin.GENERATED_HERE, WitnessKind.LOCAL, WitnessState.ALIGNED).source
+
+        // Android: derived from what the pad was actually made from.
+        assertEquals(SourceClass.SOFTWARE_CSPRNG, source(listOf(deviceDecl())))
+        assertEquals(SourceClass.EXTERNAL_DECLARED, source(listOf(externalDecl())))
+        assertEquals(SourceClass.EXTERNAL_DECLARED, source(listOf(deviceDecl(), externalDecl())))
+        assertEquals(SourceClass.UNKNOWN, source(emptyList()))
+
+        // The Browser's documented rule, transcribed, so the difference is on the
+        // record. For a generated-here pad it is always software-csprng.
+        val browserSaysForGeneratedHere = SourceClass.SOFTWARE_CSPRNG
+        assertEquals(
+            "an all-device-CSPRNG pad is classified identically by both editions",
+            browserSaysForGeneratedHere, source(listOf(deviceDecl())),
+        )
+        assertTrue(
+            "and the ONE intentional difference is an operator-supplied external source, " +
+                "where Android reports the truthful external-declared and the Browser " +
+                "under-claims software-csprng (docs/SHANNON-DEPLOYMENT.md §3 vs §12)",
+            source(listOf(externalDecl())) != browserSaysForGeneratedHere,
+        )
+    }
+
     private fun deviceDecl() = SourceDeclaration(DEVICE_SOURCE_NAME_WIRE, "device", 100)
     private fun externalDecl() = SourceDeclaration("die-rolls.bin", "operator", 100)
 }
