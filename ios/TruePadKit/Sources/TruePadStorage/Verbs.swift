@@ -25,11 +25,11 @@ import TruePadCore
  * (fast tests, fault injection) and on iOS over the same DarwinFs, so the
  * security state machine that ships is the one the tests exercise.
  *
- * WHAT THIS FILE DOES NOT YET CONTAIN. The courier export/import verbs and the
- * Sealed Pad Transfer verbs are not here. `open` accepts the canonical §6.2 JSON
- * envelope, which is what every edition's `burn` emits; the TP2 compact transport
- * is a QR-carriage concern and is not implemented on iOS yet. None of these gaps
- * is papered over: there is no stub that silently succeeds.
+ * WHAT THIS FILE DOES NOT YET CONTAIN. The Sealed Pad Transfer verbs are not
+ * here. `open` accepts the canonical §6.2 JSON envelope, which is what every
+ * edition's `burn` emits; the TP2 compact transport is a QR-carriage concern and
+ * is not implemented on iOS yet. Neither gap is papered over: there is no stub
+ * that silently succeeds.
  * ========================================================================= */
 
 // MARK: - paths and roles
@@ -128,6 +128,7 @@ public struct GenResult: Sendable { public let pair: PairSummary; public let ver
 public struct BurnResult: Sendable { public let envelope: String; public let encryptionBytes: Int; public let authRecords: Int; public let meters: PairSummary }
 public struct OpenResult: Sendable { public let plaintext: [UInt8]; public let skippedBytes: Int; public let skippedRecords: Int; public let meters: PairSummary }
 public struct DestroyResult: Sendable { public let alreadyDestroyed: Bool; public let limitation: String }
+public struct ExportResult: Sendable { public let container: [UInt8]; public let fileCount: Int }
 
 // MARK: - the engine
 
@@ -1010,6 +1011,274 @@ public final class Engine: @unchecked Sendable {
                 try? fs.remove(prefix)
             }
             return DestroyResult(alreadyDestroyed: false, limitation: destroyLimitation)
+        }
+    }
+
+    // MARK: - export-pair / import-pair (the courier bundle)
+
+    /*
+     * Export is a HANDOFF, and a pad gets ONE.
+     *
+     * PROVENANCE. An `imported` pad may NEVER be exported onward. Alice hands the
+     * pad to Bob; Bob imports it; Bob saves the pad file and gives it to Charlie.
+     * Bob and Charlie would then hold independently consumable copies of the same
+     * directional material and the same one-time authentication keys. Software CAN
+     * tell this case apart from a first handoff, so it does.
+     *
+     * HANDOFF STATE, then, and MARKER-LAST. The container is built in memory and
+     * NOT released until the marker has been written: bytes that left without a
+     * record would be a handoff nothing knows about.
+     */
+
+    /// The EXACT six-file courier container, read from the LIVE store.
+    ///
+    /// It mutates NO handoff state, and carries exactly the six FORMAT-V2 files —
+    /// never pair.json, never the handoff record, never provenance, never witness
+    /// data. Those are this installation's record of its own acts, not the pad.
+    func buildLiveCourierContainer(_ pairId: String) throws -> [UInt8] {
+        let files: [CourierFile] = try bundleFiles.map { rel in
+            guard let bytes = try fs.readFile("\(pairId)/\(rel)") else {
+                throw EngineRefused(
+                    reason: "corrupt-store",
+                    message: "\(rel) is missing; the pair is not whole. Nothing was exported.")
+            }
+            return CourierFile(path: rel, bytes: bytes)
+        }
+        return packContainer(pairId: pairId, files: files)
+    }
+
+    public func exportPair(pairId: String) throws -> ExportResult {
+        try fs.withLock(pairId) {
+            try requireNotDestroyed(pairId)
+            try requireImportComplete(pairId)
+            try requirePair(pairId)
+
+            let meta = try readPairMeta(fs: fs, pairId: pairId)
+            guard meta.origin != .imported else {
+                throw EngineRefused(
+                    reason: "imported-pair-cannot-export",
+                    message: "This pad arrived from someone else, so TruePad will not save another "
+                        + "copy of it to pass on. Two people holding the same pad would each use "
+                        + "the same material, which is the one failure this product exists to "
+                        + "prevent. Generate a new pad to share with someone new.")
+            }
+
+            switch readHandoffState(fs: fs, pairId: pairId) {
+            case .unreadableSpent(let message):
+                throw EngineRefused(reason: refuseUnreadable, message: message)
+            case .sealed:
+                throw EngineRefused(
+                    reason: refuseAlreadySealed,
+                    message: "This pad has already been sent by sealed transfer, so it will not "
+                        + "also be saved as a file to pass on. Generate a new pad for any further "
+                        + "transfer.")
+            case .physical, .absent:
+                break
+            }
+
+            let container = try buildLiveCourierContainer(pairId)
+
+            // MARKER LAST, and BEFORE the container is released. A first export
+            // records the handoff; a re-export under an existing physical marker
+            // leaves it alone, so the recorded time stays the time of the FIRST
+            // handoff.
+            if case .absent = readHandoffState(fs: fs, pairId: pairId) {
+                try commitPhysicalHandoff(fs: fs, pairId: pairId, at: now())
+            }
+            return ExportResult(container: container, fileCount: bundleFiles.count)
+        }
+    }
+
+    /// Exactly the expected FORMAT-V2 files — no unknown, no duplicate, none missing.
+    func validateBundleFileSet(_ files: [CourierFile]) -> String? {
+        var seen = Set<String>()
+        for f in files {
+            guard bundleFiles.contains(f.path) else {
+                return "bundle path \"\(f.path)\" is not one of this store's files."
+            }
+            guard seen.insert(f.path).inserted else {
+                return "bundle path \"\(f.path)\" appears more than once."
+            }
+        }
+        let missing = bundleFiles.filter { !seen.contains($0) }
+        guard missing.isEmpty else {
+            return "bundle is missing store file(s): \(missing.joined(separator: ", "))."
+        }
+        return nil
+    }
+
+    func removeStoreFiles(_ root: String) {
+        for rel in bundleFiles { try? fs.remove("\(root)/\(rel)") }
+        try? fs.remove("\(root)/\(directionSubdirectory[.aToB]!)")
+        try? fs.remove("\(root)/\(directionSubdirectory[.bToA]!)")
+    }
+
+    /// Discard any INCOMPLETE import of this pairId — never a committed pair, which
+    /// the caller checks first. Idempotent.
+    ///
+    /// THE WITNESS JOURNAL IS DELIBERATELY NOT REMOVED, and this is a considered
+    /// divergence from the Browser Edition rather than an omission.
+    ///
+    /// The browser removes it here, and there that is harmless: its witness lives
+    /// in the SAME OPFS domain as the store, so nothing can wipe the store and
+    /// leave the witness. On iOS the witness is deliberately in ANOTHER failure
+    /// domain — that is the entire purpose of KeychainWitnessFs — so the sequence
+    ///
+    ///     delete the app (container gone, Keychain item may survive)
+    ///       -> reinstall
+    ///       -> import an OLDER bundle of the same pad
+    ///
+    /// would delete the one piece of evidence engineered to outlive the container,
+    /// re-bootstrap at the rewound counters, and let already-spent material be
+    /// used again. That is REUSE, which this product may never permit.
+    ///
+    /// Keeping the journal costs nothing and cannot block a legitimate retry: it
+    /// is append-only and reconciliation takes the MAXIMUM, so re-importing the
+    /// same bundle bootstraps to the same high-waters and reads `aligned`, while
+    /// re-importing an OLDER one reads `witness-regressed` — which is the correct
+    /// answer. LOSS IS ACCEPTABLE; REUSE IS NOT.
+    func discardIncompleteImport(_ pairId: String) {
+        removeStoreFiles(pairId)
+        try? fs.remove(pairMetaPath(pairId))
+        try? fs.remove(importMarkerPath(pairId))
+        try? fs.remove(pairId)
+        removeStoreFiles(stagingDir(pairId))
+        try? fs.remove(stagingDir(pairId))
+    }
+
+    /// A COMMITTED (active) pair with this id: a head.json is present AND the pair
+    /// is not mid-import. A pair still carrying the import marker is not committed,
+    /// so a retry may clean and redo it.
+    func committedPairExists(_ pairId: String) -> Bool {
+        if fs.exists(importMarkerPath(pairId)) { return false }
+        return fs.exists(filePath(storeDir(pairId, .aToB), headFile))
+            || fs.exists(filePath(storeDir(pairId, .bToA), headFile))
+    }
+
+    /// The FREE pre-consume importability gate. Non-mutating: it only reads state,
+    /// so a doomed import is refused BEFORE any one-time material is spent —
+    /// turning what would otherwise be a LOSS into a free retry. `importPair`
+    /// re-checks both facts authoritatively under the pad lock.
+    public func requireImportable(_ pairId: String) throws {
+        try requireNotDestroyed(pairId)
+        guard !committedPairExists(pairId) else {
+            throw EngineRefused(
+                reason: "pair-exists",
+                message: "a pair with id \(pairId) already exists here; importing would overwrite "
+                    + "it. Nothing was imported.")
+        }
+    }
+
+    public func importPair(label: String, container: [UInt8],
+                           witnessKind: WitnessKind = .local) throws -> PairSummary {
+        let pairId: String
+        let unpackedFiles: [CourierFile]
+        switch unpackContainer(container) {
+        case .bad(let message):
+            throw EngineRefused(reason: "malformed-bundle", message: "\(message) Nothing was imported.")
+        case .ok(let id, let files):
+            pairId = id
+            unpackedFiles = files
+        }
+        guard isHex32(pairId) else {
+            throw EngineRefused(
+                reason: "malformed-bundle",
+                message: "bundle pairId must be exactly 32 lowercase hex characters (found "
+                    + "\"\(pairId)\"). Nothing was imported.")
+        }
+
+        return try fs.withLock(pairId) {
+            try requireNotDestroyed(pairId)
+            guard !committedPairExists(pairId) else {
+                throw EngineRefused(
+                    reason: "pair-exists",
+                    message: "a pair with id \(pairId) already exists here; importing would "
+                        + "overwrite it. Nothing was imported.")
+            }
+            // A prior interrupted or failed import of this same pairId leaves no
+            // active pair, only removable partial/staging files: clear them so a
+            // retry is never blocked by a ghost, and so bootstrap starts clean.
+            discardIncompleteImport(pairId)
+
+            // §6 STAGE + VALIDATE. The WHOLE bundle is validated in
+            // importing/<pairId>/ — file set, both headers, journals, secret sizes,
+            // reconciliation, pairId and direction agreement — before ANY of it is
+            // made active.
+            if let problem = validateBundleFileSet(unpackedFiles) {
+                throw EngineRefused(reason: "malformed-bundle",
+                                    message: "\(problem) Nothing was imported.")
+            }
+            for f in unpackedFiles {
+                try fs.writeFileAtomic("\(stagingDir(pairId))/\(f.path)", f.bytes)
+            }
+
+            let ab: LoadedStore
+            let ba: LoadedStore
+            do {
+                func loadStaged(_ d: PadDirection) throws -> LoadedStore {
+                    switch loadStore(fs: fs,
+                                     prefix: "\(stagingDir(pairId))/\(directionSubdirectory[d]!)") {
+                    case .ok(let store): return store
+                    case .refused(let reason, let message):
+                        throw EngineRefused(
+                            reason: reason,
+                            message: "imported \(d.rawValue) store: \(message)")
+                    }
+                }
+                ab = try loadStaged(.aToB)
+                ba = try loadStaged(.bToA)
+                guard ab.head.pairId == pairId, ba.head.pairId == pairId else {
+                    throw EngineRefused(
+                        reason: "malformed-bundle",
+                        message: "the bundle's \(headFile) pairId disagrees with the container "
+                            + "pairId \(pairId). Nothing was imported.")
+                }
+                guard ab.head.direction == .aToB, ba.head.direction == .bToA else {
+                    throw EngineRefused(
+                        reason: "malformed-bundle",
+                        message: "the bundle's two halves are not a matched A->B / B->A pair. "
+                            + "Nothing was imported.")
+                }
+            } catch {
+                removeStoreFiles(stagingDir(pairId))
+                try? fs.remove(stagingDir(pairId))
+                throw error
+            }
+
+            // §6 COMMIT. Mark the pair provisioning FIRST (so a crash mid-copy
+            // leaves an inactive, retryable pair — never a partial active one),
+            // copy the validated files in, bootstrap the witness to the IMPORTED
+            // high-waters (only after the FORMAT-V2 state is validated), write
+            // pair.json (the commit), then clear the marker and the staging.
+            var marker = "{\"pairId\":"
+            appendJsonString(&marker, pairId)
+            marker.append(",\"at\":"); appendJsonString(&marker, now()); marker.append("}")
+            try fs.writeFileAtomic(importMarkerPath(pairId), Array(marker.utf8))
+            for f in unpackedFiles { try fs.writeFileAtomic("\(pairId)/\(f.path)", f.bytes) }
+            if witnessKind == .local {
+                try witnessFor(fs: witnessFs, kind: .local).bootstrap(
+                    pairId: pairId,
+                    initial: [
+                        .aToB: WitnessCounters(encryptionNextOffset: ab.effective.nextOffset,
+                                               authenticationNextSequence: ab.effective.nextSequence,
+                                               attemptsReserved: ab.effective.attemptsReserved),
+                        .bToA: WitnessCounters(encryptionNextOffset: ba.effective.nextOffset,
+                                               authenticationNextSequence: ba.effective.nextSequence,
+                                               attemptsReserved: ba.effective.attemptsReserved),
+                    ])
+            }
+            // `origin` is a FIELD of the pair.json the commit already writes, before
+            // importing.json is removed. There is NO ordering in which an imported
+            // pair becomes active carrying "generated-here", and no ordering in
+            // which a crash upgrades a pad's provenance.
+            try writePairMeta(fs: fs, meta: PairMeta(pairId: pairId, label: label,
+                                                     createdAt: now(), witness: witnessKind,
+                                                     origin: .imported))
+            try fs.remove(importMarkerPath(pairId))   // COMMIT: the pair is now active
+            removeStoreFiles(stagingDir(pairId))
+            try? fs.remove(stagingDir(pairId))
+
+            return try buildSummary(pairId)
         }
     }
 }

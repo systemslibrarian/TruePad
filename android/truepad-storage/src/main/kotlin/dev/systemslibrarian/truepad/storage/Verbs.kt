@@ -1039,13 +1039,34 @@ class Engine(
         fs.remove("$root/${SUBDIR.getValue(Direction.B_TO_A)}")
     }
 
-    /** Discard any INCOMPLETE import of this pairId (never a committed pair — the
-     *  caller checks that first). Idempotent. */
+    /**
+     * Discard any INCOMPLETE import of this pairId (never a committed pair — the
+     * caller checks that first). Idempotent.
+     *
+     * THE WITNESS JOURNAL IS DELIBERATELY NOT REMOVED, and this is a considered
+     * divergence from the Browser Edition rather than an omission.
+     *
+     * The browser removes it here, and there that is harmless: its witness lives
+     * in the SAME OPFS domain as the store, so nothing can wipe the store and
+     * leave the witness behind. On Android the witness is deliberately in ANOTHER
+     * failure domain — `getNoBackupFilesDir()` while the store is under
+     * `getFilesDir()` — which is the entire point of §15.2. So anything that
+     * clears the store WITHOUT clearing the no-backup directory, followed by an
+     * import of an OLDER bundle of the same pad, would delete the one piece of
+     * evidence engineered to outlive the store, re-bootstrap at the rewound
+     * counters, and let already-spent material be used again.
+     *
+     * Keeping the journal costs nothing and cannot block a legitimate retry: it is
+     * append-only and reconciliation takes the MAXIMUM, so re-importing the SAME
+     * bundle bootstraps to the same high-waters and reads aligned, while
+     * re-importing an OLDER one reads `witness-regressed` — the correct answer.
+     *
+     * LOSS IS ACCEPTABLE; REUSE IS NOT.
+     */
     private fun discardIncompleteImport(pairId: String) {
         removeStoreFiles(pairId)
         fs.remove(pairMetaPath(pairId))
         fs.remove(importMarkerPath(pairId))
-        witnessFs.remove(witnessLogPath(pairId))
         fs.remove(pairId)
         removeStoreFiles(stagingDir(pairId))
         fs.remove(stagingDir(pairId))

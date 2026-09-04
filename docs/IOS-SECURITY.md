@@ -374,6 +374,33 @@ and tested.
 Rows marked implemented are tested today. The rest are specifications until the
 verbs, witness and SPT state machine exist, and will be tested as they land.
 
+### An import does NOT delete the witness journal
+
+`discardIncompleteImport` clears a half-finished import so a retry is never
+blocked by a ghost. It clears the partial store, the metadata, the marker and the
+staging tree — but **not** the rollback witness journal, and that is a deliberate
+divergence from the Browser Edition rather than an omission.
+
+The browser deletes it there, and there it is harmless: the browser's witness
+lives in the SAME OPFS domain as the store, so nothing can wipe the store and
+leave the witness behind. Here the witness is deliberately in ANOTHER failure
+domain — that is the entire point of the separation above. So the sequence
+
+    the store is cleared, the witness survives
+      -> import an OLDER bundle of the same pad
+      -> the witness journal is deleted and re-bootstrapped at the old counters
+      -> already-spent material is usable again
+
+would destroy the one piece of evidence engineered to outlive the store. That is
+REUSE, so the deletion was removed.
+
+Keeping the journal cannot block a legitimate retry: it is append-only and
+reconciliation takes the MAXIMUM, so re-importing the SAME bundle bootstraps to
+the same high-waters and reads `aligned`, while re-importing an OLDER one reads
+`witness-regressed` — which is the correct answer. LOSS IS ACCEPTABLE; REUSE IS
+NOT.
+
+
 ---
 
 ## 7. Files, sharing, and extra physical copies
