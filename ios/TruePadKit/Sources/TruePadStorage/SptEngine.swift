@@ -150,6 +150,58 @@ extension Engine {
                              + "was created.")
     }
 
+    /// The receive request that survived a restart, if there is one.
+    ///
+    /// WHY THIS EXISTS. `request.json` and `dk.bin` are durable, and nothing ever
+    /// read them back. The Receive tab held the published request in memory only,
+    /// so a force-quit left a LIVE one-time key on disk that the interface could
+    /// no longer reach: the operator could not cancel it, could not REJECT it
+    /// after a failed word comparison, and could not re-display the twelve words
+    /// the ceremony depends on. The key stayed pending until it expired or a
+    /// package consumed it. Losing the reject affordance is the part that
+    /// matters — rejecting is how a comparison that does not match is supposed to
+    /// end.
+    ///
+    /// THE PRIVATE KEY IS DELIBERATELY NOT RETURNED. `.pending` carries `dk`, and
+    /// this drops it on the floor: everything above the engine needs the public
+    /// request, its words and its expiry, and nothing above the engine has any
+    /// business holding a decapsulation seed.
+    ///
+    /// A pending request whose TTL has passed comes back as `.expiredPending` and
+    /// is NOT returned here — it is not usable, and offering it would invite a
+    /// ceremony that cannot complete.
+    ///
+    /// If several are pending — which only happens because the missing restore
+    /// let the operator publish another one — the most recently created is
+    /// returned, so cancelling repeatedly drains them rather than stranding them.
+    public func sptRestorePendingReceiveRequest() throws -> SptCreateResult? {
+        let vfs = sptVfs
+        let ids: [String]
+        do { ids = try vfs.list(receiveRoot) } catch { return nil }
+
+        let now = nowMillis()
+        var newest: (createdAt: String, result: SptCreateResult)?
+        for idHex in ids where isSptHex32(idHex) {
+            guard case .pending(let requestId, let requestHash, let body,
+                                let createdAt, let expiresAt, _) =
+                    readReceiverState(vfs: vfs, idHex: idHex, nowMillis: now) else { continue }
+            // Rebuilt from the STORED body, not re-derived from anything the UI
+            // holds: the text the sender scanned is a function of the bytes on
+            // disk, and this is those bytes.
+            let result = SptCreateResult(
+                requestIdHex: requestId,
+                requestHashHex: Hex.encode(requestHash),
+                tpr2Text: SptConstants.tpr2Prefix + SptBytes.toBase64Url(body),
+                requestIndices: try SptFingerprint.requestIndices132(requestHash),
+                expiresAt: expiresAt)
+            // ISO-8601 with a fixed shape, so lexicographic order is chronological.
+            if newest == nil || createdAt > newest!.createdAt {
+                newest = (createdAt, result)
+            }
+        }
+        return newest?.result
+    }
+
     /// The recipient withdraws a request they published.
     ///
     /// TERMINAL AND PERMANENT. The one-time key behind it is never usable again,

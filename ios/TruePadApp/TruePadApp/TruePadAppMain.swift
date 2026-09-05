@@ -98,6 +98,20 @@ enum Composition {
             // of this comment asserted the survival outright, which is more than
             // docs/IOS-SECURITY.md §5 claims and more than anything here shows.
             let witness = KeychainWitnessFs(backend: SystemKeychainBackend())
+
+            // SWEEP THE HANDOFF SCRATCH BEFORE ANYTHING ELSE RUNS.
+            //
+            // Handing a pad over writes the whole pad to a file in tmp/ so the
+            // share sheet has something to pass along. The presenting views now
+            // remove it on dismiss, but a process that dies while the sheet is up
+            // never gets to. That leaves a complete copy of a pad on disk which
+            // outlives the pad's own destruction, so the recovery has to happen
+            // somewhere that runs unconditionally — which is here.
+            //
+            // It unlinks; it does not erase. Nothing about this may be read as a
+            // claim that the bytes are gone from flash.
+            HandoffScratch.sweep(FileManager.default.temporaryDirectory)
+
             return .ready(Engine(fs: store, witnessFs: witness))
         } catch {
             // The raw error carries the container PATH. That is not secret, but it

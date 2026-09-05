@@ -107,22 +107,48 @@ public final class ReceiveRequestModel: ObservableObject {
 
     let engine: Engine
 
-    public init(engine: Engine) { self.engine = engine }
+    public init(engine: Engine) {
+        self.engine = engine
+        restore()
+    }
+
+    /// Pick up a request that survived a restart.
+    ///
+    /// WITHOUT THIS the tab held the published request in memory only, so a
+    /// force-quit stranded a LIVE one-time key: it stayed pending on disk with no
+    /// way to cancel it, no way to REJECT it after a failed word comparison, and
+    /// no way to show the twelve words again. Losing reject is the part that
+    /// matters — rejecting is how a comparison that does not match is meant to
+    /// end, and the operator was left with no way to do it.
+    ///
+    /// Only fills an EMPTY slot, so a reload can never displace a request the
+    /// operator is currently looking at.
+    public func restore() {
+        guard request == nil else { return }
+        guard let restored = try? engine.sptRestorePendingReceiveRequest() else { return }
+        adopt(restored)
+    }
 
     public func create() {
         do {
-            let result = try engine.sptCreateReceiveRequest()
-            request = result
-            requestWords = CeremonyWords.render(result.requestIndices) ?? []
-            // Re-validated before it can be drawn. A request that will not
-            // round-trip is not shown as a code at all.
-            if case .success(let payload) = QrPayloadBuilder.receiveRequest(result.tpr2Text) {
-                qr = payload
-            } else {
-                qr = nil
-            }
+            adopt(try engine.sptCreateReceiveRequest())
         } catch {
             refuse(error)
+        }
+    }
+
+    /// One place where a request becomes what the screen shows, so a restored
+    /// request and a freshly created one cannot diverge in how they are rendered
+    /// or validated.
+    private func adopt(_ result: SptCreateResult) {
+        request = result
+        requestWords = CeremonyWords.render(result.requestIndices) ?? []
+        // Re-validated before it can be drawn. A request that will not
+        // round-trip is not shown as a code at all.
+        if case .success(let payload) = QrPayloadBuilder.receiveRequest(result.tpr2Text) {
+            qr = payload
+        } else {
+            qr = nil
         }
     }
 
@@ -133,6 +159,9 @@ public final class ReceiveRequestModel: ObservableObject {
             self.request = nil
             qr = nil
             requestWords = []
+            // If the missing restore let the operator publish more than one,
+            // surface the next rather than stranding it until a relaunch.
+            restore()
         } catch {
             refuse(error)
         }
@@ -214,6 +243,16 @@ public final class SealModel: ObservableObject {
         } catch {
             refuse(error)
         }
+    }
+
+    /// Same contract as `PadDetailModel.discardSharedFile()`: a sealed package is
+    /// pad material under a computational wrapper, and cancelling the share sheet
+    /// must not leave it on disk.
+    public func discardSharedFile() {
+        if let file = fileToShare {
+            try? FileManager.default.removeItem(at: file.url)
+        }
+        fileToShare = nil
     }
 
     public func share() {

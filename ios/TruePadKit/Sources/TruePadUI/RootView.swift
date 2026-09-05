@@ -47,7 +47,13 @@ public struct TruePadRootView: View {
             }
             .tabItem { Label("About", systemImage: "info.circle") }
         }
-        .sheet(isPresented: $pads.creating) {
+        // RELOAD WHEN THE SHEET CLOSES. Creating a pad dismisses the sheet, and
+        // nothing re-read the store: `PadListView`'s onAppear does not fire again
+        // because the list never went away, it was merely covered. The pad
+        // existed on disk and was absent from the screen until the app was
+        // force-quit or the list pulled to refresh. Found on a handset — every
+        // test that created a pad then looked for it failed here.
+        .sheet(isPresented: $pads.creating, onDismiss: { pads.reload() }) {
             // The cover is applied to the sheet's content TOO. An overlay on the
             // TabView does not extend over a presented sheet, so without this the
             // one screen that is modally on top would be the one screen still

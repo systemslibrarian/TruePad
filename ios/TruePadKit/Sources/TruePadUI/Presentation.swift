@@ -270,13 +270,67 @@ public enum Egress: Sendable, Equatable {
     case fileOnly
     /// A public request or envelope: may also be copied or shown as a QR.
     case publicText
+    /// THE DECRYPTED MESSAGE ITSELF. Never copied, never a QR, never a file.
+    ///
+    /// This case was missing, and its absence was the gap. The Open screen
+    /// rendered plaintext with `.textSelection(.enabled)`, which routes it to the
+    /// GENERAL pasteboard — Universal-Clipboard-eligible, so the one thing the
+    /// pad exists to protect could leave the handset for any Mac or iPad on the
+    /// same Apple ID. `LeakageAuditTests` bans the `UIPasteboard` symbol in
+    /// shipping source, and a declarative SwiftUI modifier walked straight around
+    /// that ban without the symbol ever appearing.
+    case plaintext
+}
+
+/// THE SCRATCH FILE A HANDOFF LEAVES BEHIND.
+///
+/// Handing a pad over writes the WHOLE pad — or a sealed package containing it —
+/// to a file so the share sheet has something to hand to another app. Nothing
+/// ever deleted it. The bytes sat in the container's `tmp/` under a fixed name,
+/// and they outlived `destroy`: the destruction verb zero-overwrites `secret.bin`
+/// and unlinks the half directories inside the store, and this file is not in the
+/// store. The engine believed the material was gone while a complete copy of it
+/// was still on the device.
+///
+/// `ShareableFile`'s own comment claimed the file "is removed afterwards", which
+/// was the intent and was not the code — so this is the intent, implemented.
+///
+/// WHAT REMOVAL IS AND IS NOT. This unlinks. It is not erasure, and nothing here
+/// may be read as erasure: the same limitation the destruction text states
+/// applies exactly as much to a scratch file as to a pad. What it buys is that
+/// the copy stops being reachable and stops outliving the pad it came from.
+public enum HandoffScratch {
+    /// The only two names anything is ever written under, from `EgressPolicy`.
+    /// Kept as a list rather than derived, so a sweep still finds a file whose
+    /// naming rule later changes underneath it.
+    public static let fileNames = ["pad.tpair", "transfer.tps2"]
+
+    /// Remove every known scratch file in `directory`. Returns how many were
+    /// actually removed, so a caller can tell "nothing was there" from "the
+    /// remove failed" — the launch sweep exists precisely because a crash during
+    /// the share sheet leaves one behind, and a sweep that silently did nothing
+    /// would be indistinguishable from a sweep that worked.
+    @discardableResult
+    public static func sweep(_ directory: URL,
+                             using fm: FileManager = .default) -> Int {
+        var removed = 0
+        for name in fileNames {
+            let url = directory.appendingPathComponent(name)
+            guard fm.fileExists(atPath: url.path) else { continue }
+            if (try? fm.removeItem(at: url)) != nil { removed += 1 }
+        }
+        return removed
+    }
 }
 
 public enum EgressPolicy {
-    /// Pad material NEVER reaches the clipboard.
+    /// Pad material NEVER reaches the clipboard, and neither does plaintext.
     public static func mayCopyToClipboard(_ egress: Egress) -> Bool { egress == .publicText }
     public static func mayRenderAsQr(_ egress: Egress) -> Bool { egress == .publicText }
-    public static func mayShareAsFile(_ egress: Egress) -> Bool { true }
+    /// Everything but the decrypted message may be handed to another app as a
+    /// file. Plaintext may not: the operator asked TruePad to reveal it, not to
+    /// hand it onward.
+    public static func mayShareAsFile(_ egress: Egress) -> Bool { egress != .plaintext }
 
     /// The file name a courier bundle or sealed package is offered under.
     /// Deliberately carries no label, no date and no pairId: a file name is

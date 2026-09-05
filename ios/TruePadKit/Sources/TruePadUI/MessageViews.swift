@@ -26,8 +26,25 @@ public struct SendView: View {
     public var body: some View {
         Form {
             Section("Message") {
+                // AUTOCORRECTION AND AUTOCAPITALISATION OFF, on the one field in
+                // the app that holds the plaintext the pad exists to protect.
+                //
+                // iOS keeps a keyboard lexicon at /private/var/mobile/Library/
+                // Keyboard/ — outside the sandbox, outside the store's protection
+                // class, outside the container's backup exclusion, and beyond
+                // `destroy`. Every other text field here already sets these
+                // traits; this one did not, and it is the one that matters most.
+                //
+                // WHAT THIS DOES NOT CLAIM. Apple documents these as input-
+                // correctness traits, not as the switch that excludes text from
+                // learning. TruePad can say the traits are set. It CANNOT say
+                // nothing was learned — that is a statement about iOS internals
+                // this project cannot observe, and claiming it would be exactly
+                // the over-reach the governing rules forbid.
                 TextField("Write your message", text: $model.plaintext, axis: .vertical)
                     .lineLimit(3...10)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
                     .accessibilityLabel("The message to send. It is encrypted with pad material "
                                         + "that is then destroyed.")
                 Picker("Send as", selection: $model.role) {
@@ -96,8 +113,18 @@ public struct OpenView: View {
 
             if let plaintext = model.plaintext {
                 Section("Message") {
+                    // NO `.textSelection(.enabled)` HERE, deliberately.
+                    //
+                    // Selection routes text to the GENERAL pasteboard, which is
+                    // Universal-Clipboard-eligible: the decrypted message would
+                    // become copyable to any Mac or iPad on the same Apple ID.
+                    // `EgressPolicy.mayCopyToClipboard(.plaintext)` is false, and
+                    // this is that policy actually applied rather than merely
+                    // declared — it was dead code no view called.
+                    //
+                    // The envelope on the Send screen KEEPS selection: it is
+                    // `.publicText`, and copying it is the whole workflow.
                     Text(plaintext)
-                        .textSelection(.enabled)
                         .accessibilityLabel("The opened message: \(plaintext)")
                     if let note = model.skippedNote {
                         Text(note).font(.footnote).foregroundStyle(.secondary)

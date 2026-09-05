@@ -105,7 +105,7 @@ func decodeExact(_ value: String, length: Int, field: String) throws -> [UInt8] 
     return bytes
 }
 
-func isSptHex32(_ s: String) -> Bool {
+public func isSptHex32(_ s: String) -> Bool {
     s.count == 32 && s.allSatisfy { $0.isASCII && ($0.isNumber || ("a"..."f").contains(String($0))) }
 }
 

@@ -8,16 +8,27 @@ import XCTest
 /// which is where the properties that matter either hold or do not:
 ///
 ///   · durable state survives process death and relaunch;
+///   · material consumed by a send is still consumed after a force-quit;
+///   · a message that does not verify consumes no pad material;
 ///   · a refused destruction changes nothing;
 ///   · a published receive request survives a force-quit, and a cancelled one
 ///     does not come back;
 ///   · the camera is not touched until the operator asks for it.
 ///
-/// WHAT IT IS NOT. It is NOT a VoiceOver assessment. It can assert that the
-/// elements carrying decisions have labels and that those labels say what a
-/// number MEANS, but whether the screen is USABLE with VoiceOver is a human
-/// judgement and remains outstanding. It is also NOT the two-device ceremony:
-/// one handset cannot perform a comparison between two people.
+/// WHAT IT IS NOT.
+///
+/// It is NOT a VoiceOver assessment. It asserts that the elements carrying
+/// decisions have labels and that those labels say what a number MEANS, but
+/// whether the screen is USABLE with VoiceOver is a human judgement.
+///
+/// It is NOT the two-device ceremony: one handset cannot perform a comparison
+/// between two people, and nothing here exercises a transfer between parties.
+///
+/// It does NOT cover a COMPLETED destruction. Doing that through the interface
+/// requires typing the pairId, and TruePad deliberately never displays it — the
+/// operator is expected to know it from the pad book, a head.json, or the
+/// tombstone. A UI test has no such source, so only the REFUSAL path is
+/// reachable from here. That is a real limit of this bundle, not an oversight.
 ///
 /// Every pad created here is DISPOSABLE and generated from the device CSPRNG —
 /// deliberately the weakest kind TruePad makes, so it reads NOT ELIGIBLE and
@@ -31,20 +42,41 @@ final class TruePadPhysicalTests: XCTestCase {
 
     // MARK: - helpers
 
-    /// Most of this app's rows are `accessibilityElement(children: .combine)` with
-    /// a label that says what the row MEANS, so an exact-string query would match
-    /// nothing. Prefix matching is how a test addresses a row that is deliberately
-    /// described rather than named.
+    /// Most rows here are `accessibilityElement(children: .combine)` with a label
+    /// that says what the row MEANS, so an exact-string query matches nothing.
     func element(beginningWith prefix: String, in app: XCUIApplication) -> XCUIElement {
         app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label BEGINSWITH %@", prefix))
-            .firstMatch
+            .matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
     }
 
     func element(containing needle: String, in app: XCUIApplication) -> XCUIElement {
         app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS %@", needle))
-            .firstMatch
+            .matching(NSPredicate(format: "label CONTAINS %@", needle)).firstMatch
+    }
+
+    /// SCROLL UNTIL IT EXISTS.
+    ///
+    /// A SwiftUI `Form` is a collection view, and a row below the fold is not in
+    /// the accessibility hierarchy at all — not merely un-hittable, ABSENT. The
+    /// first run of this bundle failed five tests on exactly that: "Create this
+    /// pad" and the twelve comparison words both sit under enough content to be
+    /// off-screen on an iPhone 12, so `waitForExistence` was waiting for
+    /// something that could not appear without a scroll.
+    @discardableResult
+    func reveal(_ target: XCUIElement, in app: XCUIApplication, swipes: Int = 8) -> Bool {
+        if target.waitForExistence(timeout: 3) { return true }
+        for _ in 0..<swipes {
+            app.swipeUp()
+            if target.exists { return true }
+        }
+        return target.exists
+    }
+
+    /// The first integer in an accessibility label, e.g. "You can still send 4
+    /// messages in this direction." -> 4.
+    func firstNumber(in text: String) -> Int? {
+        guard let r = text.range(of: "[0-9]+", options: .regularExpression) else { return nil }
+        return Int(text[r])
     }
 
     @discardableResult
@@ -57,8 +89,7 @@ final class TruePadPhysicalTests: XCTestCase {
     }
 
     /// The root must actually RENDER. A process that is alive but showing nothing
-    /// would satisfy a bare "did it launch" check, and that is exactly the failure
-    /// a composition root can produce.
+    /// would satisfy a bare "did it launch" check.
     func assertRootRendered(_ app: XCUIApplication, _ note: String = "") {
         XCTAssertTrue(app.tabBars.buttons["Pads"].waitForExistence(timeout: 25),
                       "the Pads tab must render. \(note)")
@@ -66,8 +97,30 @@ final class TruePadPhysicalTests: XCTestCase {
         XCTAssertTrue(app.tabBars.buttons["About"].exists, "the About tab must render")
     }
 
-    /// Create a disposable pad from the device CSPRNG. No file picker is involved,
-    /// which is what makes this path automatable at all.
+    func uniqueLabel(_ stem: String) -> String { "\(stem)-\(Int(Date().timeIntervalSince1970))" }
+
+    /// Drain EVERY receive request left over from earlier runs, so a test that
+    /// needs to publish one starts from a known state.
+    ///
+    /// A LOOP, not a single cancel. Cancelling now surfaces the next pending
+    /// request rather than stranding it — that is the drain behaviour the restore
+    /// fix introduced — so one cancel only clears one. Several accumulate because
+    /// each run of this bundle publishes one.
+    ///
+    /// Cancelling is terminal and costs nothing here: these are disposable
+    /// requests this bundle created.
+    func drainPendingRequests(_ app: XCUIApplication) {
+        for _ in 0..<12 {
+            if app.buttons["Create a receive request"].waitForExistence(timeout: 4) { return }
+            let cancel = app.buttons["Cancel this request"]
+            guard cancel.exists || reveal(cancel, in: app, swipes: 4) else { return }
+            cancel.tap()
+        }
+        XCTFail("could not drain the pending receive requests on this device")
+    }
+
+    /// Create a disposable pad from the device CSPRNG. No file picker is
+    /// involved, which is what makes this path automatable at all.
     func createDisposablePad(_ app: XCUIApplication, label: String) {
         app.tabBars.buttons["Pads"].tap()
         let add = app.buttons["Create a pad"]
@@ -79,30 +132,42 @@ final class TruePadPhysicalTests: XCTestCase {
         name.tap()
         name.typeText(label)
 
-        chooseDeviceSource(app)
+        let option = element(beginningWith: "This device's random generator", in: app)
+        XCTAssertTrue(reveal(option, in: app), "the device source must be offered")
+        option.tap()
+        XCTAssertTrue(reveal(app.staticTexts["This pad will read NOT ELIGIBLE"], in: app),
+                      "the consequence must be stated BEFORE the operator commits")
 
         let create = app.buttons["Create this pad"]
-        XCTAssertTrue(create.waitForExistence(timeout: 10))
+        XCTAssertTrue(reveal(create, in: app), "the create button must be reachable")
         XCTAssertTrue(create.isEnabled, "a named pad with a source must be creatable")
         create.tap()
 
-        XCTAssertTrue(element(beginningWith: label + ".", in: app).waitForExistence(timeout: 60),
+        // MORE SWIPES THAN ELSEWHERE. Pads accumulate across runs — there is no
+        // reset affordance and there should not be one — so by the time this
+        // bundle has run a few times the newest row is a long way down.
+        XCTAssertTrue(reveal(element(beginningWith: label + ".", in: app), in: app, swipes: 20),
                       "the new pad must appear in the list")
     }
 
-    /// The source picker is an inline `Picker` in a `Form`, so the option is a row
-    /// rather than a control with a stable type.
-    func chooseDeviceSource(_ app: XCUIApplication) {
-        let option = element(beginningWith: "This device's random generator", in: app)
-        XCTAssertTrue(option.waitForExistence(timeout: 10), "the device source must be offered")
-        option.tap()
-        XCTAssertTrue(app.staticTexts["This pad will read NOT ELIGIBLE"]
-                        .waitForExistence(timeout: 10),
-                      "the consequence must be stated BEFORE the operator commits")
+    func openPad(_ app: XCUIApplication, label: String) {
+        let row = element(beginningWith: label + ".", in: app)
+        XCTAssertTrue(reveal(row, in: app), "the pad row must be reachable")
+        row.tap()
     }
 
-    func uniqueLabel(_ stem: String) -> String {
-        "\(stem)-\(Int(Date().timeIntervalSince1970))"
+    /// The bytes-of-pad-material-remaining figure for the first direction shown.
+    func padMaterialRemaining(_ app: XCUIApplication) -> Int? {
+        let meter = element(containing: "bytes of pad material remain", in: app)
+        guard reveal(meter, in: app) else { return nil }
+        return firstNumber(in: meter.label)
+    }
+
+    /// The remaining-sends figure for the first direction shown.
+    func remainingSends(_ app: XCUIApplication) -> Int? {
+        let meter = element(containing: "You can still send", in: app)
+        guard reveal(meter, in: app) else { return nil }
+        return firstNumber(in: meter.label)
     }
 
     // MARK: - 1. it launches, and it says what it is
@@ -111,9 +176,8 @@ final class TruePadPhysicalTests: XCTestCase {
         let app = launchFresh()
         assertRootRendered(app, "on a first launch")
 
-        // The claims boundary is a product commitment, not decoration. If this
-        // ever stops being on screen, that is a change to what TruePad says it
-        // does — and the person holding the phone is who it is for.
+        // The claims boundary is a product commitment, not decoration, and the
+        // person holding the phone is who it is for.
         app.tabBars.buttons["About"].tap()
         XCTAssertTrue(app.staticTexts["Post-quantum cryptography protects pad DELIVERY."]
                         .waitForExistence(timeout: 20),
@@ -147,38 +211,33 @@ final class TruePadPhysicalTests: XCTestCase {
 
     // MARK: - 3. a pad, and its consumed material, survive process death
 
-    /// THE DURABILITY CLAIM, on real storage. A pad created before a force-quit
-    /// must still be there afterwards, with the material a sent message consumed
-    /// still consumed. This is `fcntl(F_FULLFSYNC)` and the §12.4 write order
-    /// observed on APFS rather than argued about.
-    func test03_APadAndItsConsumedMaterialSurviveAForceQuit() {
+    /// THE DURABILITY CLAIM, on real storage: `fcntl(F_FULLFSYNC)` and the §12.4
+    /// write order observed on APFS rather than argued about.
+    func test03_ConsumedMaterialIsStillConsumedAfterAForceQuit() {
         let app = launchFresh()
         let label = uniqueLabel("disposable")
         createDisposablePad(app, label: label)
+        openPad(app, label: label)
 
-        element(beginningWith: label + ".", in: app).tap()
+        let before = remainingSends(app)
+        XCTAssertNotNil(before, "the remaining-sends meter must render on the device")
 
-        // The meters are labelled by MEANING, so this both navigates and asserts
-        // the accessibility contract at the same time.
-        let sendsBefore = element(containing: "You can still send", in: app)
-        XCTAssertTrue(sendsBefore.waitForExistence(timeout: 30),
-                      "the remaining-sends meter must render on the device")
-        let before = sendsBefore.label
-
-        app.buttons["Write a message"].tap()
+        let write = app.buttons["Write a message"]
+        XCTAssertTrue(reveal(write, in: app), "the send affordance must be reachable")
+        write.tap()
         let field = element(beginningWith: "The message to send.", in: app)
-        XCTAssertTrue(field.waitForExistence(timeout: 20), "the message field must exist")
+        XCTAssertTrue(reveal(field, in: app), "the message field must exist")
         field.tap()
         field.typeText("physical validation message")
 
         let encrypt = app.buttons["Encrypt and consume the pad"]
-        XCTAssertTrue(encrypt.waitForExistence(timeout: 10))
+        XCTAssertTrue(reveal(encrypt, in: app))
         encrypt.tap()
 
-        // The envelope is shown only AFTER the durable commit. That ordering is
-        // BURN-BEFORE-OUTPUT, and this is it observed on a handset.
-        XCTAssertTrue(app.staticTexts["The encrypted message, as text you can copy."]
-                        .waitForExistence(timeout: 60),
+        // The envelope appears only AFTER the durable commit. That ordering is
+        // BURN-BEFORE-OUTPUT, observed on a handset.
+        XCTAssertTrue(reveal(app.staticTexts["The encrypted message, as text you can copy."],
+                             in: app),
                       "an envelope must be produced")
 
         // FORCE-QUIT with a pad in the store, then relaunch.
@@ -187,48 +246,107 @@ final class TruePadPhysicalTests: XCTestCase {
         app.launch()
         assertRootRendered(app, "after a quit with durable state on disk")
 
-        let row = element(beginningWith: label + ".", in: app)
-        XCTAssertTrue(row.waitForExistence(timeout: 60),
+        XCTAssertTrue(reveal(element(beginningWith: label + ".", in: app), in: app, swipes: 20),
                       "the pad must survive process death — this is the durability claim")
+        openPad(app, label: label)
 
-        // AND THE CONSUMPTION MUST HAVE STUCK. If the meter read the same as it
-        // did before the send, material would have been silently reusable.
-        row.tap()
-        let sendsAfter = element(containing: "You can still send", in: app)
-        XCTAssertTrue(sendsAfter.waitForExistence(timeout: 30))
-        XCTAssertNotEqual(sendsAfter.label, before,
-                          "the consumed record must still be consumed after a relaunch — "
-                          + "an unchanged meter would mean the burn did not persist")
+        // THE NUMBER MUST HAVE GONE DOWN, and stayed down. An unchanged meter
+        // would mean the burn did not persist and the material was reusable —
+        // which is the one outcome this project treats as unacceptable.
+        let after = remainingSends(app)
+        XCTAssertNotNil(after)
+        if let b = before, let a = after {
+            XCTAssertLessThan(a, b,
+                              "remaining sends must be strictly lower after a send that survived "
+                              + "a force-quit (before: \(b), after: \(a))")
+        }
     }
 
-    // MARK: - 4. a refused destruction changes nothing
+    // MARK: - 4. a message that does not verify consumes no pad material
 
-    /// The prompt must not hand over the answer, and a wrong confirmation must
-    /// leave the pad exactly as it was. Checked on the real screen because this is
-    /// the one irreversible verb in the app.
-    func test04_TheDestroyPromptWithholdsTheIdentifierAndRefusesAWrongOne() {
+    /// THE BOUNDED-FORGERY CLAIM, checked on real storage.
+    ///
+    /// The Open screen states: "A message that does not verify costs one
+    /// verification attempt and consumes no pad material." That is a promise
+    /// about what a forgery costs the honest party, and it is the difference
+    /// between a bounded guarantee and a denial-of-service: if a rejected message
+    /// burned pad material, anyone who could hand the operator garbage could
+    /// exhaust the pad. This asserts the pad-material meter is UNCHANGED after a
+    /// refusal, against the real store rather than a temp directory.
+    ///
+    /// WHY NOT A FULL ROUND TRIP. Sending and reopening on one device would need
+    /// the envelope moved from the Send screen to the Open screen, and the only
+    /// route the interface offers is the system edit menu — the ciphertext is
+    /// deliberately not exposed as an accessibility value, because reading a
+    /// base64 blob aloud helps nobody. Driving Copy then Paste through XCUITest
+    /// did not reliably land the text, and a flaky assertion about cryptographic
+    /// correctness is worse than none. The round trip IS covered by the host
+    /// suite; what a handset adds is durable consumption on APFS, and test03
+    /// establishes that. So this tests a claim the SCREEN makes instead.
+    func test04_AMessageThatDoesNotVerifyConsumesNoPadMaterial() {
+        let app = launchFresh()
+        let label = uniqueLabel("forgery")
+        createDisposablePad(app, label: label)
+        openPad(app, label: label)
+
+        let materialBefore = padMaterialRemaining(app)
+        XCTAssertNotNil(materialBefore, "the pad-material meter must render")
+
+        let openLink = app.buttons["Open a message"]
+        XCTAssertTrue(reveal(openLink, in: app))
+        openLink.tap()
+
+        let field = app.textFields["Paste it here"]
+        XCTAssertTrue(reveal(field, in: app), "the paste field must exist")
+        field.tap()
+        field.typeText("TP2:this-is-not-a-real-envelope")
+
+        let openButton = app.buttons["Open"]
+        XCTAssertTrue(reveal(openButton, in: app))
+        XCTAssertTrue(openButton.isEnabled, "a non-empty envelope must be openable")
+        openButton.tap()
+
+        XCTAssertTrue(app.alerts["TruePad refused"].waitForExistence(timeout: 30),
+                      "a malformed envelope must be refused, not opened")
+        app.alerts["TruePad refused"].buttons["OK"].tap()
+
+        // Back to the pad and re-read the meter FROM DISK — the detail view
+        // reloads on appear, so this is the store's answer, not a cached one.
+        app.navigationBars.buttons.firstMatch.tap()
+        let materialAfter = padMaterialRemaining(app)
+        XCTAssertNotNil(materialAfter)
+        XCTAssertEqual(materialAfter, materialBefore,
+                       "a refused message must consume NO pad material — anything else means "
+                       + "garbage handed to the operator can exhaust their pad")
+    }
+
+    // MARK: - 5. a refused destruction changes nothing
+
+    /// Only the REFUSAL path is reachable from the interface — see the type
+    /// comment. The prompt must not hand over the answer, and a wrong
+    /// confirmation must leave the pad exactly as it was.
+    func test05_TheDestroyPromptWithholdsTheIdentifierAndRefusesAWrongOne() {
         let app = launchFresh()
         let label = uniqueLabel("destroy-refusal")
         createDisposablePad(app, label: label)
-
-        element(beginningWith: label + ".", in: app).tap()
+        openPad(app, label: label)
 
         let destroyLink = app.buttons["Destroy this pad…"]
-        XCTAssertTrue(destroyLink.waitForExistence(timeout: 30))
+        XCTAssertTrue(reveal(destroyLink, in: app), "the destroy affordance must be reachable")
         destroyLink.tap()
 
-        // THE PROMPT NEVER CONTAINS THE VALUE IT ASKS FOR. A prompt that shows the
-        // identifier is not a confirmation, it is a copy exercise.
-        XCTAssertTrue(app.staticTexts["Destroying a pad is permanent. Type the pad's identifier "
-                                      + "to confirm. TruePad will not show it to you here."]
-                        .waitForExistence(timeout: 20),
+        // THE PROMPT NEVER CONTAINS THE VALUE IT ASKS FOR. A prompt that shows
+        // the identifier is not a confirmation, it is a copy exercise.
+        let prompt = app.staticTexts["Destroying a pad is permanent. Type the pad's identifier "
+                                     + "to confirm. TruePad will not show it to you here."]
+        XCTAssertTrue(reveal(prompt, in: app),
                       "the destroy prompt must be shown and must withhold the identifier")
 
         let confirm = app.textFields["Type the pad's identifier to confirm destruction. "
                                      + "TruePad will not show it to you here."]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 20))
+        XCTAssertTrue(reveal(confirm, in: app))
 
-        // The button is disabled until something is typed: no empty-tap destruction.
+        // Disabled until something is typed: destruction is not one stray tap away.
         XCTAssertFalse(app.buttons["Destroy this pad"].isEnabled,
                        "destruction must not be one stray tap away")
 
@@ -240,30 +358,46 @@ final class TruePadPhysicalTests: XCTestCase {
                       "a wrong confirmation must be refused")
         app.alerts["TruePad refused"].buttons["OK"].tap()
 
-        // Back out and confirm the pad is untouched and still usable.
+        // Back out and confirm the pad is untouched and still listed.
         app.navigationBars.buttons.firstMatch.tap()
         app.navigationBars.buttons.firstMatch.tap()
-        XCTAssertTrue(element(beginningWith: label + ".", in: app).waitForExistence(timeout: 30),
-                      "a refused destruction must leave the pad alone")
+
+        // NOT `BEGINSWITH label + "."`. A destroyed pad's row reads
+        // "<label>. Destroyed, and permanently unusable." and a live one reads
+        // "<label>. You can send N more messages." — both begin with the label,
+        // so a prefix check passes whether the pad survived or not, which is the
+        // opposite of what this test exists to establish. Assert the live text
+        // and the absence of the tombstone text instead.
+        XCTAssertTrue(element(containing: label + ". You can send", in: app)
+                        .waitForExistence(timeout: 30),
+                      "a refused destruction must leave the pad USABLE, not merely listed")
+        XCTAssertFalse(element(containing: "Destroyed, and permanently unusable", in: app).exists,
+                       "nothing may have been tombstoned by a refused destruction")
     }
 
-    // MARK: - 5. the receive request is durable, and cancelling it is terminal
+    // MARK: - 6. the receive request is durable, and cancelling it is terminal
 
-    func test05_AReceiveRequestSurvivesAQuitAndACancellationIsPermanent() {
+    func test06_AReceiveRequestSurvivesAQuitAndACancellationIsPermanent() {
         let app = launchFresh()
         app.tabBars.buttons["Receive"].tap()
 
+        // A REQUEST MAY ALREADY BE HERE, restored from an earlier run of this
+        // bundle. That is the restore path working — a published request is
+        // supposed to survive a restart — so clear it before publishing a new
+        // one rather than treating it as a failure.
+        drainPendingRequests(app)
+
         let create = app.buttons["Create a receive request"]
-        XCTAssertTrue(create.waitForExistence(timeout: 30), "the Receive tab must offer a request")
+        XCTAssertTrue(reveal(create, in: app), "the Receive tab must offer a request")
         create.tap()
 
-        // THE TWELVE WORDS MUST ACTUALLY RENDER. If the wordlist failed to load on
-        // device, `WordGrid` refuses and shows the failure text instead — which is
-        // the correct fail-closed behaviour, but it is NOT the good path, and a
-        // test that accepted either would be asserting nothing.
-        XCTAssertTrue(element(beginningWith: "Word 1:", in: app).waitForExistence(timeout: 30),
+        // THE TWELVE WORDS MUST ACTUALLY RENDER. If the wordlist failed to load,
+        // `WordGrid` refuses and shows the failure text instead — correct
+        // fail-closed behaviour, but NOT the good path, and a test that accepted
+        // either would assert nothing.
+        XCTAssertTrue(reveal(element(beginningWith: "Word 1:", in: app), in: app),
                       "the twelve comparison words must render on the device")
-        XCTAssertTrue(element(beginningWith: "Word 12:", in: app).exists,
+        XCTAssertTrue(reveal(element(beginningWith: "Word 12:", in: app), in: app),
                       "all twelve must render, not the first few")
         XCTAssertFalse(app.staticTexts["The comparison words cannot be displayed. This transfer "
                                        + "cannot be confirmed on this device."].exists,
@@ -274,82 +408,81 @@ final class TruePadPhysicalTests: XCTestCase {
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 30))
         app.launch()
         app.tabBars.buttons["Receive"].tap()
-        XCTAssertTrue(app.buttons["Cancel this request"].waitForExistence(timeout: 45),
-                      "a published request must survive a force-quit")
+        let cancel = app.buttons["Cancel this request"]
+        XCTAssertTrue(reveal(cancel, in: app), "a published request must survive a force-quit")
+        cancel.tap()
 
-        app.buttons["Cancel this request"].tap()
-        XCTAssertTrue(app.buttons["Create a receive request"].waitForExistence(timeout: 45),
+        XCTAssertTrue(reveal(app.buttons["Create a receive request"], in: app),
                       "cancelling must leave the tab ready for a new request")
 
-        // AND THE CANCELLATION IS TERMINAL. Checked across a relaunch so it is the
-        // on-disk state being trusted, not anything still in memory.
+        // AND THE CANCELLATION IS TERMINAL. Checked across a relaunch so it is
+        // the on-disk state being trusted, not anything still in memory.
         app.terminate()
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 30))
         app.launch()
         app.tabBars.buttons["Receive"].tap()
-        XCTAssertTrue(app.buttons["Create a receive request"].waitForExistence(timeout: 45),
+        XCTAssertTrue(reveal(app.buttons["Create a receive request"], in: app),
                       "a cancelled request must not return as pending after a relaunch")
     }
 
-    // MARK: - 6. the camera is not reached for until asked
+    // MARK: - 7. the camera is not reached for until asked
 
     /// A permission dialog at launch teaches people to dismiss dialogs, and would
-    /// mean the app touched the camera without being asked. Ordinary navigation
-    /// must produce none.
-    func test06_NoCameraPromptFromOrdinaryNavigation() {
+    /// mean the app touched the camera without being asked.
+    func test07_NoCameraPromptFromOrdinaryNavigation() {
         let app = launchFresh()
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
 
         assertRootRendered(app)
         app.tabBars.buttons["Receive"].tap()
-        XCTAssertTrue(app.buttons["Create a receive request"].waitForExistence(timeout: 30)
-                        || app.buttons["Cancel this request"].exists)
+        XCTAssertTrue(reveal(app.buttons["Create a receive request"], in: app)
+                        || reveal(app.buttons["Cancel this request"], in: app),
+                      "the Receive tab must have finished rendering before this is asserted")
         app.tabBars.buttons["About"].tap()
         XCTAssertTrue(app.staticTexts["The one-time pad encrypts messages."]
-                        .waitForExistence(timeout: 20))
+                        .waitForExistence(timeout: 20),
+                      "the About tab must have finished rendering before this is asserted")
         app.tabBars.buttons["Pads"].tap()
+        XCTAssertTrue(app.tabBars.buttons["Pads"].waitForExistence(timeout: 20))
 
         XCTAssertEqual(springboard.alerts.count, 0,
                        "no permission prompt may appear from ordinary navigation")
     }
 
-    // MARK: - 7. the numbers that carry decisions are described, not recited
+    // MARK: - 8. the numbers that carry decisions are described, not recited
 
-    /// NOT A VOICEOVER ASSESSMENT — see the type comment. This asserts the labels
-    /// exist and say what the number MEANS. "59, 64, 7, 8" would pass a
-    /// label-exists check and tell a blind operator nothing.
-    func test07_DecisionCarryingElementsAreDescribedByMeaning() {
+    /// NOT A VOICEOVER ASSESSMENT. This asserts the labels exist and say what the
+    /// number MEANS. "59, 64, 7, 8" would pass a label-exists check and tell a
+    /// blind operator nothing.
+    func test08_DecisionCarryingElementsAreDescribedByMeaning() {
         let app = launchFresh()
         let label = uniqueLabel("a11y")
         createDisposablePad(app, label: label)
+        openPad(app, label: label)
 
-        element(beginningWith: label + ".", in: app).tap()
-
-        XCTAssertTrue(element(containing: "You can still send", in: app)
-                        .waitForExistence(timeout: 30),
+        XCTAssertTrue(reveal(element(containing: "You can still send", in: app), in: app),
                       "the remaining-sends meter must be described, not just numbered")
-        XCTAssertTrue(element(containing: "bytes of pad material remain", in: app).exists,
+        XCTAssertTrue(reveal(element(containing: "bytes of pad material remain", in: app), in: app),
                       "the pad-material meter must be described")
-        XCTAssertTrue(element(containing: "authentication records", in: app).exists,
+        XCTAssertTrue(reveal(element(containing: "authentication records", in: app), in: app),
                       "the records meter must be described, including that each message uses one")
-        XCTAssertTrue(element(containing: "Whichever runs out first", in: app).exists,
+        XCTAssertTrue(reveal(element(containing: "Whichever runs out first", in: app), in: app),
                       "the binding constraint must be stated")
-        XCTAssertTrue(element(containing: "Deployment assessment", in: app).exists,
+        XCTAssertTrue(reveal(element(containing: "Deployment assessment", in: app), in: app),
                       "the derived verdict must be announced as an assessment")
     }
 
-    // MARK: - 8. the device-generated pad is labelled honestly
+    // MARK: - 9. the device-generated pad is labelled honestly
 
-    /// The Create screen promises a device-generated pad reads NOT ELIGIBLE. This
-    /// checks the app keeps that promise on the device itself, because a warning
-    /// the product then contradicts is worse than no warning.
-    func test08_ADeviceGeneratedPadReadsNotEligible() {
+    /// The Create screen promises a device-generated pad reads NOT ELIGIBLE. A
+    /// warning the product then contradicts is worse than no warning.
+    func test09_ADeviceGeneratedPadReadsNotEligible() {
         let app = launchFresh()
         let label = uniqueLabel("verdict")
         createDisposablePad(app, label: label)
+        openPad(app, label: label)
 
-        element(beginningWith: label + ".", in: app).tap()
-        XCTAssertTrue(app.staticTexts["NOT ELIGIBLE"].waitForExistence(timeout: 30),
+        XCTAssertTrue(reveal(app.staticTexts["NOT ELIGIBLE"], in: app),
                       "the pad must read exactly what the Create screen promised")
     }
 }

@@ -98,13 +98,26 @@ build actually contains.
   across repeated cold starts and creates its app-private store under
   `Library/Application Support/TruePad`, with `Documents` left empty.
 
-  **Installed and launched is not validated.** The on-device state pass — pad
-  creation, send/open, burn-before-output across process death, destruction
-  staying terminal, receive-request one-time-ness across a relaunch, the
-  camera-permission sequence — has not run, because the handset would not enter
-  UI-automation mode. The UI-test bundle that drives it is written, signed and
-  built for the device and is committed at `ios/TruePadApp/TruePadAppUITests`.
-  The physical-device rows remain outstanding.
+  The on-device state pass now RUNS, through a committed XCUITest bundle at
+  `ios/TruePadApp/TruePadAppUITests`. Described by what it actually drives: pad
+  creation; a send whose consumption is still consumed after a force-quit; a
+  malformed message refused with NO pad material consumed; a REFUSED destruction
+  changing nothing; a receive request surviving a force-quit with its
+  cancellation terminal across a relaunch; no camera prompt from ordinary
+  navigation; the device-CSPRNG pad reading NOT ELIGIBLE; and the accessibility
+  labels on the elements that carry decisions.
+
+  **Three things it deliberately does not cover.** A COMPLETED destruction is not
+  reachable from the interface at all: confirming one means typing the pairId,
+  and TruePad never displays it — the operator is expected to know it from the
+  pad book, a `head.json` or the tombstone. A full send-then-open round trip on
+  one device is not driven either: the only route the interface offers for moving
+  the envelope is the system edit menu, and Copy/Paste did not land reliably
+  under XCUITest — the round trip is covered by the host suite, and what a
+  handset uniquely adds (durable consumption on APFS) is covered by the
+  force-quit test. And nothing here is a transfer between two parties: the
+  Android↔iPhone ceremony remains outstanding, as do human VoiceOver and
+  physical TPM.
   Neither platform is released; there is no App Store build and no 3.0 tag.
   **Physical mobile validation is outstanding on both** — the two-device
   Android↔iPhone ceremony, human TalkBack and human VoiceOver have not been

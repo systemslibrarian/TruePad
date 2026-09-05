@@ -171,6 +171,158 @@ final class AppShellRegressionTests: XCTestCase {
         }
     }
 
+    // MARK: - the handoff scratch file does not outlive the pad
+
+    /// FOUND BY AUDIT, CONFIRMED IN THE CODE. Handing a pad over wrote the WHOLE
+    /// pad to `tmp/pad.tpair` so the share sheet had something to pass along, and
+    /// nothing ever removed it — `ShareableFile`'s own comment said it was
+    /// "removed afterwards", which was the intent and not the code. The file
+    /// outlived `destroy`, which zero-overwrites inside the store and never looks
+    /// at `tmp/`.
+    func testTheHandoffScratchFilesAreSweptAway() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("truepad-scratch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Nothing there: a sweep must report nothing removed, so a caller can
+        // tell "there was none" from "the remove failed".
+        XCTAssertEqual(HandoffScratch.sweep(dir), 0)
+
+        for name in HandoffScratch.fileNames {
+            try Data("pad material".utf8).write(to: dir.appendingPathComponent(name))
+        }
+        XCTAssertEqual(HandoffScratch.sweep(dir), HandoffScratch.fileNames.count,
+                       "every known scratch name must be removed")
+        for name in HandoffScratch.fileNames {
+            XCTAssertFalse(FileManager.default.fileExists(atPath:
+                dir.appendingPathComponent(name).path), "\(name) must be gone")
+        }
+        // Idempotent — the launch sweep runs on every start.
+        XCTAssertEqual(HandoffScratch.sweep(dir), 0)
+    }
+
+    /// The sweep must not wander. It removes two known names and nothing else.
+    func testTheSweepTouchesOnlyTheNamesItOwns() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("truepad-scratch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let bystander = dir.appendingPathComponent("something-else.txt")
+        try Data("keep me".utf8).write(to: bystander)
+        try Data("x".utf8).write(to: dir.appendingPathComponent("pad.tpair"))
+
+        XCTAssertEqual(HandoffScratch.sweep(dir), 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: bystander.path),
+                      "the sweep must not delete files it does not own")
+    }
+
+    // MARK: - a published receive request is reachable after a restart
+
+    /// FOUND ON THE HANDSET. The Receive tab held the published request in memory
+    /// only, so a force-quit stranded a LIVE one-time key: still pending on disk,
+    /// and unreachable from the interface. The operator could not cancel it,
+    /// could not REJECT it after a failed word comparison, and could not show the
+    /// twelve words again. Rejecting is how a comparison that does not match is
+    /// supposed to end, and there was no way to do it.
+    func testAPendingReceiveRequestIsRecoveredAfterARestart() throws {
+        let fs = MemoryFs()
+        // TWO ENGINES OVER ONE STORE is the whole point: the second stands in for
+        // the process that comes back after a force-quit and shares no memory
+        // with the first.
+        let first = Engine(fs: fs, clock: { Date(timeIntervalSince1970: 0) })
+        let created = try first.sptCreateReceiveRequest()
+
+        let second = Engine(fs: fs, clock: { Date(timeIntervalSince1970: 0) })
+        let restored = try XCTUnwrap(try second.sptRestorePendingReceiveRequest(),
+                                     "a pending request must be recoverable from disk alone")
+
+        XCTAssertEqual(restored.requestIdHex, created.requestIdHex)
+        XCTAssertEqual(restored.requestHashHex, created.requestHashHex)
+        // THE PUBLISHED TEXT MUST BE BYTE-IDENTICAL. The sender scanned this; a
+        // restored request that re-encoded differently would be a different
+        // request, and the words would not match.
+        XCTAssertEqual(restored.tpr2Text, created.tpr2Text)
+        XCTAssertEqual(restored.requestIndices, created.requestIndices)
+        XCTAssertEqual(restored.expiresAt, created.expiresAt)
+        XCTAssertTrue(ReceiveRequestCodec.isCanonicalText(restored.tpr2Text))
+    }
+
+    /// AND A TERMINAL REQUEST IS NOT OFFERED BACK. Restoring a cancelled request
+    /// would hand the operator a screen for a one-time key that is already spent.
+    func testACancelledRequestIsNotRestored() throws {
+        let fs = MemoryFs()
+        let first = Engine(fs: fs, clock: { Date(timeIntervalSince1970: 0) })
+        let created = try first.sptCreateReceiveRequest()
+        _ = try first.sptCancelReceiveRequest(requestIdHex: created.requestIdHex)
+
+        let second = Engine(fs: fs, clock: { Date(timeIntervalSince1970: 0) })
+        XCTAssertNil(try second.sptRestorePendingReceiveRequest(),
+                     "a cancelled request is terminal and must not come back as pending")
+    }
+
+    /// An empty store restores nothing rather than inventing something.
+    func testAnEmptyStoreRestoresNoRequest() throws {
+        let engine = Engine(fs: MemoryFs(), clock: { Date(timeIntervalSince1970: 0) })
+        XCTAssertNil(try engine.sptRestorePendingReceiveRequest())
+    }
+
+    // MARK: - the decrypted message does not reach the pasteboard
+
+    /// The `Egress` enum had no case for the decrypted message, so the policy
+    /// that says "pad material NEVER reaches the clipboard" had nothing to say
+    /// about the one thing the pad exists to protect — and the Open screen
+    /// rendered it with `.textSelection(.enabled)`, which routes text to the
+    /// GENERAL pasteboard. That pasteboard is Universal-Clipboard-eligible, so
+    /// the plaintext could leave the handset for any Mac or iPad on the same
+    /// Apple ID.
+    func testPlaintextMayNotLeaveByAnyEgress() {
+        XCTAssertFalse(EgressPolicy.mayCopyToClipboard(.plaintext))
+        XCTAssertFalse(EgressPolicy.mayRenderAsQr(.plaintext))
+        XCTAssertFalse(EgressPolicy.mayShareAsFile(.plaintext))
+
+        // The other two classes are unchanged: an envelope is meant to be copied,
+        // and a courier bundle is meant to be handed over as a file.
+        XCTAssertTrue(EgressPolicy.mayCopyToClipboard(.publicText))
+        XCTAssertTrue(EgressPolicy.mayRenderAsQr(.publicText))
+        XCTAssertTrue(EgressPolicy.mayShareAsFile(.fileOnly))
+        XCTAssertFalse(EgressPolicy.mayCopyToClipboard(.fileOnly))
+        XCTAssertFalse(EgressPolicy.mayRenderAsQr(.fileOnly))
+    }
+
+    /// AND THE POLICY IS APPLIED, not merely declared.
+    ///
+    /// A symbol ban cannot catch this: `LeakageAuditTests` forbids `UIPasteboard`
+    /// in shipping source, and `.textSelection(.enabled)` is a declarative
+    /// modifier that reaches the same pasteboard without the banned symbol ever
+    /// appearing. So this asserts the modifier's ABSENCE at the one place that
+    /// renders plaintext.
+    func testTheOpenScreenDoesNotMakePlaintextSelectable() throws {
+        let file = PostureGuardTests.kitRoot
+            .appendingPathComponent("Sources/TruePadUI/MessageViews.swift")
+        let text = PostureGuardTests.stripComments(
+            try String(contentsOf: file, encoding: .utf8))
+
+        // The region that renders the decrypted message.
+        guard let start = text.range(of: "if let plaintext = model.plaintext") else {
+            return XCTFail("the Open screen no longer renders `model.plaintext` — "
+                           + "this guard is now looking at nothing")
+        }
+        let region = text[start.lowerBound...].prefix(700)
+        XCTAssertTrue(region.contains("Text(plaintext)"),
+                      "precondition: this region must be the one that renders the message")
+        XCTAssertFalse(region.contains("textSelection"),
+                       "the decrypted message must not be selectable — selection routes it to "
+                       + "the general pasteboard, which syncs across the operator's devices")
+
+        // POSITIVE CONTROL. The envelope IS selectable, so this probe can see a
+        // `textSelection` when one is present and is not passing vacuously.
+        XCTAssertTrue(text.contains("textSelection(.enabled)"),
+                      "the envelope must still be selectable — if nothing in this file is, the "
+                      + "check above proves nothing")
+    }
+
     // MARK: - the claims the UI makes about itself
 
     /// The About screen and the empty state both used to say TruePad "never

@@ -63,13 +63,18 @@ public struct PadListView: View {
                 }
             }
             .refreshable { model.reload() }
+            // ON THE LIST, NOT ON THE NAVIGATION STACK. Popping back from a pad's
+            // detail does not re-run the stack's onAppear, so the list could keep
+            // showing a snapshot taken before a destroy — a pad that is gone still
+            // reading as usable is the wrong direction for this screen to be
+            // wrong in.
+            .onAppear { model.reload() }
             .alert("TruePad refused", isPresented: $model.showingRefusal) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(model.refusalMessage ?? "")
             }
         }
-        .onAppear { model.reload() }
     }
 }
 
@@ -133,7 +138,7 @@ public struct PadDetailView: View {
         }
         .navigationTitle(model.label)
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(item: $model.fileToShare) { file in
+        .sheet(item: $model.fileToShare, onDismiss: { model.discardSharedFile() }) { file in
             ShareSheet(items: [file.url])
         }
         .alert("TruePad refused", isPresented: $model.showingRefusal) {

@@ -92,8 +92,13 @@ public final class PadListModel: ObservableObject {
     }
 }
 
-/// A file the operator is about to hand to something else. It exists on disk for
-/// as long as the share sheet needs it and is removed afterwards.
+/// A file the operator is about to hand to something else.
+///
+/// It exists on disk only for as long as the share sheet needs it: the presenting
+/// view removes it on dismiss, and the app sweeps for a leftover at launch in
+/// case the process died while the sheet was up. Removal is UNLINKING, not
+/// erasure — see `VerbatimText.destructionLimitation`, which applies to this file
+/// exactly as it applies to a pad.
 public struct ShareableFile: Identifiable, Equatable {
     public let url: URL
     public var id: URL { url }
@@ -161,6 +166,17 @@ public final class PadDetailModel: ObservableObject {
         } catch {
             refuse(error)
         }
+    }
+
+    /// Called when the share sheet goes away, however it goes away — handed off,
+    /// cancelled, or swiped down. The file is written BEFORE the sheet appears,
+    /// so cancelling still leaves a complete copy of the pad on disk unless this
+    /// runs.
+    public func discardSharedFile() {
+        if let file = fileToShare {
+            try? FileManager.default.removeItem(at: file.url)
+        }
+        fileToShare = nil
     }
 
     public func beginSealedTransfer() { /* presented by the ceremony flow */ }

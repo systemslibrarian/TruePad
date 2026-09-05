@@ -277,7 +277,8 @@ public struct SealView: View {
                 model.review(scanned)
             }
         }
-        .sheet(item: $model.fileToShare) { file in ShareSheet(items: [file.url]) }
+        .sheet(item: $model.fileToShare,
+               onDismiss: { model.discardSharedFile() }) { file in ShareSheet(items: [file.url]) }
         .alert("TruePad refused", isPresented: $model.showingRefusal) {
             Button("OK", role: .cancel) {}
         } message: {

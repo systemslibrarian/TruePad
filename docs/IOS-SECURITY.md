@@ -46,7 +46,7 @@ part of the point.
 | SwiftUI application layer | **BUILT**; security-carrying decisions tested, layout/VoiceOver are the human gate |
 | Native app target (`ios/TruePadApp`) | **BUILT** — Debug and Release for `generic/platform=iOS`, minimum OS 16.0 verified on the binary |
 | Installed/launched on a physical iPhone | **DONE** — installed and launched on an iPhone 12 running iOS 18.6.2; process stable across repeated cold starts, and app-private storage created under `Library/Application Support/TruePad` |
-| On-device state/lifecycle/camera pass | **OUTSTANDING** — the UI-test bundle is written and signs and builds for the handset, but the device refuses to enter automation mode (`Settings › Developer › Enable UI Automation`) |
+| On-device state/lifecycle/camera pass | **RUNS** on an iPhone 12 / iOS 18.6.2 via `ios/TruePadApp/TruePadAppUITests`. Covers lifecycle, durable consumption across a force-quit, a refused forgery consuming no pad material, a refused destruction, receive-request durability and terminal cancellation, and no camera prompt from ordinary navigation. A COMPLETED destruction and a full on-device round trip are NOT covered — see `REVIEWER-START-HERE.md` |
 | Human VoiceOver validation | **OUTSTANDING** (human gate) |
 | Physical iPhone validation | **OUTSTANDING** (hardware gate) — installation and launch are NOT the same as validation; see §11 |
 | Android↔iPhone two-device ceremony | **OUTSTANDING** (human gate) |
@@ -447,6 +447,75 @@ build carrying the cover installs, launches, backgrounds, and stays resident.
 
 ---
 
+### A published receive request outliving the screen that showed it
+
+**Found on the handset, by a test that could not pass.** The Receive tab held the
+published request in memory only. `request.json` and `dk.bin` were durable and
+nothing ever read them back, so a force-quit left a LIVE one-time key pending on
+disk that the interface could no longer reach.
+
+What that cost was not the key — the engine's one-time property held throughout,
+and `sptOpen` still read terminality from disk. What it cost was every operator
+action on it: the request could not be cancelled, the twelve words could not be
+shown again, and — the one that matters — it could not be **rejected**. Rejecting
+is how a word comparison that does not match is supposed to end, and there was no
+longer a way to do it. The key stayed pending until it expired or a package
+consumed it.
+
+`Engine.sptRestorePendingReceiveRequest()` now reads pending receiver state back
+from the store and the tab adopts it on launch. The decapsulation seed is
+deliberately **not** returned: everything above the engine needs the public
+request, its words and its expiry, and nothing above the engine has any business
+holding a private key. An expired or terminal request is not offered back.
+
+---
+
+### Two more copies iOS or SwiftUI makes, both closed
+
+The app-switcher snapshot above was the first of these found by putting the app
+on a handset. Auditing outward from it turned up two more. Both are the same
+shape: **a copy of protected material, made outside the store, by a mechanism the
+store's guarantees say nothing about.**
+
+**The handoff scratch file.** Handing a pad over writes the WHOLE pad — or a
+sealed package containing it — to a fixed name in the container's `tmp/` so the
+share sheet has something to pass to another app. Nothing removed it. The file
+was written BEFORE the sheet appeared, so cancelling still left it; and it
+outlived `destroy`, which zero-overwrites `secret.bin` and unlinks the half
+directories *inside* the store and never looks at `tmp/`. The engine believed the
+material was gone while a complete copy of it sat on the device. The comment on
+`ShareableFile` said the file "is removed afterwards", which was the intent and
+was not the code.
+
+It is now removed when the share sheet is dismissed — however it is dismissed —
+and swept at every launch, because a process that dies while the sheet is up
+never reaches the dismiss handler. **Removal is unlinking, not erasure**: the
+destruction limitation applies to this file exactly as it applies to a pad.
+
+There was no pad-reuse path through it — the pairId is tombstoned and `tmp/` is
+not reachable by any file picker (`UIFileSharingEnabled` and
+`LSSupportsOpeningDocumentsInPlace` are both false) — so this was residue, not a
+reuse failure.
+
+**Plaintext and the general pasteboard.** The Open screen rendered the decrypted
+message with `.textSelection(.enabled)`. That routes text to the GENERAL
+pasteboard, which is Universal-Clipboard-eligible: the one thing the pad exists
+to protect could be copied to any Mac or iPad signed into the same Apple ID.
+
+`LeakageAuditTests` bans the `UIPasteboard` symbol in shipping source, and a
+declarative SwiftUI modifier walked around that ban without the symbol ever
+appearing — which is the more general lesson: **a symbol ban does not cover a
+declarative equivalent.**
+
+The cause underneath was that `Egress` had no case for the decrypted message, so
+`EgressPolicy`'s rule that pad material never reaches the clipboard had nothing
+to say about plaintext, and `mayCopyToClipboard` was dead code no view consulted.
+`Egress.plaintext` now exists and is refused for clipboard, QR and file alike, and
+the Open screen no longer offers selection. The envelope on the Send screen keeps
+it: an envelope is `publicText`, and copying it is the workflow.
+
+---
+
 ## 7. Files, sharing, and extra physical copies
 
 A pad or a sealed package that leaves the app through the share sheet or Files
@@ -492,9 +561,15 @@ rounding up.
 
 The iOS Edition performs no network I/O, has no analytics, and logs no pad
 material, private request keys, plaintext, or ciphertext. Unlike Android there is
-no manifest permission to withhold, so this is enforced by build inspection and
-source audit rather than by a declaration — the release-binary inspection checks
-for network-capable symbols and for any debug logging on secret paths.
+no manifest permission to withhold, so this is enforced by source audit and build
+inspection rather than by a declaration. Attributed precisely, because an earlier
+version of this sentence credited the wrong mechanism:
+
+- **The no-logging rule is enforced by a TEST**, `LeakageAuditTests`, which runs
+  in CI over all five kit modules.
+- **The release-binary inspection checks NETWORK-capable symbols**, and KAT,
+  determinism, RSA and ASN.1 symbols. **It does not check for logging**, and no
+  script in this repository does.
 
 The source side of that is COMPLETE rather than sampled: every `.swift` file that
 ships — the app target and all five kit modules, 47 files — was scanned with
@@ -503,13 +578,24 @@ comments stripped for `print`, `debugPrint`, `dump`, `NSLog`, `os_log`, `Logger`
 substrings. **There are none.** Comments are stripped because prose about not
 logging must not be able to satisfy a check for logging.
 
-The binary side is checked over **every Mach-O image in the bundle**, not just
-the main executable. That distinction is load-bearing: a Swift Debug build emits
-`TruePad.debug.dylib` and leaves the executable a thin launcher, so a probe that
-reads only the executable sees ~120 symbols instead of ~115,000, and every
-"this symbol is absent" and "this framework is not linked" check passes
-vacuously. What caught it was the positive control — the vendored X-Wing symbols
-had to be FOUND and were not. Negative checks cannot detect their own vacuity.
+**A binary check for logging is not meaningful, and is deliberately not
+attempted.** Swift and SwiftUI force-load OSLog into any app that links them —
+`__swift_FORCE_LOAD_$_swiftOSLog_$_TruePad` is present in the Release binary, and
+`__os_log_impl` is among its imported symbols — whether or not a line of TruePad
+calls them. A binary probe therefore cannot distinguish the app's own logging
+from the runtime's, so claiming one would be a check that could never fail
+honestly. The source audit is where this property is actually established.
+
+The symbol checks that DO run are checked over **every Mach-O image in the
+bundle**, not just the main executable. That distinction is load-bearing: a Swift
+Debug build emits `TruePad.debug.dylib` and leaves the executable a thin
+launcher, so a probe that reads only the executable sees ~120 symbols instead of
+~115,000, and every "this symbol is absent" and "this framework is not linked"
+check passes vacuously. Release has no debug dylib — verified: one Mach-O image,
+77,220 symbols — which is why this survived until a Debug bundle was inspected on
+a handset. What caught it was the positive control: the vendored X-Wing symbols
+had to be FOUND and were not. **Negative checks cannot detect their own
+vacuity**; only a check that must fire can.
 
 What has NOT been done is a dynamic log capture from the handset: `log stream`
 on this macOS has no device mode, and `devicectl device sysdiagnose` fails
