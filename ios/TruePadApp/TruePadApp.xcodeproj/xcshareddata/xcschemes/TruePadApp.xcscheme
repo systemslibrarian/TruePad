@@ -5,8 +5,14 @@
     An unshared scheme lives in a per-user directory, which means CI and a
     reviewer would each get whatever Xcode invented for them. Committing it makes
     the launch configuration part of the reviewable surface: there is one scheme,
-    it runs the one target, and it carries no environment variables, no launch
-    arguments, and no diagnostic instrumentation.
+    it runs the SHIPPING target plus the UI-test bundle that drives it on a real
+    handset, and it carries no environment variables, no launch arguments, and no
+    diagnostic instrumentation.
+
+    The UI-test bundle is a TEST target: it is never linked into TruePad.app and
+    never ships. It exists because the properties that matter most — state
+    surviving process death, a destroyed pair staying destroyed — can only be
+    observed against a real container and a real Keychain.
 -->
 <Scheme
    LastUpgradeVersion = "1600"
@@ -37,6 +43,16 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
       <Testables>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "TP0000000000000000000024"
+               BuildableName = "TruePadAppUITests.xctest"
+               BlueprintName = "TruePadAppUITests"
+               ReferencedContainer = "container:TruePadApp.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

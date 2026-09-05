@@ -142,6 +142,35 @@ final class AppShellRegressionTests: XCTestCase {
                        "APFS should honour F_FULLFSYNC; if it did not, this flag is how you know")
     }
 
+    // MARK: - the screen is covered before iOS photographs it
+
+    /// FOUND ON A REAL HANDSET. `Library/SplashBoard/Snapshots/` existed in the
+    /// app's container and was being written on every background transition —
+    /// iOS renders the view hierarchy to a file when the app leaves the
+    /// foreground. TruePad shows decrypted plaintext on the Open screen, so that
+    /// file could hold the one thing the pad exists to protect, in a directory
+    /// the app does not own and outliving a force-quit.
+    func testTheScreenIsObscuredForEveryNonActivePhase() {
+        XCTAssertFalse(ScreenPrivacy.shouldObscure(.active),
+                       "an active app must not cover its own screen")
+
+        // THE ONE THAT MATTERS. The snapshot is taken during the .inactive
+        // transition, NOT after .background is reached. Covering only at
+        // .background leaves the plaintext in the file while making the
+        // app-switcher card look blank — the bug that inspects as fixed.
+        XCTAssertTrue(ScreenPrivacy.shouldObscure(.inactive),
+                      "the snapshot is taken while INACTIVE — covering later is too late")
+        XCTAssertTrue(ScreenPrivacy.shouldObscure(.background))
+    }
+
+    /// The rule is "cover unless active", not "cover if background". Stated as an
+    /// exhaustive switch so a new phase cannot be silently treated as safe.
+    func testOnlyTheActivePhaseIsUncovered() {
+        for visibility in [AppVisibility.active, .inactive, .background] {
+            XCTAssertEqual(ScreenPrivacy.shouldObscure(visibility), visibility != .active)
+        }
+    }
+
     // MARK: - the claims the UI makes about itself
 
     /// The About screen and the empty state both used to say TruePad "never

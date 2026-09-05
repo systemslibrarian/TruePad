@@ -52,12 +52,15 @@
 		TP0000000000000000000017 /* TruePadUI in Frameworks */ = {isa = PBXBuildFile; productRef = TP0000000000000000000014 /* TruePadUI */; };
 		TP0000000000000000000018 /* TruePadSPT in Frameworks */ = {isa = PBXBuildFile; productRef = TP0000000000000000000015 /* TruePadSPT */; };
 		TP0000000000000000000019 /* TruePadStorage in Frameworks */ = {isa = PBXBuildFile; productRef = TP0000000000000000000016 /* TruePadStorage */; };
+		TP0000000000000000000022 /* TruePadPhysicalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TP0000000000000000000021 /* TruePadPhysicalTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		TP0000000000000000000006 /* TruePad.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TruePad.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		TP0000000000000000000007 /* TruePadAppMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TruePadAppMain.swift; sourceTree = "<group>"; };
 		TP0000000000000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		TP0000000000000000000020 /* TruePadAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TruePadAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		TP0000000000000000000021 /* TruePadPhysicalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TruePadPhysicalTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -71,6 +74,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		TP0000000000000000000027 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -78,6 +88,7 @@
 			isa = PBXGroup;
 			children = (
 				TP0000000000000000000004 /* TruePadApp */,
+				TP0000000000000000000023 /* TruePadAppUITests */,
 				TP0000000000000000000003 /* Products */,
 				TP000000000000000000001A /* Frameworks */,
 			);
@@ -87,6 +98,7 @@
 			isa = PBXGroup;
 			children = (
 				TP0000000000000000000006 /* TruePad.app */,
+				TP0000000000000000000020 /* TruePadAppUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -98,6 +110,14 @@
 				TP0000000000000000000009 /* Info.plist */,
 			);
 			path = TruePadApp;
+			sourceTree = "<group>";
+		};
+		TP0000000000000000000023 /* TruePadAppUITests */ = {
+			isa = PBXGroup;
+			children = (
+				TP0000000000000000000021 /* TruePadPhysicalTests.swift */,
+			);
+			path = TruePadAppUITests;
 			sourceTree = "<group>";
 		};
 		TP000000000000000000001A /* Frameworks */ = {
@@ -132,7 +152,43 @@
 			productReference = TP0000000000000000000006 /* TruePad.app */;
 			productType = "com.apple.product-type.application";
 		};
+		TP0000000000000000000024 /* TruePadAppUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = TP0000000000000000000029 /* Build configuration list for PBXNativeTarget "TruePadAppUITests" */;
+			buildPhases = (
+				TP0000000000000000000026 /* Sources */,
+				TP0000000000000000000027 /* Frameworks */,
+				TP0000000000000000000028 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				TP000000000000000000002B /* PBXTargetDependency */,
+			);
+			name = TruePadAppUITests;
+			productName = TruePadAppUITests;
+			productReference = TP0000000000000000000020 /* TruePadAppUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXTargetDependency section */
+		TP000000000000000000002B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = TP0000000000000000000005 /* TruePadApp */;
+			targetProxy = TP000000000000000000002C /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXContainerItemProxy section */
+		TP000000000000000000002C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = TP0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = TP0000000000000000000005;
+			remoteInfo = TruePadApp;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXProject section */
 		TP0000000000000000000001 /* Project object */ = {
@@ -144,6 +200,10 @@
 				TargetAttributes = {
 					TP0000000000000000000005 = {
 						CreatedOnToolsVersion = 16.0;
+					};
+					TP0000000000000000000024 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = TP0000000000000000000005;
 					};
 				};
 			};
@@ -163,12 +223,20 @@
 			projectRoot = "";
 			targets = (
 				TP0000000000000000000005 /* TruePadApp */,
+				TP0000000000000000000024 /* TruePadAppUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		TP000000000000000000000C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		TP0000000000000000000028 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -183,6 +251,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				TP0000000000000000000008 /* TruePadAppMain.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		TP0000000000000000000026 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				TP0000000000000000000022 /* TruePadPhysicalTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -282,6 +358,38 @@
 			};
 			name = Release;
 		};
+		TP000000000000000000002D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 3.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.systemslibrarian.truepad.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = TruePadApp;
+			};
+			name = Debug;
+		};
+		TP000000000000000000002E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 3.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.systemslibrarian.truepad.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = TruePadApp;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -299,6 +407,15 @@
 			buildConfigurations = (
 				TP0000000000000000000011 /* Debug */,
 				TP0000000000000000000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		TP0000000000000000000029 /* Build configuration list for PBXNativeTarget "TruePadAppUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				TP000000000000000000002D /* Debug */,
+				TP000000000000000000002E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -45,9 +45,10 @@ part of the point.
 | TP2 compact envelope transport | **BUILT**, byte-exact vs the released corpus; `open` takes either spelling |
 | SwiftUI application layer | **BUILT**; security-carrying decisions tested, layout/VoiceOver are the human gate |
 | Native app target (`ios/TruePadApp`) | **BUILT** — Debug and Release for `generic/platform=iOS`, minimum OS 16.0 verified on the binary |
-| Installed/launched on a physical iPhone | **OUTSTANDING** — blocked on a local Apple ID for development signing, not on code |
+| Installed/launched on a physical iPhone | **DONE** — installed and launched on an iPhone 12 running iOS 18.6.2; process stable across repeated cold starts, and app-private storage created under `Library/Application Support/TruePad` |
+| On-device state/lifecycle/camera pass | **OUTSTANDING** — the UI-test bundle is written and signs and builds for the handset, but the device refuses to enter automation mode (`Settings › Developer › Enable UI Automation`) |
 | Human VoiceOver validation | **OUTSTANDING** (human gate) |
-| Physical iPhone validation | **OUTSTANDING** (hardware gate) |
+| Physical iPhone validation | **OUTSTANDING** (hardware gate) — installation and launch are NOT the same as validation; see §11 |
 | Android↔iPhone two-device ceremony | **OUTSTANDING** (human gate) |
 
 A claim in this document about an unbuilt component is a **specification**, not
@@ -409,6 +410,43 @@ NOT.
 
 ---
 
+### The app-switcher snapshot — a copy iOS makes, not one TruePad writes
+
+**Observed on a real iPhone 12, not inferred.** When TruePad leaves the
+foreground, iOS renders the view hierarchy and writes it into the app's own
+container at:
+
+```
+Library/SplashBoard/Snapshots/sceneID:dev.systemslibrarian.truepad-default/*.ktx
+```
+
+Six such files were written during one backgrounding on the handset, including a
+`downscaled/` variant. This is normal iOS behaviour and it is what draws the
+app-switcher card — but it means **whatever is on screen becomes a file**.
+
+That matters here specifically because TruePad displays a decrypted message on
+the Open screen and a message being composed on the Send screen. A snapshot of
+either is plaintext at rest: it is outside the store, so the store's
+`.completeUnlessOpen` protection class and its backup exclusion do not describe
+it, and it survives a force-quit.
+
+**What TruePad does about it.** `TruePadRootView` covers the interface whenever
+the scene is not `active`, including the sheet it presents, so the render iOS
+captures is the cover rather than the content. The rule is in `ScreenPrivacy`,
+which is tested — the important part being that it fires on `inactive` and not
+only on `background`, because the snapshot is taken during that transition.
+Covering only at `background` produces an app-switcher card that looks blank
+while the file on disk still holds the plaintext.
+
+**What this does NOT claim.** It does not remove snapshots iOS has already
+written, it does not stop a screenshot the operator takes deliberately, and the
+*contents* of a post-fix snapshot have not been decoded and inspected on the
+handset — that needs the on-device UI pass that is still outstanding. What was
+verified on hardware is that the snapshot files are written at all, and that the
+build carrying the cover installs, launches, backgrounds, and stays resident.
+
+---
+
 ## 7. Files, sharing, and extra physical copies
 
 A pad or a sealed package that leaves the app through the share sheet or Files
@@ -458,6 +496,27 @@ no manifest permission to withhold, so this is enforced by build inspection and
 source audit rather than by a declaration — the release-binary inspection checks
 for network-capable symbols and for any debug logging on secret paths.
 
+The source side of that is COMPLETE rather than sampled: every `.swift` file that
+ships — the app target and all five kit modules, 47 files — was scanned with
+comments stripped for `print`, `debugPrint`, `dump`, `NSLog`, `os_log`, `Logger`,
+`OSLog`, `OSLogStore` and the common analytics SDK names, as CALLS rather than as
+substrings. **There are none.** Comments are stripped because prose about not
+logging must not be able to satisfy a check for logging.
+
+The binary side is checked over **every Mach-O image in the bundle**, not just
+the main executable. That distinction is load-bearing: a Swift Debug build emits
+`TruePad.debug.dylib` and leaves the executable a thin launcher, so a probe that
+reads only the executable sees ~120 symbols instead of ~115,000, and every
+"this symbol is absent" and "this framework is not linked" check passes
+vacuously. What caught it was the positive control — the vendored X-Wing symbols
+had to be FOUND and were not. Negative checks cannot detect their own vacuity.
+
+What has NOT been done is a dynamic log capture from the handset: `log stream`
+on this macOS has no device mode, and `devicectl device sysdiagnose` fails
+against this device with the same error class as the UI-automation refusal. So
+the no-logging claim rests on complete source and binary evidence, and not on an
+observed device log.
+
 ---
 
 ## 10. Destruction
@@ -497,7 +556,13 @@ true` through every parse failure. LOSS IS ACCEPTABLE; REUSE IS NOT.
 
 ## 11. What the iOS Edition does NOT claim today
 
-- No physical validation on an iPhone. **OUTSTANDING.**
+- No physical *validation* on an iPhone. The app has been **installed and
+  launched on an iPhone 12 running iOS 18.6.2**, and that is all that phrase
+  covers: the process starts, stays up, and creates its container. The state
+  pass — pad creation, send/open, burn-before-output across process death,
+  destruction staying terminal, receive-request one-time-ness across a relaunch,
+  and the camera-permission sequence — has **NOT** run on hardware, because the
+  handset would not enter UI-automation mode. **OUTSTANDING.**
 - No human VoiceOver validation. Automated accessibility checks are not a
   substitute. **OUTSTANDING.**
 - No two-device Android↔iPhone optical ceremony. **OUTSTANDING.**

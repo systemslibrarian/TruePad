@@ -19,6 +19,11 @@ import TruePadStorage
 public struct TruePadRootView: View {
     @StateObject private var pads: PadListModel
     @StateObject private var receive: ReceiveRequestModel
+    // THE COVER LIVES HERE, not in the app target. A shell that forgot to apply
+    // it would be a shell that leaks plaintext to disk, and "every shell must
+    // remember" is not a property — it is a hope. Putting it at the root means
+    // every consumer of TruePadRootView gets it by construction.
+    @Environment(\.scenePhase) private var scenePhase
     private let engine: Engine
 
     public init(engine: Engine) {
@@ -43,7 +48,64 @@ public struct TruePadRootView: View {
             .tabItem { Label("About", systemImage: "info.circle") }
         }
         .sheet(isPresented: $pads.creating) {
+            // The cover is applied to the sheet's content TOO. An overlay on the
+            // TabView does not extend over a presented sheet, so without this the
+            // one screen that is modally on top would be the one screen still
+            // captured.
             CreatePadView(model: CreatePadModel(engine: engine))
+                .modifier(PrivacyCoverModifier(visibility: visibility))
+        }
+        .modifier(PrivacyCoverModifier(visibility: visibility))
+    }
+
+    /// SwiftUI's `ScenePhase` mapped to the decision type in Presentation.swift,
+    /// which is where it can be tested. `@unknown default` is treated as NOT
+    /// active: a phase this build does not recognise is exactly when to cover the
+    /// screen rather than to guess.
+    private var visibility: AppVisibility {
+        switch scenePhase {
+        case .active: return .active
+        case .inactive: return .inactive
+        case .background: return .background
+        @unknown default: return .inactive
+        }
+    }
+}
+
+/// An opaque cover, shown whenever the scene is not active.
+///
+/// WHAT IT IS FOR: the image iOS writes to disk when the app leaves the
+/// foreground is a render of the view hierarchy, so covering the hierarchy is
+/// what changes the file. It is not cosmetic, and it is not about the
+/// app-switcher card looking tidy.
+///
+/// WHAT IT DOES NOT DO: it does not remove snapshots iOS has ALREADY written,
+/// and it does not protect against a screenshot the operator takes deliberately
+/// while the app is active. Neither is in scope for a cover, and saying so is
+/// better than implying the screen is now private in general.
+struct PrivacyCoverModifier: ViewModifier {
+    let visibility: AppVisibility
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if ScreenPrivacy.shouldObscure(visibility) {
+                ZStack {
+                    // OPAQUE, and drawn beyond the safe area: a translucent or
+                    // inset cover still renders the content underneath into the
+                    // snapshot.
+                    Rectangle()
+                        .fill(Color(.systemBackground))
+                        .ignoresSafeArea()
+                    VStack(spacing: 10) {
+                        Image(systemName: "lock.shield")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.secondary)
+                        Text("TruePad").font(.headline)
+                    }
+                }
+                .transition(.identity)
+                .accessibilityHidden(true)
+            }
         }
     }
 }

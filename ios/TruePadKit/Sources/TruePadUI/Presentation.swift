@@ -120,6 +120,41 @@ public enum SptConstantsBridge {
 /// from `swift test` on macOS — a safety gate with no test. They live here now,
 /// where this file's whole purpose is that its decisions are testable without a
 /// device.
+/// WHETHER THE SCREEN MUST BE COVERED, as a decision rather than a SwiftUI
+/// detail — so it is testable by `swift test`, which cannot run a view.
+///
+/// iOS RENDERS THE APP TO DISK WHEN IT LEAVES THE FOREGROUND. The image goes to
+/// `Library/SplashBoard/Snapshots/` inside the container, so whatever was on
+/// screen is written out as a picture: the app-switcher card, and a file that
+/// outlives a force-quit. That was observed on a real handset — the directory
+/// exists and is written on every background transition.
+///
+/// TruePad displays decrypted plaintext (the Open screen) and a message being
+/// composed (the Send screen). Those are precisely what the one-time pad exists
+/// to protect, and a snapshot of them is a copy the store's protection class
+/// never covers, in a directory the app does not own.
+public enum AppVisibility {
+    case active
+    case inactive
+    case background
+}
+
+public enum ScreenPrivacy {
+    /// THE `.inactive` CASE IS THE WHOLE POINT. iOS takes the snapshot during the
+    /// transition, while the scene is INACTIVE — not after it reaches
+    /// `.background`. Covering only at `.background` is the standard version of
+    /// this bug: it looks correct, the app-switcher card looks blank in casual
+    /// testing, and the snapshot on disk still has the plaintext in it.
+    ///
+    /// `.inactive` also covers the cases that are not backgrounding at all — the
+    /// control centre pulled down, a call banner, the app-switcher opened and
+    /// dismissed — where the screen is visible to someone who is not holding an
+    /// unlocked phone.
+    public static func shouldObscure(_ visibility: AppVisibility) -> Bool {
+        visibility != .active
+    }
+}
+
 public enum CeremonyPhrase {
     /// Twelve request words and eight confirmation words. These come from the
     /// 11-bit index counts the protocol fixes; they are not layout choices.

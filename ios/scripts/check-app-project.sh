@@ -307,18 +307,50 @@ else
     if [ ! -f "$BIN" ]; then
         fail "no executable found inside $BUILT_APP"
     else
-        SYMS="$(mktemp)"; LINKED="$(mktemp)"
-        trap 'rm -f "$SYMS" "$LINKED"' EXIT
+        SYMS="$(mktemp)"; LINKED="$(mktemp)"; IMAGES="$(mktemp)"
+        trap 'rm -f "$SYMS" "$LINKED" "$IMAGES"' EXIT
+
+        # EVERY Mach-O IN THE BUNDLE, not just the main executable.
+        #
+        # This was wrong, and it was wrong in the direction that matters. A Swift
+        # DEBUG build emits `TruePad.debug.dylib` and leaves the executable a thin
+        # launcher, so `nm` on the executable returned a stub's symbol table and
+        # `otool -L` returned one line. Every NEGATIVE check here — no SwiftASN1,
+        # no _CryptoExtras, does not link Network.framework — then passed because
+        # the probe was reading the wrong file, not because the thing was absent.
+        # Release builds have no debug dylib, which is why this survived until a
+        # Debug bundle was first inspected on a handset.
+        #
+        # What caught it was the POSITIVE control below: X-Wing had to be FOUND,
+        # and it was not. Negative checks cannot detect their own vacuity; only a
+        # check that must fire can. That is why the positive control is here.
+        find "$BUILT_APP" -type f -perm -u+r > "$IMAGES.all" 2>/dev/null || true
+        : > "$IMAGES"
+        while IFS= read -r candidate; do
+            case "$(file -b "$candidate" 2>/dev/null)" in
+                *Mach-O*) printf '%s\n' "$candidate" >> "$IMAGES" ;;
+            esac
+        done < "$IMAGES.all"
+        rm -f "$IMAGES.all"
+
+        IMAGE_COUNT="$(wc -l < "$IMAGES" | tr -d ' ')"
+        if [ "$IMAGE_COUNT" -lt 1 ]; then
+            fail "no Mach-O images found in $BUILT_APP — the probe is not working"
+        fi
+
         # Captured to FILES, then searched. `grep -q` on a large pipe under
         # `pipefail` reports failure when grep exits early on a match, which
         # silently inverts every "does it contain X" test.
-        nm -a "$BIN" > "$SYMS" 2>/dev/null || true
-        otool -L "$BIN" > "$LINKED" 2>/dev/null || true
+        : > "$SYMS"; : > "$LINKED"
+        while IFS= read -r image; do
+            nm -a "$image" >> "$SYMS" 2>/dev/null || true
+            otool -L "$image" >> "$LINKED" 2>/dev/null || true
+        done < "$IMAGES"
 
         if [ "$(wc -l < "$SYMS")" -lt 100 ]; then
             fail "only $(wc -l < "$SYMS") symbols read — the probe is not working"
         else
-            pass "the symbol probe works ($(wc -l < "$SYMS") symbols)"
+            pass "the symbol probe works ($(wc -l < "$SYMS") symbols across $IMAGE_COUNT Mach-O image(s))"
         fi
 
         # PRECISE names. `eseed` alone would match CTR_DRBG_reseed.

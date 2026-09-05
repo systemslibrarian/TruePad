@@ -73,7 +73,7 @@ review brief; its count is not restated here, because a number quoted without
 being re-run is exactly the kind of stale claim this page exists to avoid.
 
 The mobile editions carry their own suites: **Android 184 JVM + 19 app unit
-tests**, and **iOS 307 tests** (`swift test --package-path ios/TruePadKit`), plus
+tests**, and **iOS 325 tests** (`swift test --package-path ios/TruePadKit`), plus
 the iOS supply-chain and isolation gates in `ios/scripts/` and `ios/vendor/`. The
 iOS suite also runs under AddressSanitizer and ThreadSanitizer on every push, and
 CI checks the generated SBOM against the tree and inspects what a device Release
@@ -93,11 +93,18 @@ build actually contains.
   byte-identical to the frozen wire in all four cross-edition directions. There is
   now a **native app target** at `ios/TruePadApp` — a plain committed `.xcodeproj`
   with one target, one source file and an explicit Info.plist — which BUILDS for
-  `generic/platform=iOS` in Debug and Release. It has **not been installed on a
-  physical iPhone**: that is blocked on adding an Apple ID to Xcode for
-  development signing, which is a local account action rather than a code
-  problem. Building for a device is not the same as running on one, and the
-  physical-device rows remain outstanding.
+  `generic/platform=iOS` in Debug and Release. It has now been **installed and
+  launched on an iPhone 12 running iOS 18.6.2**, where the process is stable
+  across repeated cold starts and creates its app-private store under
+  `Library/Application Support/TruePad`, with `Documents` left empty.
+
+  **Installed and launched is not validated.** The on-device state pass — pad
+  creation, send/open, burn-before-output across process death, destruction
+  staying terminal, receive-request one-time-ness across a relaunch, the
+  camera-permission sequence — has not run, because the handset would not enter
+  UI-automation mode. The UI-test bundle that drives it is written, signed and
+  built for the device and is committed at `ios/TruePadApp/TruePadAppUITests`.
+  The physical-device rows remain outstanding.
   Neither platform is released; there is no App Store build and no 3.0 tag.
   **Physical mobile validation is outstanding on both** — the two-device
   Android↔iPhone ceremony, human TalkBack and human VoiceOver have not been
