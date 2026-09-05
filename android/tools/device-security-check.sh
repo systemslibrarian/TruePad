@@ -74,11 +74,38 @@ note "installing"
 
 # ---------------------------------------------------------------- 1. sandbox --
 note "app sandbox"
+#
+# CREATE STATE FIRST. `pm clear` above wipes the data directory, and files/ and
+# no_backup/ are created LAZILY on first pad generation — not at launch. Probing
+# them three seconds after `am start` was a race against startup I/O that this
+# script happened to win until it did not; the same lazy-creation assumption was
+# already corrected once in physical-device-check.sh.
+#
+# Generating a pad first makes the probe deterministic AND makes it mean more:
+# what is being checked is that the store and the witness land in two DIFFERENT
+# top-level domains, which is what makes a restore detectable. That is only
+# observable once something is actually in them.
+"$ADB" shell am instrument -w \
+  -e class 'dev.systemslibrarian.truepad.app.DeviceEngineTest#aFreshEngineOverTheSameDirectoriesSeesEverythingThatWasCommitted' \
+  "$RUNNER" 2>&1 | grep -q '^OK' && ok "a pad was generated on the device, so the storage domains exist" \
+  || bad "could not create on-device state; the sandbox probe below would be vacuous"
+
 "$ADB" shell am start -n "$PKG/.app.MainActivity" >/dev/null
 sleep 3
-dirs="$("$ADB" shell run-as "$PKG" ls -ld files no_backup 2>&1 || true)"
-echo "$dirs" | grep -q '^drwx' && ok "app-private directories exist" || bad "app-private directories missing: $dirs"
-
+# Probe with run-as using a DIRECT command, not `sh -c`: on some devices a run-as
+# shell starts in / while a direct command inherits the app-home cwd.
+store_dom="$("$ADB" shell run-as "$PKG" ls -ld files 2>&1 | tr -d '\r' || true)"
+witness_dom="$("$ADB" shell run-as "$PKG" ls -ld no_backup 2>&1 | tr -d '\r' || true)"
+if printf '%s' "$store_dom" | grep -q 'files'; then
+  ok "store domain files/ exists in the app sandbox"
+else
+  bad "store domain files/ not found: ${store_dom:-<none>}"
+fi
+if printf '%s' "$witness_dom" | grep -q 'no_backup'; then
+  ok "witness domain no_backup/ exists (excluded from Auto Backup and device transfer)"
+else
+  bad "witness domain no_backup/ not found: ${witness_dom:-<none>}"
+fi
 perms="$("$ADB" shell run-as "$PKG" stat -c '%A %n' files no_backup 2>&1 || true)"
 if echo "$perms" | grep -qE 'drwx(rwx|------)'; then
   ok "data directories are not world-readable ($(echo "$perms" | tr '\n' ' '))"
