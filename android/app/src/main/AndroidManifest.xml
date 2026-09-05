@@ -13,7 +13,31 @@
   CAMERA and the signature-level self-permission — never INTERNET.
 
   NO exported component except the launcher activity, which must be exported to
-  appear in the launcher at all. No service, no receiver, NO PROVIDER.
+  appear in the launcher at all. No service, no receiver, and no provider OF
+  TRUEPAD'S OWN.
+
+  COMPONENTS THAT ARRIVE BY MERGE — the whole list, read back off the built
+  release APK rather than recalled, because a partial list reads as a complete
+  one:
+
+    activity  dev.systemslibrarian.truepad.app.MainActivity      (ours; the launcher)
+    activity  com.google.android.gms.common.api.GoogleApiActivity (Play Services)
+    service   androidx.camera.core.impl.MetadataHolderService     (CameraX)
+    service   com.google.mlkit.common.internal.MlKitComponentDiscoveryService
+    provider  androidx.startup.InitializationProvider
+    provider  com.google.mlkit.common.internal.MlKitInitProvider
+
+  MlKitInitProvider is not removable: deleting it was tried, and ML Kit then
+  throws "MlKitContext has not been initialized", so it is load-bearing rather
+  than incidental. Everything above except our own launcher is
+  android:exported="false", and ManifestHardeningTest pins the exported flag on
+  every one of them plus the providers' package-scoped authorities by name.
+
+  Three MORE components were merged in and have been DELETED — see the
+  datatransport block below. They were a telemetry uploader. The property that matters is unchanged and is the reason the
+  app has no FileProvider: there is no authority that can resolve a URI into the
+  pad store. An earlier version of this comment said "NO PROVIDER" flatly, which
+  stopped being true the moment the scanner dependency changed.
 
   NO FileProvider. Export writes through the Storage Access Framework to a
   location the operator chose, and sharing an encrypted message uses ACTION_SEND
@@ -30,7 +54,7 @@
 
     <!--
       CAMERA — the ONLY capability-granting permission. It is used exclusively to
-      scan a receive-code QR: the camera frames are analysed in-process by ZXing
+      scan a receive-code QR: the camera frames are analysed in-process by ML Kit
       and discarded, they never leave the device (there is no INTERNET to carry
       them), and the camera is bound to the scan screen's own lifecycle so it is
       released the instant that screen leaves. The feature is NOT required, so a
@@ -38,6 +62,34 @@
     -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+    <!--
+      REMOVED, NOT MERELY UNDECLARED.
+
+      The barcode scanner is ML Kit's BUNDLED model, chosen because ZXing could
+      not resolve a 139-module code off another phone's screen on real hardware.
+      That library arrives with the Google Play Services client stack
+      (play-services-basement/-base/-tasks) and Google's datatransport stack
+      attached. The permissions come from datatransport, not from Play Services
+      proper: transport-backend-cct declares INTERNET and ACCESS_NETWORK_STATE,
+      transport-runtime declares ACCESS_NETWORK_STATE. (play-services-basement
+      declares none; an earlier version of this comment blamed it.) Manifest
+      merging is a union: a library permission lands in the shipping APK whether
+      or not this file mentions it, and the release APK was in fact built asking
+      for both before these two lines existed.
+
+      Saying "TruePad has no network" in a comment does not make it so once a
+      dependency says otherwise. These entries delete both permissions from the
+      merged result, so the guarantee is enforced by the OS — the process cannot
+      open a socket even if some transitive code path tries — rather than
+      asserted by documentation. The scanner keeps working because the model is
+      an asset inside the APK (assets/mlkit_barcode_models/*.tflite): nothing is
+      fetched, so nothing needs a network to fetch it. That is verified on a
+      handset, not assumed, and verifyReleaseManifest fails the build if either
+      permission ever reappears.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
 
     <application
         android:name=".TruePadApp"
@@ -99,5 +151,35 @@
             android:name="androidx.profileinstaller.ProfileInstallReceiver"
             tools:node="remove"
             tools:ignore="MissingClass" />
-    </application>
+    
+        <!--
+          ML KIT'S TELEMETRY UPLOADER, DELETED.
+
+          Inspecting the built release APK turned up
+          MLKitLoggingOptions{libraryName=common, enableFirelog=true}, a
+          CctBackendFactory (Google's Clearcut transport), a JobScheduler service
+          and an AlarmManager receiver. That is a scheduled uploader, switched on
+          by default, merged into an app whose About screen tells the operator
+          there is no analytics and no crash reporting. Nobody chose it; it
+          arrived with the barcode decoder.
+
+          Removing INTERNET already means nothing can reach the network. These
+          three entries remove the uploader's ENTRY POINTS as well, so no job is
+          ever scheduled and no broadcast ever wakes it. The classes remain in the
+          APK — ML Kit references them directly and dropping the artifact fails R8
+          with eight missing-class errors — but nothing can start them.
+
+          ScannerOfflineTest proves on a handset that decoding still works with
+          these gone, which is the only reason they are safe to remove.
+        -->
+        <service
+            android:name="com.google.android.datatransport.runtime.backends.TransportBackendDiscovery"
+            tools:node="remove" />
+        <service
+            android:name="com.google.android.datatransport.runtime.scheduling.jobscheduling.JobInfoSchedulerService"
+            tools:node="remove" />
+        <receiver
+            android:name="com.google.android.datatransport.runtime.scheduling.jobscheduling.AlarmManagerSchedulerBroadcastReceiver"
+            tools:node="remove" />
+</application>
 </manifest>

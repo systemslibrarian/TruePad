@@ -38,7 +38,10 @@ import com.google.zxing.qrcode.encoder.Encoder
 
 private const val QUIET_MODULES = 4
 
-private fun tprQrBitmap(text: String): Bitmap {
+// `internal`, not `private`, so ScannerOfflineTest can render through the SHIPPING
+// encoder rather than a copy of it. A duplicated encoder in the test would prove
+// the test's own QR is decodable and say nothing about the one the app draws.
+internal fun tprQrBitmap(text: String): Bitmap {
     // ISO-8859-1 keeps the ASCII base64url bytes one-to-one and selects byte mode.
     val hints = mapOf<EncodeHintType, Any>(EncodeHintType.CHARACTER_SET to "ISO-8859-1")
     val qr = Encoder.encode(text, ErrorCorrectionLevel.M, hints)

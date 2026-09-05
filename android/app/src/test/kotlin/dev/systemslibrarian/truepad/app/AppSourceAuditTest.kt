@@ -164,22 +164,50 @@ class AppSourceAuditTest {
             }
         }
         val manifestText = xmlCode(manifest)
-        assertFalse("no INTERNET permission", manifestText.contains("android.permission.INTERNET"))
+
+        // A <uses-permission> entry is not automatically a REQUEST for one. An
+        // entry carrying tools:node="remove" deletes a permission that a library
+        // contributed during manifest merge, and TruePad has two of those: ML
+        // Kit's Play Services dependency declares INTERNET and
+        // ACCESS_NETWORK_STATE in its own manifest, merging is a union, and the
+        // release APK really was built asking for both before those lines existed.
+        //
+        // So this reads the manifest the way the MERGER does, splitting the
+        // entries into what is asked for and what is deleted. A substring search
+        // for "android.permission.INTERNET" cannot tell the two apart — it is
+        // true of a manifest that requests it and equally true of one that
+        // removes it — which would have turned this assertion into a check that
+        // passes hardest exactly when the permission is being handled correctly.
+        val entries = Regex("<uses-permission\\b[^>]*>").findAll(manifestText).map { it.value }.toList()
+        fun namesIn(list: List<String>) =
+            list.mapNotNull { Regex("android:name=\"([^\"]+)\"").find(it)?.groupValues?.get(1) }
+        val requested = namesIn(entries.filterNot { it.contains("tools:node=\"remove\"") })
+        val removed = namesIn(entries.filter { it.contains("tools:node=\"remove\"") })
+
+        assertFalse("no INTERNET permission", requested.contains("android.permission.INTERNET"))
         assertFalse(
             "no network-state permission",
-            manifestText.contains("android.permission.ACCESS_NETWORK_STATE"),
+            requested.contains("android.permission.ACCESS_NETWORK_STATE"),
         )
         // Exactly one capability-granting permission is allowed — CAMERA, to scan
         // a receive-code QR — and nothing else. Enumerate every uses-permission in
         // the source manifest and require each to be that one; a second permission
         // (or a sneaked-in INTERNET) fails here, in a plain JVM test, before any
         // device is involved.
-        val permissions = Regex("<uses-permission[^>]*android:name=\"([^\"]+)\"")
-            .findAll(manifestText).map { it.groupValues[1] }.toList()
         assertEquals(
-            "the source manifest declares only CAMERA",
+            "the source manifest requests only CAMERA",
             listOf("android.permission.CAMERA"),
-            permissions,
+            requested,
+        )
+        // AND THE REMOVALS MUST STILL BE THERE. Without this the audit would pass
+        // on a manifest that simply dropped both lines, which is the one edit that
+        // silently puts INTERNET back into the shipping APK without touching any
+        // Kotlin. verifyReleaseManifest catches it on the merged manifest; this
+        // catches it here, in a plain JVM test, before a build is even made.
+        assertEquals(
+            "the manifest must explicitly delete the two permissions ML Kit merges in",
+            listOf("android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE").sorted(),
+            removed.sorted(),
         )
         assertTrue("cleartext traffic is off", manifestText.contains("android:usesCleartextTraffic=\"false\""))
     }

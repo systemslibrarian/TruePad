@@ -42,8 +42,16 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // No native code, no split configs, no locale stripping: nothing here
-        // needs them, and each is a knob that can go wrong quietly.
+        // No split configs, no locale stripping: nothing here needs them, and each
+        // is a knob that can go wrong quietly.
+        //
+        // NATIVE CODE IS NO LONGER ABSENT, and saying otherwise would be false.
+        // ML Kit's bundled barcode decoder ships .so libraries, and they are what
+        // parses camera frames — untrusted input from outside the app. That is a
+        // real change in exposure from the pure-Java ZXing decoder it replaced,
+        // and it is accepted only because ZXing could not read a receive code off
+        // a screen on real hardware. It is recorded in docs/THIRD-PARTY-NOTICES.md
+        // rather than left as a silent difference.
         vectorDrawables.useSupportLibrary = false
     }
 
@@ -183,11 +191,20 @@ val verifyReleaseManifest = tasks.register("verifyReleaseManifest") {
             "android.permission.CAMERA",
             "dev.systemslibrarian.truepad.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
         )
-        val uses = xml.getElementsByTagName("uses-permission")
-        for (i in 0 until uses.length) {
-            val name = attr(uses.item(i), "name") ?: continue
+        // EVERY TAG THAT CAN REQUEST A PERMISSION, not just the common one.
+        // `uses-permission-sdk-23` asks for a permission from API 23 up and is a
+        // separate element name, so a library contributing one was invisible here
+        // — and a tools:node="remove" written for `uses-permission` would not
+        // strip it either. Both names are checked so neither can be the quiet way in.
+        val permissionTags = listOf("uses-permission", "uses-permission-sdk-23")
+        val uses = permissionTags.flatMap { tag ->
+            val nodes = xml.getElementsByTagName(tag)
+            (0 until nodes.length).map { tag to nodes.item(it) }
+        }
+        for ((tag, node) in uses) {
+            val name = attr(node, "name") ?: continue
             if (name !in allowedPermissions) {
-                problems += "uses-permission: $name"
+                problems += "$tag: $name"
             }
         }
 
@@ -217,6 +234,29 @@ dependencies {
     // with CameraX for the preview and frame analysis. Reached only by the
     // sealed-transfer screens; the strict TPR2 parser validates every scan.
     implementation(libs.zxing.core)
+    // ML Kit barcode scanning, BUNDLED model. See libs.versions.toml: ZXing could
+    // not read a receive code off another phone's screen during the two-device
+    // ceremony. Bundled means the model ships in the APK as a .tflite asset — no
+    // network, no Play Services fetch.
+    //
+    // THE TELEMETRY BACKEND IS EXCLUDED, and that is not cosmetic. ML Kit carries
+    // Google's datatransport stack, and an inspection of the built release APK
+    // found `MLKitLoggingOptions{libraryName=common, enableFirelog=true}`, a
+    // CctBackendFactory (Clearcut), a JobInfoSchedulerService and an
+    // AlarmManagerSchedulerBroadcastReceiver — a scheduled uploader, switched on,
+    // inside an app whose About screen tells the operator there is no analytics
+    // and no crash reporting.
+    //
+    // Removing INTERNET already stops anything reaching the network. The manifest
+    // goes further and deletes the uploader's ENTRY POINTS — see the
+    // datatransport block in AndroidManifest.xml — because a scheduled job that
+    // wakes up to attempt a send is still a component the app did not ask for and
+    // did not tell the operator about.
+    //
+    // The dependency itself cannot be excluded: ML Kit references these classes
+    // directly, and dropping the artifact fails R8 with eight missing-class
+    // errors. So the classes stay and the components go.
+    implementation(libs.mlkit.barcode.scanning)
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)

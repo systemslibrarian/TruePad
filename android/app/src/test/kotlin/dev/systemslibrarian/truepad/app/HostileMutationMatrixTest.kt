@@ -99,6 +99,28 @@ class HostileMutationMatrixTest {
     private val mainActivity by lazy { read("src/main/kotlin/dev/systemslibrarian/truepad/app/MainActivity.kt") }
     private val storageBinding by lazy { read("src/main/kotlin/dev/systemslibrarian/truepad/app/AndroidStorage.kt") }
 
+    /**
+     * The permissions a manifest actually REQUESTS.
+     *
+     * Not every <uses-permission> asks for something. An entry carrying
+     * tools:node="remove" DELETES a permission that a library contributed during
+     * manifest merge — TruePad has two of those, because ML Kit's Play Services
+     * dependency declares INTERNET and ACCESS_NETWORK_STATE and merging is a
+     * union.
+     *
+     * This distinction is why the check is a parse and not a substring search.
+     * The old predicate asked whether the file CONTAINED the text
+     * "android.permission.INTERNET", which was true of a manifest that declares
+     * it and equally true of one that deletes it — so adding the removal lines
+     * silently disarmed this row, and the matrix caught that. Anything that reads
+     * a manifest for posture has to read it the way the merger does.
+     */
+    private fun requestedPermissions(xml: String): List<String> =
+        Regex("<uses-permission\\b[^>]*>").findAll(xml).map { it.value }
+            .filterNot { it.contains("tools:node=\"remove\"") }
+            .mapNotNull { Regex("android:name=\"([^\"]+)\"").find(it)?.groupValues?.get(1) }
+            .toList()
+
     /** A posture row: the production guard predicate holds on the real file and is
      *  VIOLATED by a one-line mutation — so the guard catches the mutation. */
     private fun posture(name: String, realHolds: Boolean, mutantViolates: Boolean) =
@@ -157,8 +179,22 @@ class HostileMutationMatrixTest {
             // (AppSourceAuditTest / verifyReleaseManifest) permits only CAMERA, so
             // an added INTERNET is caught; this pins that specific mutation.
             add(posture("INTERNET permission added",
-                !manifest.contains("android.permission.INTERNET") && manifest.contains("android.permission.CAMERA"),
-                (manifest.replace("<application", "<uses-permission android:name=\"android.permission.INTERNET\"/>\n    <application")).contains("android.permission.INTERNET")))
+                !requestedPermissions(manifest).contains("android.permission.INTERNET") &&
+                    requestedPermissions(manifest).contains("android.permission.CAMERA"),
+                requestedPermissions(
+                    manifest.replace("<application", "<uses-permission android:name=\"android.permission.INTERNET\"/>\n    <application"),
+                ).contains("android.permission.INTERNET")))
+            // THE REMOVAL ITSELF IS LOAD-BEARING, so it gets its own row. ML Kit
+            // contributes INTERNET and ACCESS_NETWORK_STATE through manifest merge;
+            // deleting either tools:node="remove" line puts that permission back in
+            // the shipping APK without changing a single line of Kotlin. That is
+            // exactly how it got in unnoticed the first time.
+            add(posture("the INTERNET removal line deleted",
+                manifest.contains("android.permission.INTERNET") &&
+                    !requestedPermissions(manifest).contains("android.permission.INTERNET"),
+                !manifest
+                    .replace(Regex("<uses-permission[^>]*android\\.permission\\.INTERNET[^>]*tools:node=\"remove\"[^>]*>"), "")
+                    .contains("android.permission.INTERNET")))
             add(posture("FLAG_SECURE removed from the window",
                 mainActivity.contains("WindowManager.LayoutParams.FLAG_SECURE"),
                 !mainActivity.replace("WindowManager.LayoutParams.FLAG_SECURE", "0 /* removed */").contains("WindowManager.LayoutParams.FLAG_SECURE")))

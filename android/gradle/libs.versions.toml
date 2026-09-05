@@ -42,6 +42,14 @@ zxing = "3.5.3"
 # lifecycle so the camera is released when the scan screen leaves.
 camerax = "1.4.1"
 
+# ML Kit barcode scanning, BUNDLED model. Chosen over ZXing after the two-device
+# ceremony: ZXing could not read a 139-module receive code off another phone's
+# screen at any distance, focus or resolution, while ML Kit reads it immediately.
+# The BUNDLED variant ships the model in the APK, so scanning needs no network and
+# no Play Services download — which is what makes it compatible with an app that
+# declares no INTERNET permission.
+mlkit-barcode = "17.3.0"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
@@ -69,6 +77,7 @@ androidx-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomato
 bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
+mlkit-barcode-scanning = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkit-barcode" }
 androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
 androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
 androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }

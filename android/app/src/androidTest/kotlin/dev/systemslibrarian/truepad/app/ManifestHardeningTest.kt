@@ -110,9 +110,13 @@ class ManifestHardeningTest {
      * another app a URI into the pad store, because there is no authority that
      * could resolve one.
      *
-     * AndroidX merges in its own initialisation and profile providers. They are
-     * asserted un-exported by name rather than waved through as "framework
-     * stuff".
+     * AndroidX merges in its own initialisation and profile providers, and ML Kit
+     * merges in MlKitInitProvider. They are asserted un-exported, package-scoped
+     * and named one at a time rather than waved through as "framework stuff".
+     *
+     * "No provider" therefore means no provider TruePad declares, not zero
+     * providers in the merged manifest — and the guarantee that matters survives
+     * either way, because none of them can resolve a URI into the pad store.
      */
     @Test
     fun theAppPublishesNoExportedProviderAndNoFileProvider() {
@@ -125,11 +129,26 @@ class ManifestHardeningTest {
             "the app deliberately has no FileProvider; found ${fileProviders.map { it.name }}",
             fileProviders.isEmpty(),
         )
-        // Every provider that survived the merge is androidx infrastructure.
+        // Every provider that survived the merge is infrastructure from a
+        // dependency, named one at a time. ML Kit's init provider is listed
+        // explicitly rather than by a widened prefix: removing it was tried and
+        // ML Kit then throws "MlKitContext has not been initialized", so it stays
+        // — but it stays as a KNOWN entry, not as a category that would also
+        // admit the next provider some future dependency brings along.
         for (p in providers) {
             assertTrue(
                 "unexpected content provider in the merged manifest: ${p.name}",
-                p.name.startsWith("androidx."),
+                p.name.startsWith("androidx.") ||
+                    p.name == "com.google.mlkit.common.internal.MlKitInitProvider",
+            )
+        }
+        // A provider's authority is the name another app would have to address to
+        // reach it. Every one here is scoped to this package, so none of them is a
+        // well-known authority a different app could resolve or collide with.
+        for (p in providers) {
+            assertTrue(
+                "provider authority is not package-scoped: ${p.name} -> ${p.authority}",
+                (p.authority ?: "").startsWith(pkg),
             )
         }
     }
