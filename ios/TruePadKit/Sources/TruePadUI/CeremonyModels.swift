@@ -33,9 +33,18 @@ public final class CreatePadModel: ObservableObject {
     public enum Source: Hashable { case file, device }
 
     @Published public var label = ""
-    @Published public var source: Source = .file
-    @Published public var encryptionBytes = 4096
-    @Published public var authRecords = 64
+    // THE NORMAL PATH IS THE DEFAULT PATH. This used to open on `.file`, so the
+    // first thing a new operator met was the expert ceremony — choose a file,
+    // declare its origin — before they could make an ordinary pad at all. The
+    // external ceremony is unchanged and still reachable; it is no longer the
+    // thing standing in the doorway.
+    @Published public var source: Source = .device
+    // Opens on the same preset the Browser opens on, so the two editions offer
+    // the same pad. These stay the single source of truth: a preset row sets
+    // them, the advanced steppers set them, and `gen` is handed these two
+    // integers either way.
+    @Published public var encryptionBytes = PadSize.default.bytes
+    @Published public var authRecords = PadSize.default.records
     @Published public var chosenFileName: String?
     @Published public var chosenFileBytes: [UInt8]?
     @Published public var choosingFile = false
@@ -46,6 +55,20 @@ public final class CreatePadModel: ObservableObject {
     let engine: Engine
 
     public init(engine: Engine) { self.engine = engine }
+
+    /// Which preset the current numbers ARE, or nil once the operator has typed
+    /// something of their own. Derived rather than stored, so the size rows and
+    /// the advanced fields cannot disagree about what the pad will be.
+    public var selectedSize: PadSize? {
+        PadSize.matching(bytes: encryptionBytes, records: authRecords)
+    }
+
+    /// Choose a size. This is the whole of what a preset does: it writes the two
+    /// numbers the operator would otherwise have typed.
+    public func select(_ size: PadSize) {
+        encryptionBytes = size.bytes
+        authRecords = size.records
+    }
 
     public var requiredSourceBytes: Int {
         (try? Partition.requiredSourceLength(capacity: encryptionBytes,
