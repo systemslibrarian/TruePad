@@ -123,8 +123,11 @@ fun ReceivePadScreen(state: UiState, vm: PadViewModel) {
         PrimaryButton("The words match — add this pad", Modifier.testTag("btn-commit-receive"), busy = state.busy) {
             vm.commitReceive(name)
         }
+        // A MISMATCH IS TERMINAL, and it is written to disk. Clearing the screen
+        // was not enough once the Receive screen started restoring pending
+        // requests: the rejected code came back on the next visit.
         SecondaryButton("The words do not match — cancel", Modifier.testTag("btn-cancel-receive")) {
-            vm.cancelSpt(Screen.Home)
+            vm.rejectOpenedPackage()
         }
         Details("Details") {
             Faint("These eight words encode the confirmation value bound to the sealed package and your receive request.")
@@ -175,7 +178,9 @@ fun ReceivePadScreen(state: UiState, vm: PadViewModel) {
     PrimaryButton("Open the sealed pad file", Modifier.testTag("btn-open-sealed"), busy = state.busy) {
         openPackage.launch(arrayOf("application/octet-stream", "application/x-tps2", "*/*"))
     }
-    SecondaryButton("Cancel", Modifier.testTag("btn-cancel-receive-code")) { vm.cancelSpt(Screen.Home) }
+    // Cancelling a published code ends it on disk too — otherwise it stays
+    // pending, and the restore offers it again as though nothing happened.
+    SecondaryButton("Cancel", Modifier.testTag("btn-cancel-receive-code")) { vm.cancelReceiveCode() }
 
     Details("Details") {
         Faint("The receive code (TPR2) carries only the public recipient key and a request id. Expires after 7 days.")

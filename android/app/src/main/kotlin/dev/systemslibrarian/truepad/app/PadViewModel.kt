@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.systemslibrarian.truepad.core.Direction
+import dev.systemslibrarian.truepad.spt.CancelReason
 import dev.systemslibrarian.truepad.spt.SptRefused
 import dev.systemslibrarian.truepad.storage.PartyRole
 import dev.systemslibrarian.truepad.storage.EngineRefused
@@ -20,6 +21,8 @@ import dev.systemslibrarian.truepad.storage.WitnessKind
 import dev.systemslibrarian.truepad.storage.sptCommitReceive
 import dev.systemslibrarian.truepad.storage.sptConfirmRequest
 import dev.systemslibrarian.truepad.storage.sptCreateReceiveRequest
+import dev.systemslibrarian.truepad.storage.sptEndReceiveRequest
+import dev.systemslibrarian.truepad.storage.sptRestorePendingReceiveRequest
 import dev.systemslibrarian.truepad.storage.sptOpen
 import dev.systemslibrarian.truepad.storage.sptReviewRequest
 import dev.systemslibrarian.truepad.storage.sptSeal
@@ -103,6 +106,60 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Discard any in-flight sealed-transfer session and return to the given
      *  screen. Used by the flows' own Cancel controls. */
+    /**
+     * RECEIVER — the eight confirmation words DID NOT MATCH.
+     *
+     * This is the outcome the comparison exists to produce, so it has to be
+     * durable. It previously only cleared the screen, which was survivable while
+     * nothing read pending requests back and stopped being survivable the moment
+     * `startReceive()` began restoring them: the rejected request — and the sealed
+     * package the mismatch was warning about — would be offered again on the next
+     * visit to this screen.
+     *
+     * The in-memory session is dropped either way. If the durable write fails the
+     * operator is TOLD, rather than being returned to a home screen that implies
+     * the rejection stuck.
+     */
+    fun rejectOpenedPackage() {
+        val requestId = _state.value.spt.openSession?.requestIdHex
+            ?: _state.value.spt.receiveRequest?.requestIdHex
+        endReceiveRequest(requestId, CancelReason.REJECTED,
+                          "Rejected. That receive code is finished and cannot receive a pad.")
+    }
+
+    /** RECEIVER — the operator abandons their own receive code before any package
+     *  arrives. A different fact from a rejection, recorded as a different reason;
+     *  the primitive keeps the FIRST reason, so this can never mask one. */
+    fun cancelReceiveCode() {
+        endReceiveRequest(_state.value.spt.receiveRequest?.requestIdHex, CancelReason.OPERATOR,
+                          "That receive code is cancelled.")
+    }
+
+    private fun endReceiveRequest(requestId: String?, reason: CancelReason, done: String) {
+        if (requestId == null) { cancelSpt(Screen.Home); return }
+        viewModelScope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching { engine.sptEndReceiveRequest(requestId, reason) }
+            }
+            _state.value = _state.value.copy(
+                backStack = listOf(Screen.Home),
+                spt = SptUi(),
+                banner = outcome.fold(
+                    onSuccess = { Banner.Info(done) },
+                    // NOT swallowed. A rejection that did not reach the disk is a
+                    // request that can come back, and the operator is the only one
+                    // who can decide what to do about that.
+                    onFailure = {
+                        Banner.Problem(
+                            "This receive code could NOT be closed on disk, so it may still be " +
+                                "usable. Open Receive again and cancel it before accepting any pad.",
+                        )
+                    },
+                ),
+            )
+        }
+    }
+
     fun cancelSpt(to: Screen) {
         _state.value = _state.value.copy(
             backStack = if (to == Screen.Home) listOf(Screen.Home) else _state.value.backStack.dropLastWhile { it != to },
@@ -332,6 +389,28 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(
             backStack = _state.value.backStack + Screen.ReceivePad, banner = null, spt = SptUi(),
         )
+        // PICK UP A REQUEST THAT SURVIVED. `SptUi()` above deliberately clears the
+        // transient session, and `request.json`/`dk.bin` are durable — so without
+        // this, leaving the screen or restarting the app stranded a LIVE one-time
+        // key: still pending on disk, unreachable from the interface. The operator
+        // could not cancel it, could not REJECT it after a failed word comparison,
+        // and could not open the sealed file that came back.
+        //
+        // Found by the two-device physical ceremony: the iPhone sealed a pad to
+        // this device's request and this device then had no way to open it. The
+        // iOS edition carried the identical defect.
+        viewModelScope.launch {
+            val restored = withContext(Dispatchers.IO) {
+                runCatching { engine.sptRestorePendingReceiveRequest() }.getOrNull()
+            } ?: return@launch
+            // Only fill an EMPTY slot, so a reload can never displace a request the
+            // operator is looking at.
+            if (_state.value.spt.receiveRequest == null) {
+                _state.value = _state.value.copy(
+                    spt = _state.value.spt.copy(receiveRequest = restored),
+                )
+            }
+        }
     }
 
     /** RECEIVER — publish a one-time receive request. The TPR2 code and the

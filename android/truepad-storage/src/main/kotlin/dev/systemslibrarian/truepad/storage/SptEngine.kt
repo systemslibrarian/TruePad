@@ -159,6 +159,86 @@ fun Engine.sptCreateReceiveRequest(): SptCreateResult {
 /** SENDER — decode a scanned/pasted TPR2 and return the twelve words to compare.
  *  The canonical body is handed back for the caller to hold and re-supply to
  *  confirm/seal (never re-derived from an untrusted layer). */
+/**
+ * The receive request that survived a restart, if there is one.
+ *
+ * WHY THIS EXISTS. `request.json` and `dk.bin` are durable, and nothing read them
+ * back. The receive screen held the published request in memory only — and
+ * navigating into it resets `SptUi()` — so a force-quit, or simply leaving the
+ * screen, stranded a LIVE one-time key: still pending on disk, and unreachable
+ * from the interface. The operator could not cancel it, could not REJECT it after
+ * a failed word comparison, and could not open the sealed file that came back.
+ *
+ * Found by the two-device physical ceremony: the iPhone sealed a pad to this
+ * device's request, and this device then had no way to open it. The iOS edition
+ * carried the identical defect and is fixed the same way.
+ *
+ * THE PRIVATE KEY IS DELIBERATELY NOT RETURNED. `Pending` carries `dk`, and this
+ * drops it: everything above the engine needs the public request, its words and
+ * its expiry, and nothing above the engine has any business holding a
+ * decapsulation seed.
+ *
+ * An EXPIRED pending request is not returned — it is not usable, and offering it
+ * would invite a ceremony that cannot complete. If several are pending, the most
+ * recently created is returned, so cancelling repeatedly drains them.
+ */
+fun Engine.sptRestorePendingReceiveRequest(): SptCreateResult? {
+    val vfs = sptVfs()
+    val ids = runCatching { vfs.list("spt/receive") }.getOrElse { return null }
+    val now = clock()
+    var newest: Pair<String, SptCreateResult>? = null
+    for (idHex in ids) {
+        // The listing is untrusted input like any other: a name that is not a
+        // request identifier is skipped rather than parsed.
+        if (idHex.length != 32 || !idHex.all { it.isDigit() || it in 'a'..'f' }) continue
+        val state = sptReadReceiverState(vfs, idHex, now) as? SptReceiverState.Pending ?: continue
+        // Rebuilt from the STORED body, not re-derived from anything the UI holds:
+        // the text the sender scanned is a function of the bytes on disk.
+        val result = SptCreateResult(
+            state.requestId,
+            bytesToHex(state.requestHash),
+            "TPR2:" + toBase64Url(state.body),
+            requestIndices132(state.requestHash),
+            state.expiresAt,
+        )
+        // ISO-8601 with a fixed shape, so lexicographic order is chronological.
+        if (newest == null || state.createdAt > newest!!.first) newest = state.createdAt to result
+    }
+    return newest?.second
+}
+
+/**
+ * RECEIVER — end a pending receive request DURABLY.
+ *
+ * This existed only as an SPT primitive, reachable from the engine for expiry and
+ * nothing else, so the two places the operator can end a request both merely
+ * cleared the screen. The request stayed Pending on disk.
+ *
+ * That was survivable while nothing read pending requests back. It stopped being
+ * survivable the moment `sptRestorePendingReceiveRequest` started restoring them:
+ * an operator who compared the eight confirmation words, found they DID NOT
+ * MATCH, and pressed the reject button would have that same request — and with it
+ * the sealed package the mismatch was warning about — offered again the next time
+ * the Receive screen opened. A failed word comparison is how the ceremony is
+ * supposed to END; it must not be a step that can be walked back by navigating.
+ *
+ * REJECTED and OPERATOR are kept distinct because they are different facts.
+ * REJECTED means the words did not match, which is the outcome the comparison
+ * exists to produce. OPERATOR means the person simply changed their mind. The
+ * underlying primitive is idempotent and keeps the FIRST reason, so a later
+ * cancel cannot overwrite a rejection.
+ */
+fun Engine.sptEndReceiveRequest(requestIdHex: String, reason: CancelReason) {
+    require(reason != CancelReason.EXPIRED) {
+        "expiry is decided by the clock, not by the operator"
+    }
+    val vfs = sptVfs()
+    fs.withLock("spt-req:$requestIdHex") {
+        val nowI = clock()
+        cancelPendingReceiveRequest(vfs, requestIdHex, reason, SptTime.format(nowI), nowI)
+    }
+}
+
 fun Engine.sptReviewRequest(tpr2Text: String): SptReviewResult {
     val decoded = decodeReceiveRequest(tpr2Text)
     if (decoded is RequestDecode.Fail) throw SptRefused("spt-request-unavailable", "this is not a usable receive request: ${decoded.message}")
