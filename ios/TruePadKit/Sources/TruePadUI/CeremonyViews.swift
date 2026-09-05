@@ -183,24 +183,40 @@ public struct ReceiveRequestView: View {
                     Text(request.tpr2Text)
                         .font(.footnote.monospaced())
                         .textSelection(.enabled)
-                        .accessibilityLabel("Your receive request, as text you can copy.")
+                        .accessibilityLabel("Your receive code, as text you can copy.")
                 }
-                Section("Read these twelve words aloud") {
+                Section("Compare these 12 words") {
                     WordGrid(model.requestWords, expecting: CeremonyPhrase.requestWordCount)
                     Text(VerbatimText.wordComparisonIsADeclaration)
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
-                    Text("This request expires \(request.expiresAt).")
+                    Text("This code expires \(request.expiresAt).")
                         .font(.footnote).foregroundStyle(.secondary)
-                    Button("Cancel this request", role: .destructive) { model.cancel() }
+                    Button("Cancel this code", role: .destructive) { model.cancel() }
                 } footer: {
                     Text("The key behind this request works exactly once. Cancelling it is "
                          + "permanent, and so is using it.")
                 }
             } else {
+                // WHAT BECAME OF THE LAST ONE. Every state here is terminal, and
+                // none of them offers a way back — the only recovery is a new
+                // request, which is the button directly below. Saying so matters
+                // most after a REJECTION, which is a decision the operator made
+                // deliberately and should see acknowledged.
+                if let outcome = model.outcome,
+                   let headline = ReceiveRequestOutcomeText.headline(outcome) {
+                    Section {
+                        Text(headline).font(.headline)
+                        if let detail = ReceiveRequestOutcomeText.detail(outcome) {
+                            Text(detail).font(.footnote).foregroundStyle(.secondary)
+                        }
+                        Button("Dismiss") { model.acknowledgeOutcome() }
+                    }
+                    .accessibilityElement(children: .contain)
+                }
                 Section {
-                    Button("Create a receive request") { model.create() }
+                    Button("Create a receive code") { model.create() }
                 } footer: {
                     Text("This makes a one-time key on this device and shows the sender a public "
                          + "request. The key never leaves.")
@@ -339,13 +355,31 @@ public struct SealView: View {
             }
 
             if let sealed = model.sealed {
-                Section("Read these eight words aloud") {
+                Section("Compare these 8 words") {
                     WordGrid(model.confirmationWords, expecting: CeremonyPhrase.confirmationWordCount)
                 }
                 Section {
-                    Button("Hand over the sealed file…") { model.share() }
+                    Button(sealed.reshared ? "Hand over the same sealed file…"
+                                           : "Hand over the sealed file…") { model.share() }
+                } header: {
+                    // ONE REQUEST, ONE PAD, ONE COMMITTED PACKAGE. Coming back to
+                    // a pad that was already sealed returns the SAME bytes — the
+                    // engine re-reads the committed package rather than sealing
+                    // again. Saying so matters: an operator who could not tell the
+                    // difference might reasonably think a second handoff was being
+                    // created, which is exactly what must never happen.
+                    if sealed.reshared {
+                        Text("Already sealed")
+                    }
                 } footer: {
-                    Text(VerbatimText.shareSheetIsACarrier)
+                    if sealed.reshared {
+                        Text("This is the same sealed file you made before, not a new one. "
+                             + "Sealing happened once, and the eight words above are the ones "
+                             + "from that transfer.\n\n"
+                             + VerbatimText.shareSheetIsACarrier)
+                    } else {
+                        Text(VerbatimText.shareSheetIsACarrier)
+                    }
                 }
             }
         }

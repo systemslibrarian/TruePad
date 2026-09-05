@@ -43,9 +43,8 @@ public final class PadListModel: ObservableObject {
     public struct Row: Identifiable, Equatable {
         public let pairId: String
         public let label: String
-        public let destroyed: Bool
-        public let shortSummary: String?
-        public let accessibilityLabel: String
+        public let state: PadRowState
+        public var destroyed: Bool { state == .destroyed }
         public var id: String { pairId }
     }
 
@@ -62,18 +61,18 @@ public final class PadListModel: ObservableObject {
         do {
             rows = try engine.listSummaries().map { entry in
                 guard !entry.destroyed, let summary = entry.summary else {
-                    return Row(pairId: entry.pairId, label: entry.label, destroyed: true,
-                               shortSummary: nil,
-                               accessibilityLabel: "\(entry.label). Destroyed, and permanently "
-                                                   + "unusable.")
+                    return Row(pairId: entry.pairId, label: entry.label, state: .destroyed)
                 }
                 let sends = summary.meters.values.map { $0.maxRemainingSends }.min() ?? 0
-                let verdict = summary.meters[.aToB].map { MeterRow($0).verdict } ?? ""
-                return Row(pairId: entry.pairId, label: entry.label, destroyed: false,
-                           shortSummary: "\(sends) more \(sends == 1 ? "message" : "messages") · \(verdict)",
-                           accessibilityLabel: "\(entry.label). You can send \(sends) more "
-                                               + "\(sends == 1 ? "message" : "messages"). "
-                                               + "Deployment assessment: \(verdict).")
+                // A direction that cannot send is the one thing on this screen
+                // that genuinely needs the operator's attention.
+                let frozen = summary.meters.values.contains { $0.frozen }
+                // NO VERDICT HERE. The deployment classification is a property of
+                // the pad, not its status, and putting it in every row made every
+                // device-generated pad look broken at a glance. It is on the pad's
+                // own screen, under Security details, unchanged.
+                return Row(pairId: entry.pairId, label: entry.label,
+                           state: .of(destroyed: false, frozen: frozen, remainingSends: sends))
             }
         } catch {
             refuse(error)

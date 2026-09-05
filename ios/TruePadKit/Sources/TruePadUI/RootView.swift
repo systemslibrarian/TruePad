@@ -62,6 +62,21 @@ public struct TruePadRootView: View {
                 .modifier(PrivacyCoverModifier(visibility: visibility))
         }
         .modifier(PrivacyCoverModifier(visibility: visibility))
+        // DARK, DELIBERATELY AND EVERYWHERE.
+        //
+        // Asked for directly by the operator, who found the iPhone app read as a
+        // test harness next to the Android one. It is applied at the ROOT so
+        // sheets and pushed screens inherit it — a half-dark app is worse than a
+        // light one — and it works by selecting the system's dark palette rather
+        // than by hard-coding colours, so every contrast ratio remains the one
+        // Apple tuned and Dynamic Type is untouched.
+        //
+        // TWO SURFACES DELIBERATELY STAY LIGHT, and they are the ones a camera has
+        // to read: the inline QR sits on its own white card with padding, and the
+        // full-screen scan view is pure white with the backlight raised. A dark
+        // QR surface would be a visual preference paid for in scan reliability,
+        // which the two-device run showed there is no room for.
+        .preferredColorScheme(.dark)
     }
 
     /// SwiftUI's `ScenePhase` mapped to the decision type in Presentation.swift,

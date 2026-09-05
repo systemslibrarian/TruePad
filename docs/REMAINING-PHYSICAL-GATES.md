@@ -38,7 +38,7 @@ ceremony, not about the strength of the delivery.
 SHA, iOS build from the same SHA. A disposable pad on the Android device — never
 an operational pad.
 
-1. **iPhone publishes.** Receive tab → *Create a receive request*. The screen
+1. **iPhone publishes.** Receive tab → *Create a receive code*. The screen
    shows a QR and twelve words. Photograph both.
 2. **Android scans.** Send a pad → *Scan a code*. Point the Android camera at the
    iPhone screen. Record the lighting and distance; record any retries.

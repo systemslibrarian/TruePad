@@ -30,8 +30,8 @@ import XCTest
 /// tombstone. A UI test has no such source, so only the REFUSAL path is
 /// reachable from here. That is a real limit of this bundle, not an oversight.
 ///
-/// Every pad created here is DISPOSABLE and generated from the device CSPRNG —
-/// deliberately the weakest kind TruePad makes, so it reads NOT ELIGIBLE and
+/// Every pad created here is DISPOSABLE and generated from the device CSPRNG, so
+/// it reads NOT ELIGIBLE for the strongest deployment classification and
 /// destroying it costs nothing. No operational pad is touched.
 final class TruePadPhysicalTests: XCTestCase {
 
@@ -111,8 +111,8 @@ final class TruePadPhysicalTests: XCTestCase {
     /// requests this bundle created.
     func drainPendingRequests(_ app: XCUIApplication) {
         for _ in 0..<12 {
-            if app.buttons["Create a receive request"].waitForExistence(timeout: 4) { return }
-            let cancel = app.buttons["Cancel this request"]
+            if app.buttons["Create a receive code"].waitForExistence(timeout: 4) { return }
+            let cancel = app.buttons["Cancel this code"]
             guard cancel.exists || reveal(cancel, in: app, swipes: 4) else { return }
             cancel.tap()
         }
@@ -132,13 +132,25 @@ final class TruePadPhysicalTests: XCTestCase {
         name.tap()
         name.typeText(label)
 
-        let option = element(beginningWith: "This device's random generator", in: app)
-        XCTAssertTrue(reveal(option, in: app), "the device source must be offered")
-        option.tap()
-        XCTAssertTrue(reveal(app.staticTexts["This pad will read NOT ELIGIBLE"], in: app),
-                      "the consequence must be stated BEFORE the operator commits")
+        // THE DEVICE GENERATOR IS NOW THE DEFAULT, so there is nothing to select:
+        // the normal path is the normal path. What must still be true is that the
+        // operator can read the consequence BEFORE committing — it moved from a
+        // standalone orange label into "Security details", which this opens and
+        // reads rather than taking on trust.
+        XCTAssertTrue(reveal(element(containing: "Generated securely on this iPhone", in: app), in: app),
+                      "the normal path must name its source plainly")
 
-        let create = app.buttons["Create this pad"]
+        let details = app.buttons["Security details"].exists
+            ? app.buttons["Security details"]
+            : element(containing: "Security details", in: app)
+        XCTAssertTrue(reveal(details, in: app), "the source explanation must be reachable")
+        details.tap()
+        XCTAssertTrue(reveal(element(containing: "information-theoretic", in: app), in: app),
+                      "the consequence must be readable BEFORE the operator commits")
+        XCTAssertTrue(reveal(element(containing: "computational and platform assumptions", in: app), in: app),
+                      "the claim must still name the assumption it rests on")
+
+        let create = app.buttons["Create pad"]
         XCTAssertTrue(reveal(create, in: app), "the create button must be reachable")
         XCTAssertTrue(create.isEnabled, "a named pad with a source must be creatable")
         create.tap()
@@ -156,8 +168,30 @@ final class TruePadPhysicalTests: XCTestCase {
         row.tap()
     }
 
+    /// OPEN "Security details", which is where the exact counters and the
+    /// deployment assessment now live.
+    ///
+    /// The pad screen used to open on two sections of meters; the UX parity pass
+    /// put the actions first and moved every number one disclosure down. Nothing
+    /// was deleted, so these tests still assert on exactly the same labels — they
+    /// just have to open the drawer first.
+    ///
+    /// Idempotent: if a meter is already on screen the disclosure is open, and
+    /// tapping it again would CLOSE it.
+    @discardableResult
+    func openSecurityDetails(_ app: XCUIApplication) -> Bool {
+        if element(containing: "You can still send", in: app).exists { return true }
+        let disclosure = app.buttons["Security details"].exists
+            ? app.buttons["Security details"]
+            : element(containing: "Security details", in: app)
+        guard reveal(disclosure, in: app, swipes: 12) else { return false }
+        disclosure.tap()
+        return element(containing: "You can still send", in: app).waitForExistence(timeout: 5)
+    }
+
     /// The bytes-of-pad-material-remaining figure for the first direction shown.
     func padMaterialRemaining(_ app: XCUIApplication) -> Int? {
+        openSecurityDetails(app)
         let meter = element(containing: "bytes of pad material remain", in: app)
         guard reveal(meter, in: app) else { return nil }
         return firstNumber(in: meter.label)
@@ -165,6 +199,7 @@ final class TruePadPhysicalTests: XCTestCase {
 
     /// The remaining-sends figure for the first direction shown.
     func remainingSends(_ app: XCUIApplication) -> Int? {
+        openSecurityDetails(app)
         let meter = element(containing: "You can still send", in: app)
         guard reveal(meter, in: app) else { return nil }
         return firstNumber(in: meter.label)
@@ -387,7 +422,7 @@ final class TruePadPhysicalTests: XCTestCase {
         // one rather than treating it as a failure.
         drainPendingRequests(app)
 
-        let create = app.buttons["Create a receive request"]
+        let create = app.buttons["Create a receive code"]
         XCTAssertTrue(reveal(create, in: app), "the Receive tab must offer a request")
         create.tap()
 
@@ -408,11 +443,11 @@ final class TruePadPhysicalTests: XCTestCase {
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 30))
         app.launch()
         app.tabBars.buttons["Receive"].tap()
-        let cancel = app.buttons["Cancel this request"]
+        let cancel = app.buttons["Cancel this code"]
         XCTAssertTrue(reveal(cancel, in: app), "a published request must survive a force-quit")
         cancel.tap()
 
-        XCTAssertTrue(reveal(app.buttons["Create a receive request"], in: app),
+        XCTAssertTrue(reveal(app.buttons["Create a receive code"], in: app),
                       "cancelling must leave the tab ready for a new request")
 
         // AND THE CANCELLATION IS TERMINAL. Checked across a relaunch so it is
@@ -421,7 +456,7 @@ final class TruePadPhysicalTests: XCTestCase {
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 30))
         app.launch()
         app.tabBars.buttons["Receive"].tap()
-        XCTAssertTrue(reveal(app.buttons["Create a receive request"], in: app),
+        XCTAssertTrue(reveal(app.buttons["Create a receive code"], in: app),
                       "a cancelled request must not return as pending after a relaunch")
     }
 
@@ -435,8 +470,8 @@ final class TruePadPhysicalTests: XCTestCase {
 
         assertRootRendered(app)
         app.tabBars.buttons["Receive"].tap()
-        XCTAssertTrue(reveal(app.buttons["Create a receive request"], in: app)
-                        || reveal(app.buttons["Cancel this request"], in: app),
+        XCTAssertTrue(reveal(app.buttons["Create a receive code"], in: app)
+                        || reveal(app.buttons["Cancel this code"], in: app),
                       "the Receive tab must have finished rendering before this is asserted")
         app.tabBars.buttons["About"].tap()
         XCTAssertTrue(app.staticTexts["The one-time pad encrypts messages."]
@@ -460,6 +495,7 @@ final class TruePadPhysicalTests: XCTestCase {
         createDisposablePad(app, label: label)
         openPad(app, label: label)
 
+        XCTAssertTrue(openSecurityDetails(app), "the counters must be reachable")
         XCTAssertTrue(reveal(element(containing: "You can still send", in: app), in: app),
                       "the remaining-sends meter must be described, not just numbered")
         XCTAssertTrue(reveal(element(containing: "bytes of pad material remain", in: app), in: app),
@@ -474,14 +510,17 @@ final class TruePadPhysicalTests: XCTestCase {
 
     // MARK: - 9. the device-generated pad is labelled honestly
 
-    /// The Create screen promises a device-generated pad reads NOT ELIGIBLE. A
-    /// warning the product then contradicts is worse than no warning.
+    /// The Create screen's "Security details" says a device-generated pad reads
+    /// NOT ELIGIBLE. A statement the product then contradicts is worse than no
+    /// statement — and moving it out of the primary flow must not make it any
+    /// less true, which is what this checks.
     func test09_ADeviceGeneratedPadReadsNotEligible() {
         let app = launchFresh()
         let label = uniqueLabel("verdict")
         createDisposablePad(app, label: label)
         openPad(app, label: label)
 
+        XCTAssertTrue(openSecurityDetails(app), "the assessment must be reachable")
         XCTAssertTrue(reveal(app.staticTexts["NOT ELIGIBLE"], in: app),
                       "the pad must read exactly what the Create screen promised")
     }

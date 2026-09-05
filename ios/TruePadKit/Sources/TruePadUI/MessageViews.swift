@@ -211,11 +211,25 @@ public struct QrCodeView: View {
                 // so module edges stay crisp, and raise the backlight while it is
                 // up. The payload is public TPR2, so nothing is exposed by
                 // showing it large.
+                // A LIGHT SURFACE OF ITS OWN, WITH PADDING. The app presents dark,
+                // and a decoder keys on the quiet zone and the contrast ratio —
+                // neither of which is negotiable for a code that has to be read
+                // off this screen by another phone's camera. The padding IS a
+                // quiet zone, in addition to whatever the generator emits.
+                //
+                // This is visual framing AROUND the symbol. Nothing here touches
+                // the geometry the physical run proved: the image is still handed
+                // back 1:1 from the renderer, still drawn with
+                // `.interpolation(.none)`, and the full-screen scan path is
+                // unchanged.
                 Image(uiImage: image)
                     .interpolation(.none)
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: 320)
+                    .padding(12)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .accessibilityLabel("A QR code. " + VerbatimText.qrCarriesOnlyPublicData)
                     .accessibilityHint("Opens the code full screen so the other phone can scan it.")
                     .onTapGesture { enlarged = true }

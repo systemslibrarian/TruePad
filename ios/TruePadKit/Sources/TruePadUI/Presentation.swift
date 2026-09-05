@@ -175,6 +175,65 @@ public enum CeremonyPhrase {
 
 /// One direction's live meters, flattened for display. Built from a
 /// `DirectionMeters` the engine just computed — never from anything persisted.
+/// WHAT A ROW IN THE PAD LIST SAYS.
+///
+/// The list used to put the deployment evaluator's verdict in EVERY row — every
+/// device-generated pad read "NOT ELIGIBLE" next to its name, forever, in the
+/// one place the operator looks to pick a pad. That is a classification, not a
+/// status, and at a glance it reads as "broken".
+///
+/// A row has to answer four things and nothing more: what is this pad called, can
+/// I use it, roughly how much is left, and is it gone. The classification, the
+/// exact counters and the witness state all still exist — one screen in, under
+/// Security details, where they can be read rather than glanced at.
+public enum PadRowState: Equatable, Sendable {
+    /// Destroyed. Must remain unmistakable and must never be offered as usable.
+    case destroyed
+    /// Durable state says this pad cannot send right now — a rollback witness
+    /// that does not agree with the store. This is the "action needed" case, and
+    /// it is the one row state that is genuinely a warning.
+    case frozen
+    /// Usable, with the number of messages still sendable in the thinner half.
+    case ready(sends: Int)
+
+    public static func of(destroyed: Bool, frozen: Bool, remainingSends: Int) -> PadRowState {
+        // ORDER MATTERS AND IS DELIBERATE. Destroyed outranks everything: a pad
+        // that is gone must never be rendered as merely frozen or merely low.
+        if destroyed { return .destroyed }
+        if frozen { return .frozen }
+        return .ready(sends: max(0, remainingSends))
+    }
+
+    /// The single line under the pad's name.
+    public var line: String {
+        switch self {
+        case .destroyed: return "Destroyed — permanently unusable"
+        case .frozen: return "Needs attention — cannot send"
+        case .ready(let sends):
+            return sends == 1 ? "1 message left" : "\(sends) messages left"
+        }
+    }
+
+    /// Whether this row should be styled as a problem. False for `ready`, however
+    /// small the number — running low is not an error.
+    public var isProblem: Bool {
+        switch self {
+        case .destroyed, .frozen: return true
+        case .ready: return false
+        }
+    }
+
+    /// What VoiceOver reads for the whole row.
+    public func spoken(label: String) -> String {
+        switch self {
+        case .destroyed: return "\(label). Destroyed, and permanently unusable."
+        case .frozen: return "\(label). Needs attention: this pad cannot send."
+        case .ready(let sends):
+            return "\(label). You can send \(sends) more \(sends == 1 ? "message" : "messages")."
+        }
+    }
+}
+
 public struct MeterRow: Sendable, Equatable {
     public let direction: String
     public let encryptionUsed: Int
@@ -187,6 +246,27 @@ public struct MeterRow: Sendable, Equatable {
     public let witness: String
     public let verdict: String
     public let whyNotStronger: String?
+
+    /// The direction in the operator's words — which REQUIRES knowing which half
+    /// this device owns. "A->B" is the wire's name and means nothing to someone
+    /// who has not read the protocol, but translating it without the role would
+    /// be worse than leaving it: for party B, A->B is the half they RECEIVE on.
+    /// Getting that backwards would tell the operator the wrong number is their
+    /// sending budget.
+    ///
+    /// With no derived role there is nothing honest to say, so it says the
+    /// direction plainly and leaves the interpretation alone.
+    public func plainDirection(role: Party?) -> String {
+        guard let role else { return direction == "A->B" ? "A to B" : "B to A" }
+        let sends = (role == .a && direction == "A->B") || (role == .b && direction == "B->A")
+        return sends ? "Messages you send" : "Messages you receive"
+    }
+
+    /// The headline number for the summary row, without the counters.
+    public var remainingLine: String {
+        if frozen { return "Cannot send — needs attention" }
+        return maxRemainingSends == 1 ? "1 message left" : "\(maxRemainingSends) messages left"
+    }
 
     public init(_ m: DirectionMeters) {
         direction = m.direction.rawValue
@@ -331,6 +411,51 @@ public enum SourceClaimText {
 
     /// The expert path's one-line summary, matching the Browser's EXTERNAL_SHORT.
     public static let externalShort = "Supply random material whose origin you control."
+}
+
+/// WHAT THE RECEIVE SCREEN SAYS ABOUT A REQUEST THAT IS OVER.
+///
+/// Every one of these states is TERMINAL in the engine, and the interface's job
+/// is to say which one happened and offer the only recovery there is — making a
+/// new request. None of them offers a way back: a request that has been consumed,
+/// cancelled, rejected or expired is finished, and an interface that implied
+/// otherwise would be inviting the operator to reuse a one-time key.
+public enum ReceiveRequestOutcomeText {
+    /// The headline for a finished request, or nil while it is still live.
+    public static func headline(_ status: ReceiveRequestStatus) -> String? {
+        switch status {
+        case .pending:    return nil
+        case .consumed:   return "Pad received"
+        case .cancelled:  return "Receive code cancelled"
+        case .rejected:   return "Transfer rejected"
+        case .expired:    return "Receive code expired"
+        case .absent:     return nil
+        case .unreadable: return "Receive code unreadable"
+        }
+    }
+
+    /// What it means, and what the operator can do next.
+    public static func detail(_ status: ReceiveRequestStatus) -> String? {
+        switch status {
+        case .pending, .absent:
+            return nil
+        case .consumed:
+            return "This receive code has done its job and cannot receive another pad. "
+                 + "Create a new one if you are expecting a second pad."
+        case .cancelled:
+            return "You cancelled this receive code. It cannot be used again. Create a new one "
+                 + "to receive a pad."
+        case .rejected:
+            return "The confirmation words did not match, so the transfer was refused and this "
+                 + "receive code was closed. That is the right outcome for a mismatch. Create a "
+                 + "new one and start again with the sender."
+        case .expired:
+            return "This receive code timed out and can no longer receive a pad. Create a new one."
+        case .unreadable:
+            return "This receive code cannot be read as any valid state, so TruePad will not "
+                 + "treat it as usable. Create a new one."
+        }
+    }
 }
 
 public enum VerbatimText {

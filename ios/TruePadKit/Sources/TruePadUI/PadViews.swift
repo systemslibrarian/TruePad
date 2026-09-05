@@ -36,12 +36,15 @@ public struct PadListView: View {
                     // than a compile fix.
                     VStack(alignment: .leading, spacing: 8) {
                         Text("No pads yet").font(.headline)
-                        Text("A pad is created from material you supply — or, if you choose, "
-                             + "from this device's random generator, which is weaker and is "
-                             + "labelled as such.")
+                        // Says what to DO. The previous copy opened on the expert
+                        // path and then called the ordinary one "weaker", which is
+                        // the same misleading emphasis the create screen had.
+                        Text("A pad is shared between you and one other person. Create one here, "
+                             + "or receive one from someone else on the Receive tab.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
+                    .padding(.vertical, 8)
                     .accessibilityElement(children: .combine)
                 }
                 ForEach(model.rows) { row in
@@ -82,19 +85,29 @@ struct PadRowView: View {
     let row: PadListModel.Row
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(row.label).font(.headline)
-            if row.destroyed {
-                Text("Destroyed — permanently unusable")
+        HStack(spacing: 12) {
+            // A destroyed or frozen pad is marked, so the state is visible before
+            // the text is read. Colour is never the only carrier — the line below
+            // says it in words, and VoiceOver reads the words.
+            if row.state.isProblem {
+                Image(systemName: row.state == .destroyed ? "trash.slash" : "exclamationmark.triangle")
+                    .foregroundStyle(row.state == .destroyed
+                                     ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
+                    .accessibilityHidden(true)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.label)
+                    .font(.headline)
+                    .foregroundStyle(row.destroyed ? .secondary : .primary)
+                Text(row.state.line)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-            } else if let summary = row.shortSummary {
-                Text(summary).font(.subheadline).foregroundStyle(.secondary)
             }
         }
+        .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
         // The row's meaning, not its numbers.
-        .accessibilityLabel(row.accessibilityLabel)
+        .accessibilityLabel(row.state.spoken(label: row.label))
     }
 }
 
@@ -107,13 +120,27 @@ public struct PadDetailView: View {
 
     public var body: some View {
         List {
-            ForEach(model.meters, id: \.direction) { row in
-                Section(row.direction) { MeterSection(row: row) }
-            }
-
-            Section("Sending and opening") {
+            // WHAT THE OPERATOR CAME HERE TO DO, FIRST. This screen used to open
+            // on two sections of direction meters — offsets, record counts,
+            // witness state and the deployment verdict — before it offered a way
+            // to write a message. Every one of those numbers is still here, one
+            // disclosure down, where it can be read rather than waded through.
+            Section("Messages") {
                 NavigationLink("Write a message") { SendView(model: model.sendModel()) }
                 NavigationLink("Open a message") { OpenView(model: model.openModel()) }
+            }
+
+            // The headline number, in the operator's terms.
+            Section {
+                ForEach(model.meters, id: \.direction) { row in
+                    LabeledContent(row.plainDirection(role: model.derivedRole)) {
+                        Text(row.remainingLine).foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(row.plainDirection(role: model.derivedRole)): \(row.remainingLine)")
+                }
+            } header: {
+                Text("How much is left")
             }
 
             Section("Handing this pad over") {
@@ -130,16 +157,33 @@ public struct PadDetailView: View {
                     // to it, and the pad was stranded — the raw pad stays blocked
                     // either way, which is the part that matters for reuse.
                     if model.mayReshareSealed {
-                        Button("Hand over the sealed file again…") { model.beginSealedTransfer() }
+                        Button("Hand over the same sealed file…") { model.beginSealedTransfer() }
                     }
                 }
                 Text(VerbatimText.shareSheetIsACarrier)
                     .font(.footnote).foregroundStyle(.secondary)
             }
 
+            // EVERYTHING TECHNICAL, ORGANISED RATHER THAN REMOVED. Source class,
+            // delivery, storage, rollback authority, the evaluator's verdict and
+            // the exact counters all still appear, verbatim, one tap down.
+            Section {
+                DisclosureGroup("Security details") {
+                    if let role = model.derivedRole {
+                        LabeledContent("This device is party", value: role == .a ? "A" : "B")
+                            .accessibilityLabel("This device is party \(role == .a ? "A" : "B") for this pad.")
+                    }
+                    ForEach(model.meters, id: \.direction) { row in
+                        MeterSection(row: row)
+                    }
+                }
+                .accessibilityHint("Exact counters and this pad's deployment assessment.")
+            }
+
             Section {
                 NavigationLink("Destroy this pad…") { DestroyView(model: model.destroyModel()) }
                     .foregroundStyle(.red)
+                    .accessibilityHint("Permanently destroys this pad.")
             } footer: {
                 // VERBATIM. Never paraphrased.
                 Text(VerbatimText.destructionLimitation)

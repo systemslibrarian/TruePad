@@ -119,6 +119,8 @@ public final class ReceiveRequestModel: ObservableObject {
     @Published public private(set) var request: SptCreateResult?
     @Published public private(set) var qr: QrPayload?
     @Published public private(set) var requestWords: [String] = []
+    /// What became of the LAST request, once it is over. Nil while one is live.
+    @Published public private(set) var outcome: ReceiveRequestStatus?
     @Published public var showingRefusal = false
     @Published public var refusalMessage: String?
 
@@ -165,13 +167,27 @@ public final class ReceiveRequestModel: ObservableObject {
     /// Nothing here is a guess: it asks the store about the exact request being
     /// held, and only then offers whatever is genuinely pending instead.
     public func refresh() {
-        if let held = request, !engine.sptReceiveRequestIsPending(requestIdHex: held.requestIdHex) {
-            request = nil
-            qr = nil
-            requestWords = []
+        if let held = request {
+            let status = engine.sptReceiveRequestStatus(requestIdHex: held.requestIdHex)
+            if status.isTerminal {
+                // SAY WHICH ENDING IT WAS. Silently dropping the request left the
+                // operator looking at a "Create a receive code" button with no
+                // account of what happened to the last one — and after a REJECTION
+                // that silence is the worst version, because rejecting is a
+                // decision the operator deliberately made.
+                outcome = status
+                request = nil
+                qr = nil
+                requestWords = []
+            }
         }
         restore()
+        // A live request supersedes any notice about the previous one.
+        if request != nil { outcome = nil }
     }
+
+    /// Dismiss the notice about the finished request.
+    public func acknowledgeOutcome() { outcome = nil }
 
     public func create() {
         do {

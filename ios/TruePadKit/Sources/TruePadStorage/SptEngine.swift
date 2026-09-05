@@ -47,6 +47,33 @@ public final class FsSptVfs: SptVfs, @unchecked Sendable {
 
 /// Show this to the recipient: the TPR2 text (paste or QR), the requestId, the
 /// 64-hex requestHash, the twelve request-word indices, and the expiry.
+/// What became of a receive request, said without carrying any key material.
+///
+/// Deliberately NOT `ReceiverState`, whose `.pending` case holds the
+/// decapsulation key. A screen needs to know which of these happened; it does not
+/// need — and must not be handed — the key.
+public enum ReceiveRequestStatus: String, Equatable, Sendable {
+    /// Live: may be shown, may be cancelled, may receive a sealed package.
+    case pending
+    /// A pad arrived and was kept. Terminal, and the one-time key is spent.
+    case consumed
+    /// The operator ended it themselves. Terminal.
+    case cancelled
+    /// The confirmation words did not match. Terminal, and deliberately distinct
+    /// from `cancelled` — it is the outcome the comparison exists to produce.
+    case rejected
+    /// The clock ended it. Terminal.
+    case expired
+    /// No such request.
+    case absent
+    /// On disk but not readable as any valid state. Fails closed: never treated
+    /// as fresh.
+    case unreadable
+
+    /// Everything except `pending` is finished. Nothing here resurrects.
+    public var isTerminal: Bool { self != .pending }
+}
+
 public struct SptCreateResult: Sendable {
     public let requestIdHex: String
     public let requestHashHex: String
@@ -208,6 +235,29 @@ extension Engine {
     /// and the identifier is never reissued — cancelling is as final as using it,
     /// which is what makes "cancel" a safe thing to offer.
     @discardableResult
+    /// WHAT HAPPENED TO A RECEIVE REQUEST, with no key material attached.
+    ///
+    /// `ReceiverState` itself must NOT be handed to the interface: its `.pending`
+    /// case carries `dk`, the decapsulation key, and a view layer has no business
+    /// holding one. This is the same question answered as a flat summary — enough
+    /// for a screen to say what became of the request, and nothing more.
+    ///
+    /// It reads durable state and changes nothing. Terminal semantics are the
+    /// engine's and are untouched; this only lets the interface stop pretending a
+    /// finished request is still live.
+    public func sptReceiveRequestStatus(requestIdHex: String) -> ReceiveRequestStatus {
+        guard isSptHex32(requestIdHex) else { return .absent }
+        switch readReceiverState(vfs: sptVfs, idHex: requestIdHex, nowMillis: nowMillis()) {
+        case .pending: return .pending
+        case .expiredPending: return .expired
+        case .consumed: return .consumed
+        case .cancelled(_, let reason, _):
+            return reason == .rejected ? .rejected : .cancelled
+        case .absent: return .absent
+        case .unusable, .terminalUnreadable, .terminalInconsistent: return .unreadable
+        }
+    }
+
     /// Is THIS request still pending — not consumed, cancelled, rejected or
     /// expired?
     ///
