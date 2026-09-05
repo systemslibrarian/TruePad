@@ -199,12 +199,22 @@ SHA-256 pinned by `ComparisonWordsTest`.
 
 The Android Edition offers the same TPR2 QR workflow as the Browser Edition: the
 receiver can show the PUBLIC receive code as a QR, and the sender can scan it.
-Where the browser uses `qrcode-generator` + `jsQR`, the Android app uses ZXing
-for both encode and decode and AndroidX CameraX for the camera. Both are
+Where the browser uses `qrcode-generator` + `jsQR`, the Android app uses ZXing to
+ENCODE, Google ML Kit to DECODE, and AndroidX CameraX for the camera. All are
 reached ONLY through Sealed Pad Transfer. A scanned string is handed to the same
 strict TPR2 parser a pasted code is, so a mis-scan is refused, never trusted, and
 the camera frames are analysed in-process and discarded — the app has no
 INTERNET permission for them to leave by.
+
+**Why the decoder is not ZXing.** ZXing encodes the symbol and cannot read it
+back off a screen. On real hardware it failed to decode a 1652-character receive
+code shown on another handset at 139 modules — at 640x480 and at 1920x1440, with
+`TRY_HARDER`, with the luminance plane taken at the correct `rowStride`, with a
+global-histogram binarizer and with continuous centre autofocus, at every
+distance tried, and with the code drawn full screen at full brightness on white.
+An independent decoder read the same rendered symbol immediately, so the symbol
+was valid throughout. ML Kit reads it. That is the whole reason for the swap, and
+it is a decode-only role: ZXing still encodes.
 
 #### ZXing core
 
@@ -212,6 +222,75 @@ INTERNET permission for them to leave by.
   transitive dependencies, no network, no Google Play Services.
 - **Repository:** https://github.com/zxing/zxing
 - **License:** Apache-2.0.
+
+#### Google ML Kit barcode scanning (bundled model)
+
+- **Package:** `com.google.mlkit:barcode-scanning` **17.3.0** (exact pin) — the
+  BUNDLED variant. The model ships inside the APK as three TensorFlow Lite
+  assets under `assets/mlkit_barcode_models/`; nothing is downloaded, on first
+  use or ever.
+- **Repository / docs:** https://developers.google.com/ml-kit/vision/barcode-scanning
+- **License:** Apache-2.0 (the Android SDK terms also apply to the Play Services
+  client libraries it depends on).
+
+**IT IS NATIVE, CLOSED-SOURCE CODE ON THE UNTRUSTED-INPUT PATH.** ZXing is pure
+Java; ML Kit's decoder is `libbarhopper_v3.so`, shipped per-ABI (about 4.9 MB on
+arm64-v8a, roughly 20 MB across the four ABIs in the APK). It is what parses
+camera frames, which are the least trusted input the app takes — anyone can point
+the camera at anything. That is a real increase in exposure over the decoder it
+replaced, and over the pure-Java posture the rest of the app keeps. It is written
+down here rather than left as a silent difference in the artifact, and it is
+accepted for one reason only: ZXing could not read the code on real hardware.
+
+(CameraX already contributed `libimage_processing_util_jni.so` and
+`libsurface_util_jni.so`, and Compose contributes `libandroidx.graphics.path.so`.
+Those pre-date this change; `libbarhopper_v3.so` is what it added.)
+
+**WHAT THIS DEPENDENCY COSTS, stated plainly.** Unlike ZXing and CameraX, this
+one is not self-contained. It brings the Google Play Services client stack —
+`play-services-basement`, `play-services-base`, `play-services-tasks` — and,
+through `com.google.mlkit:common`, Google's **datatransport** stack.
+
+The permissions come from THAT stack, not from Play Services proper:
+`com.google.android.datatransport:transport-backend-cct` declares **INTERNET**
+and **ACCESS_NETWORK_STATE**, and `transport-runtime` declares
+**ACCESS_NETWORK_STATE** — verified by extracting the manifests from the resolved
+`.aar` files. (`play-services-basement` declares no permission at all; an earlier
+version of this note blamed it, which was wrong. The same datatransport stack is
+the telemetry uploader described in point 4 below, so the permissions and the
+uploader have a single origin.) Manifest merging is a union, so the release APK was in fact
+built requesting both before this was noticed. It also merges in a content
+provider, `MlKitInitProvider`, in an app that had none of its own.
+
+Three things were done about that rather than left as a footnote:
+
+1. The app manifest DELETES both permissions with `tools:node="remove"`, so the
+   shipping APK requests only CAMERA and the guarantee is enforced by the OS
+   instead of asserted in a document. `verifyReleaseManifest` and
+   `AppSourceAuditTest` fail the build if either is reinstated or if the removal
+   lines are dropped.
+2. `ScannerOfflineTest` proves on a handset that the process genuinely cannot
+   open a socket (a positive control, so the test cannot pass vacuously) and that
+   ML Kit decodes a production-density symbol anyway — which is what establishes
+   the model is bundled rather than fetched.
+3. The provider could not be removed: deleting it makes ML Kit throw
+   "MlKitContext has not been initialized". It is kept, asserted
+   `exported="false"` with a package-scoped authority by name in
+   `ManifestHardeningTest`, and the manifest's former flat claim of "NO PROVIDER"
+   was corrected rather than left standing.
+4. **A TELEMETRY UPLOADER CAME WITH IT, AND WAS REMOVED.** Inspecting the built
+   release APK found `MLKitLoggingOptions{libraryName=common, enableFirelog=true}`,
+   a `CctBackendFactory` (Google's Clearcut transport), a
+   `JobInfoSchedulerService` and an `AlarmManagerSchedulerBroadcastReceiver` — a
+   scheduled uploader, switched on by default, in an app whose About screen tells
+   the operator there is no analytics and no crash reporting. The manifest deletes
+   all three components. The datatransport ARTIFACT cannot be excluded (ML Kit
+   references its classes directly; dropping it fails R8 with eight missing-class
+   errors), so the classes remain and the entry points do not: nothing schedules a
+   job and no broadcast wakes one.
+   `ScannerOfflineTest.noTelemetryUploaderComponentIsInstalled` asserts this
+   against the INSTALLED package, and the decode test proves ML Kit still works
+   with them gone.
 
 #### AndroidX CameraX
 
@@ -222,8 +301,8 @@ INTERNET permission for them to leave by.
 - **Repository:** https://android.googlesource.com/platform/frameworks/support
 - **License:** Apache-2.0.
 
-Both are licensed under the Apache License, Version 2.0. The full license text is
-reproduced above (see jsQR) and is available at
+All three are licensed under the Apache License, Version 2.0. The full license
+text is reproduced above (see jsQR) and is available at
 `http://www.apache.org/licenses/LICENSE-2.0`.
 
 ## iOS Edition — post-quantum hybrid KEM (swift-crypto / BoringSSL)

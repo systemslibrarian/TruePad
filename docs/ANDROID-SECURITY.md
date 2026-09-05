@@ -618,16 +618,46 @@ it anyway.
 
 One exported component: the launcher activity, with a `MAIN`/`LAUNCHER` filter
 and nothing else. No service, no receiver, no provider of TruePad's own, no
-permission that grants a capability, no cleartext traffic. `androidx.startup`
-merges in one un-exported provider; `androidx.profileinstaller` merges in an
-exported receiver, which is **removed** — an exported component for a feature the
-app does not use is surface for nothing.
+cleartext traffic, and exactly one capability-granting permission — CAMERA, to
+scan a receive code. `androidx.startup` and ML Kit each merge in one un-exported
+provider; `androidx.profileinstaller` merges in an exported receiver, which is
+**removed** — an exported component for a feature the app does not use is surface
+for nothing.
+
+**The scanner dependency pulls in more than a decoder, and it is cut back
+explicitly.** `com.google.mlkit:barcode-scanning` arrives with the Play Services
+client stack and, through `com.google.mlkit:common`, Google's datatransport
+stack — and it is datatransport that declares the permissions:
+`transport-backend-cct` declares INTERNET and ACCESS_NETWORK_STATE, and
+`transport-runtime` declares ACCESS_NETWORK_STATE (verified by reading the
+manifests inside the resolved `.aar` files; `play-services-basement` declares
+none, which an earlier version of this section wrongly claimed) — which put both into the shipping
+release APK by merge, unnoticed, in an app that tells the operator it has no
+transport of its own. The manifest now deletes both with `tools:node="remove"`,
+so what ships asks for CAMERA and nothing else. ML Kit's `MlKitInitProvider`
+could NOT be deleted the same way (ML Kit then throws "MlKitContext has not been
+initialized"), so it stays, un-exported and package-scoped, pinned by name.
+
+`ScannerOfflineTest` closes the loop on a handset: it shows the process cannot
+open a socket at all — a positive control, without which the rest would prove
+nothing — and that ML Kit still decodes a production-density symbol, which is
+what makes "the model is bundled, not downloaded" an observation rather than a
+reading of the vendor's documentation.
 
 Two gates keep it that way, and neither can be satisfied by the other:
 `ManifestHardeningTest` reads the INSTALLED debug package on a device, and the
 `:app:verifyReleaseManifest` Gradle task parses the merged RELEASE manifest and
 fails the build if anything but the launcher is exported, if any permission
-appears, or if backup is turned back on.
+beyond CAMERA appears, or if backup is turned back on.
+
+A third gate was added after the INTERNET permission got in: `AppSourceAuditTest`
+now reads the source manifest the way the MERGER does, separating entries that
+request a permission from entries that delete one, and it requires both removal
+lines to be present. The check it replaced asked whether the file contained the
+text `android.permission.INTERNET` — true of a manifest that asks for it and
+equally true of one that removes it, so adding the removals silently disarmed it.
+`HostileMutationMatrixTest` pins that specific failure with its own row: delete a
+removal line and the matrix reports an escape.
 
 ---
 
