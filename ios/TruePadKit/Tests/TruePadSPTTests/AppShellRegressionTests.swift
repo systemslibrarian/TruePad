@@ -107,25 +107,34 @@ final class AppShellRegressionTests: XCTestCase {
             .appendingPathComponent("truepad-backup-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
 
+        // READ THROUGH A FRESH URL EVERY TIME. `URL` CACHES resource values, so a
+        // URL that has already been asked once answers from that cache and not
+        // from the filesystem. Reading the same `root` value after clearing the
+        // flag through a copy returned the STALE `true` and failed the
+        // precondition — the test was reporting on its own cache rather than on
+        // the directory.
+        func excluded() throws -> Bool? {
+            try URL(fileURLWithPath: root.path)
+                .resourceValues(forKeys: [.isExcludedFromBackupKey])
+                .isExcludedFromBackup
+        }
+
         let first = try DarwinFs(root: root)
         XCTAssertFalse(first.backupExclusionUnavailable,
                        "the platform should honour the exclusion in a temp directory")
-        var values = try root.resourceValues(forKeys: [.isExcludedFromBackupKey])
-        XCTAssertEqual(values.isExcludedFromBackup, true)
+        XCTAssertEqual(try excluded(), true)
 
         // CLEAR IT, then reopen: the second open must reassert it. This is the
         // case the old code missed entirely, because the directory already
         // existed and `makeDirectory` returned early.
-        var mutable = root
+        var mutable = URL(fileURLWithPath: root.path)
         var clear = URLResourceValues()
         clear.isExcludedFromBackup = false
         try mutable.setResourceValues(clear)
-        values = try root.resourceValues(forKeys: [.isExcludedFromBackupKey])
-        XCTAssertEqual(values.isExcludedFromBackup, false, "precondition: the flag is cleared")
+        XCTAssertEqual(try excluded(), false, "precondition: the flag is cleared")
 
         _ = try DarwinFs(root: root)
-        values = try root.resourceValues(forKeys: [.isExcludedFromBackupKey])
-        XCTAssertEqual(values.isExcludedFromBackup, true,
+        XCTAssertEqual(try excluded(), true,
                        "re-opening the store must reassert the backup exclusion")
     }
 
@@ -216,6 +225,44 @@ final class AppShellRegressionTests: XCTestCase {
         XCTAssertEqual(HandoffScratch.sweep(dir), 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: bystander.path),
                       "the sweep must not delete files it does not own")
+    }
+
+    // MARK: - the role survives view evaluation order
+
+    /// AN ORDERING DEPENDENCY, removed — not an observed defect. The models were
+    /// handed a role their parent computed in `reload()` on appear, while
+    /// `NavigationLink` builds its destination eagerly. On the device the role was
+    /// in fact derived correctly; a bad accessibility query during the two-device
+    /// ceremony made it look otherwise. The dependency was still worth removing.
+    ///
+    /// The models are `#if os(iOS)` and CI cannot execute them, so the RULE lives
+    /// in `PartyRoleResolver` — which CI can — and the models call it.
+    func testTheRoleIsResolvedFromTheStoreNotFromAParentView() throws {
+        let fs = MemoryFs()
+        let pairId = "5ab1e2c30d4f5a6b7c8d9e0fa1b2c3d4"
+        let engine = Engine(fs: fs, clock: { Date(timeIntervalSince1970: 0) },
+                            pairIdSource: { Hex.decode(pairId)! })
+        let need = try Partition.requiredSourceLength(capacity: 256, capacityRecords: 4)
+        _ = try engine.gen(label: "created-here",
+                           sources: [SourceInput(name: deviceSourceNameWire,
+                                                 declaredOrigin: "test",
+                                                 bytes: randomBytes(need))],
+                           encryptionBytes: 256, authRecords: 4)
+
+        // No parent, no reload — exactly the eager-destination case.
+        XCTAssertEqual(PartyRoleResolver.resolve(engine: engine, pairId: pairId), Party.a,
+                       "a pad generated here resolves to A with nothing else loaded")
+
+        // And the importing side, which is the half the ceremony exercised.
+        let exported = try engine.exportPair(pairId: pairId)
+        let fsB = MemoryFs()
+        let b = Engine(fs: fsB, clock: { Date(timeIntervalSince1970: 0) })
+        _ = try b.importPair(label: "p", container: exported.container)
+        XCTAssertEqual(PartyRoleResolver.resolve(engine: b, pairId: pairId), Party.b,
+                       "an imported pad resolves to B, which is what the ceremony needs")
+
+        // A pad that is not there resolves to nothing rather than guessing.
+        XCTAssertNil(PartyRoleResolver.resolve(engine: b, pairId: "0000000000000000000000000000dead"))
     }
 
     // MARK: - one role per pair, derived, never guessed
@@ -328,6 +375,95 @@ final class AppShellRegressionTests: XCTestCase {
         XCTAssertNotEqual(one.envelope, two.envelope,
                           "different plaintexts, but the SAME pad offsets and the same "
                           + "one-time authentication record — this is the reuse")
+    }
+
+    // MARK: - a receive-request QR can actually be drawn
+
+    /// FOUND ON A HANDSET, and only on a handset. `QrCodeView.render` hardcoded
+    /// error-correction level "H", whose byte-mode capacity is 1273 bytes. A TPR2
+    /// receive request is ~1652. CoreImage on the device produced no image, the
+    /// Receive screen fell back to "This code could not be drawn", and the
+    /// SENDER HAD NOTHING TO SCAN — the optical ceremony was impossible on iOS.
+    ///
+    /// macOS CoreImage renders the same over-capacity payload anyway, so a host
+    /// test of the renderer would have passed. What is testable on the host is
+    /// the DECISION, so that is what lives in `QrCorrection` and what this pins.
+    func testAReceiveRequestFitsTheChosenCorrectionLevel() throws {
+        let engine = Engine(fs: MemoryFs(), clock: { Date(timeIntervalSince1970: 0) })
+        let request = try engine.sptCreateReceiveRequest()
+        let byteCount = Data(request.tpr2Text.utf8).count
+
+        // The real thing, not a stand-in: a request is past H and must not be
+        // offered H.
+        XCTAssertGreaterThan(byteCount, 1273,
+                             "precondition: a receive request really is past H's capacity")
+        let level = try XCTUnwrap(QrCorrection.strongestLevel(forByteCount: byteCount),
+                                  "a receive request must be drawable at SOME level")
+        XCTAssertNotEqual(level, "H", "H cannot carry a receive request")
+
+        // And the level chosen must genuinely have room for it.
+        let capacity = try XCTUnwrap(QrCorrection.capacities.first { $0.level == level }?.bytes)
+        XCTAssertLessThanOrEqual(byteCount, capacity)
+    }
+
+    /// STRONGEST-FIRST, because these codes are read off a screen at an angle in
+    /// bad light. A level is only given up when the payload leaves no choice.
+    func testTheStrongestLevelThatFitsIsChosen() {
+        XCTAssertEqual(QrCorrection.strongestLevel(forByteCount: 1), "H")
+        XCTAssertEqual(QrCorrection.strongestLevel(forByteCount: 1273), "H")
+        XCTAssertEqual(QrCorrection.strongestLevel(forByteCount: 1274), "Q")
+        XCTAssertEqual(QrCorrection.strongestLevel(forByteCount: 1663), "Q")
+        XCTAssertEqual(QrCorrection.strongestLevel(forByteCount: 1664), "M")
+        XCTAssertEqual(QrCorrection.strongestLevel(forByteCount: 2331), "M")
+        XCTAssertEqual(QrCorrection.strongestLevel(forByteCount: 2332), "L")
+        XCTAssertEqual(QrCorrection.strongestLevel(forByteCount: 2953), "L")
+    }
+
+    /// THE FUNCTION THE RENDERER ACTUALLY CALLS.
+    ///
+    /// The tests above pin `strongestLevel`, which is the STRONGEST level the QR
+    /// specification allows for a payload — and is precisely the policy that made
+    /// a 1652-byte receive code unreadable on a real handset, because it picks Q
+    /// and a 179-module symbol. `renderModules` calls `level(forByteCount:)`
+    /// instead, which deliberately gives redundancy away above H's capacity to
+    /// get bigger modules.
+    ///
+    /// Pinning only `strongestLevel` left the shipping policy untested: the two
+    /// functions disagree on every payload above 1273 bytes, so a change that
+    /// reverted `level` to "strongest that fits" would have broken the physical
+    /// scan again with the whole suite still green.
+    func testTheRendererChoosesReadabilityOverRedundancyAboveHsCapacity() {
+        // At or below H's capacity the strongest level is free, and both agree.
+        XCTAssertEqual(QrCorrection.level(forByteCount: 1), "H")
+        XCTAssertEqual(QrCorrection.level(forByteCount: 1273), "H")
+        XCTAssertEqual(QrCorrection.level(forByteCount: 1273),
+                       QrCorrection.strongestLevel(forByteCount: 1273))
+
+        // Above it, the renderer takes the LOWEST redundancy — the smallest
+        // symbol, the largest modules — and the two functions part company.
+        for dense in [1274, 1663, 1664, 2331, 2332, 2953] {
+            XCTAssertEqual(QrCorrection.level(forByteCount: dense), "L",
+                           "\(dense) bytes must draw at L for the modules to stay resolvable")
+        }
+        XCTAssertNotEqual(QrCorrection.level(forByteCount: 1274),
+                          QrCorrection.strongestLevel(forByteCount: 1274),
+                          "if these agree the readability policy has been reverted")
+
+        // A real receive code is the case that failed on hardware.
+        let tpr2Bytes = 1652
+        XCTAssertEqual(QrCorrection.level(forByteCount: tpr2Bytes), "L")
+        XCTAssertEqual(QrCorrection.strongestLevel(forByteCount: tpr2Bytes), "Q",
+                       "the old policy is what chose Q, and Q is what the camera could not read")
+
+        // Nothing above version 40's byte-mode capacity may claim a level.
+        XCTAssertNil(QrCorrection.level(forByteCount: 2954))
+        XCTAssertNil(QrCorrection.strongestLevel(forByteCount: 2954))
+
+        // Past the largest symbol there is no honest answer, and the builder's
+        // own maxQrCharacters refuses before this is ever reached.
+        XCTAssertNil(QrCorrection.strongestLevel(forByteCount: 2954))
+        XCTAssertEqual(QrPayloadBuilder.maxQrCharacters, 2953,
+                       "the builder's ceiling and L's capacity must agree")
     }
 
     // MARK: - the share-sheet cleanup actually removes the file
@@ -567,5 +703,71 @@ final class AppShellRegressionTests: XCTestCase {
         let row = MeterRow(try XCTUnwrap(try engine.status(pairId).meters[.aToB]))
         XCTAssertEqual(row.verdict, "NOT ELIGIBLE",
                        "a device-generated pad must read exactly what the Create screen promises")
+    }
+
+    /// SEALING MUST NOT STRAND THE PAD, and must not unblock the raw pad either.
+    ///
+    /// One flag was answering two questions. Sealing commits the package to disk
+    /// and the engine will hand back those exact bytes for the same request, but
+    /// the pad screen hid the sealed-transfer button as soon as the handoff marker
+    /// said `.sealed` — so dismissing the sheet before saving the file left the
+    /// operator with a committed package and no affordance that could reach it.
+    func testAlreadySealedPadsCanStillHandOverThePackageButNotTheRawPad() {
+        // Sealed: the package may be re-offered, the raw pad may not.
+        XCTAssertTrue(HandoffPolicy.mayResharedSealedPackage(sealed: true, imported: false))
+        XCTAssertFalse(HandoffPolicy.mayExportRawPad(handedOver: true, imported: false),
+                       "a pad that has been handed over must never leave as a file again")
+
+        // Handed over physically: neither. There is no committed package to
+        // re-offer, and the raw pad is spent.
+        XCTAssertFalse(HandoffPolicy.mayResharedSealedPackage(sealed: false, imported: false))
+        XCTAssertFalse(HandoffPolicy.mayExportRawPad(handedOver: true, imported: false))
+
+        // Untouched and created here: the raw pad may leave; there is nothing
+        // sealed to re-offer yet.
+        XCTAssertTrue(HandoffPolicy.mayExportRawPad(handedOver: false, imported: false))
+        XCTAssertFalse(HandoffPolicy.mayResharedSealedPackage(sealed: false, imported: false))
+
+        // IMPORTED IS NEVER PASSED ON, by either route, in any state. Two people
+        // holding the same pad is the reuse this app exists to prevent.
+        XCTAssertFalse(HandoffPolicy.mayExportRawPad(handedOver: false, imported: true))
+        XCTAssertFalse(HandoffPolicy.mayResharedSealedPackage(sealed: true, imported: true))
+    }
+
+    /// THE RECEIVE SCREEN MUST BE ABLE TO ASK ABOUT THE REQUEST IT IS HOLDING.
+    ///
+    /// `sptRestorePendingReceiveRequest` answers "what is the newest pending
+    /// request?", which is a different question and cannot decide whether the one
+    /// already on screen is still live. Once opening a sealed pad became
+    /// reachable, the screen went on advertising a request that an open had
+    /// consumed — QR, twelve words, and a Cancel button that could only throw,
+    /// because the engine refuses to cancel a consumed request.
+    func testAConsumedOrCancelledRequestStopsBeingPending() throws {
+        let engine = Engine(fs: MemoryFs(), clock: { Date(timeIntervalSince1970: 0) })
+
+        let created = try engine.sptCreateReceiveRequest()
+        XCTAssertTrue(engine.sptReceiveRequestIsPending(requestIdHex: created.requestIdHex),
+                      "a freshly published request is pending")
+
+        _ = try engine.sptCancelReceiveRequest(requestIdHex: created.requestIdHex)
+        XCTAssertFalse(engine.sptReceiveRequestIsPending(requestIdHex: created.requestIdHex),
+                       "a cancelled request must not read as pending")
+
+        // An identifier that was never published, and a malformed one, are both
+        // "not pending" rather than an error the screen has to handle.
+        XCTAssertFalse(engine.sptReceiveRequestIsPending(
+            requestIdHex: String(repeating: "a", count: 32)))
+        XCTAssertFalse(engine.sptReceiveRequestIsPending(requestIdHex: "not-a-request-id"))
+    }
+
+    /// A REJECTED request is equally finished. Rejecting is how a failed word
+    /// comparison is meant to end, so it must not read as pending afterwards.
+    func testARejectedRequestStopsBeingPending() throws {
+        let engine = Engine(fs: MemoryFs(), clock: { Date(timeIntervalSince1970: 0) })
+        let created = try engine.sptCreateReceiveRequest()
+        _ = try engine.sptRejectReceiveRequest(requestIdHex: created.requestIdHex)
+        XCTAssertFalse(engine.sptReceiveRequestIsPending(requestIdHex: created.requestIdHex))
+        XCTAssertNil(try engine.sptRestorePendingReceiveRequest(),
+                     "and it must never be restored onto the screen again")
     }
 }

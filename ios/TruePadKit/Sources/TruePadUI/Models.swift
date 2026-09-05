@@ -113,8 +113,14 @@ public final class PadDetailModel: ObservableObject {
     /// at.
     @Published public private(set) var derivedRole: Party?
     @Published public private(set) var mayHandOff = true
+    /// Whether the ALREADY-COMMITTED sealed package may be offered again. Distinct
+    /// from `mayHandOff`, which governs whether the RAW pad may leave as a file —
+    /// see `HandoffPolicy` for why collapsing the two stranded pads.
+    @Published public private(set) var mayReshareSealed = false
     @Published public private(set) var handOffRefusal: String?
     @Published public var fileToShare: ShareableFile?
+    /// Drives the sealed-transfer ceremony sheet.
+    @Published public var sealing = false
     /// Holds the scratch file's lifetime OUTSIDE the presentation binding, because
     /// SwiftUI clears an `item:` binding before calling `onDismiss`. The rule and
     /// its tests live in `HandoffScratchFile`, which CI can actually reach.
@@ -139,24 +145,32 @@ public final class PadDetailModel: ObservableObject {
             // Whether this pad may still leave is the ENGINE's answer, asked
             // without mutating anything: a pad that already left must not be
             // offered a button that will only refuse.
+            let imported = summary.origin == .imported
             switch engine.handoffState(pairId: pairId) {
             case .absent:
                 // ONE ROLE PER PAIR, derived from how this pad was acquired.
                 // See `PartyRole` for what defaulting instead cost.
                 derivedRole = PartyRole.derive(from: summary.origin)
-                mayHandOff = summary.origin != .imported
-                handOffRefusal = summary.origin == .imported
+                mayHandOff = HandoffPolicy.mayExportRawPad(handedOver: false, imported: imported)
+                mayReshareSealed = false
+                handOffRefusal = imported
                     ? "This pad arrived from someone else, so TruePad will not pass it on. Two "
                       + "people holding the same pad would each use the same material."
                     : nil
             case .physical(let at):
                 mayHandOff = false
+                mayReshareSealed = false
                 handOffRefusal = "This pad was already handed over on \(at)."
             case .sealed:
                 mayHandOff = false
+                // THE COMMITTED PACKAGE STAYS REACHABLE. Sealing writes the
+                // package to disk; hiding this button was what stranded a pad
+                // whose operator dismissed the sheet before saving the file.
+                mayReshareSealed = HandoffPolicy.mayResharedSealedPackage(sealed: true, imported: imported)
                 handOffRefusal = "This pad was already sent by sealed transfer."
             case .unreadableSpent(let message):
                 mayHandOff = false
+                mayReshareSealed = false
                 handOffRefusal = message
             }
         } catch {
@@ -193,14 +207,19 @@ public final class PadDetailModel: ObservableObject {
         fileToShare = nil
     }
 
-    public func beginSealedTransfer() { /* presented by the ceremony flow */ }
+    /// Presents the sealed-transfer ceremony.
+    ///
+    /// This used to be an EMPTY FUNCTION BODY wired to the "Send it by sealed
+    /// transfer…" button, so the button did nothing and `SealView` — complete and
+    /// tested — was never presented by anything. The receiver half was unreachable
+    /// too. Found by the two-device physical ceremony, which could not proceed
+    /// past the Android seal because the iPhone had no way to open the package.
+    public func beginSealedTransfer() { sealing = true }
 
-    public func sendModel() -> SendModel {
-        SendModel(engine: engine, pairId: pairId, role: derivedRole)
-    }
-    public func openModel() -> OpenModel {
-        OpenModel(engine: engine, pairId: pairId, role: derivedRole)
-    }
+    public func sealModel() -> SealModel { SealModel(engine: engine, pairId: pairId) }
+
+    public func sendModel() -> SendModel { SendModel(engine: engine, pairId: pairId) }
+    public func openModel() -> OpenModel { OpenModel(engine: engine, pairId: pairId) }
     public func destroyModel() -> DestroyModel { DestroyModel(engine: engine, pairId: pairId) }
 
     func refuse(_ error: Error) {
@@ -226,11 +245,22 @@ public final class SendModel: ObservableObject {
     let engine: Engine
     let pairId: String
 
-    public init(engine: Engine, pairId: String, role: Party?) {
+    /// DERIVES ITS OWN ROLE from the pad, rather than being handed one.
+    ///
+    /// It used to take the role from `PadDetailModel.derivedRole`, which is set by
+    /// `reload()` on appear — but `NavigationLink { SendView(model: sendModel()) }`
+    /// builds its destination EAGERLY, so this ran before the parent had loaded
+    /// anything and every pad looked unknown-origin. The physical ceremony caught
+    /// it: a pad imported by sealed transfer, whose origin really is `imported`,
+    /// still asked the operator which half was theirs.
+    ///
+    /// Reading the pad here makes the answer independent of view evaluation order.
+    public init(engine: Engine, pairId: String, role: Party? = nil) {
         self.engine = engine
         self.pairId = pairId
-        self.role = role
-        self.roleWasDerived = role != nil
+        let resolved = role ?? PartyRoleResolver.resolve(engine: engine, pairId: pairId)
+        self.role = resolved
+        self.roleWasDerived = resolved != nil
     }
 
     /// Sending needs BOTH a message and a known role. A pad whose origin is
@@ -281,11 +311,14 @@ public final class OpenModel: ObservableObject {
     let engine: Engine
     let pairId: String
 
-    public init(engine: Engine, pairId: String, role: Party?) {
+    /// Same as `SendModel`: derives its own role so the answer does not depend on
+    /// when the parent view happened to reload.
+    public init(engine: Engine, pairId: String, role: Party? = nil) {
         self.engine = engine
         self.pairId = pairId
-        self.role = role
-        self.roleWasDerived = role != nil
+        let resolved = role ?? PartyRoleResolver.resolve(engine: engine, pairId: pairId)
+        self.role = resolved
+        self.roleWasDerived = resolved != nil
     }
 
     public var canOpen: Bool { !envelopeText.isEmpty && role != nil }

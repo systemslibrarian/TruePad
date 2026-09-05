@@ -403,6 +403,117 @@ public enum PartyRole {
         + "other person is also spending."
 }
 
+/// WHICH QR ERROR-CORRECTION LEVEL A PAYLOAD SHOULD USE.
+///
+/// FOUND ON A HANDSET, in two stages, during the two-device ceremony.
+///
+/// First, `QrCodeView.render` hardcoded level `"H"`, whose byte-mode capacity is
+/// 1273 bytes. A TPR2 receive request is ~1652. CoreImage on the device produced
+/// NO image, the Receive screen fell back to "This code could not be drawn", and
+/// the sender had nothing to scan. (It did not reproduce on a Mac: macOS
+/// CoreImage renders an over-capacity payload anyway, so a host test of the
+/// renderer would have said the code was fine.)
+///
+/// Then, picking the STRONGEST level that fits produced a code the Android camera
+/// still could not read — because that choice maximises redundancy and therefore
+/// MODULE COUNT. At Q a 1652-byte request needs the largest symbol there is, 177
+/// modules across; at L the same bytes fit in 149. On a fixed-width screen that
+/// is the difference between roughly 2.0 and 2.4 points per module, and a phone
+/// camera reading another phone's screen is resolution-limited, not
+/// damage-limited.
+///
+/// THE RULE, therefore: for a code that will be read off a screen at close range
+/// in reasonable light, FEWER MODULES beats MORE REDUNDANCY. Small payloads keep
+/// the strongest level, because a small payload is a small symbol either way and
+/// the redundancy is free.
+public enum QrCorrection {
+    /// Byte-mode capacity at QR version 40 — the largest symbol — per level,
+    /// strongest first. These are the QR specification's numbers.
+    public static let capacities: [(level: String, bytes: Int)] =
+        [("H", 1273), ("Q", 1663), ("M", 2331), ("L", 2953)]
+
+    /// Above this, redundancy is traded away for larger modules. 1273 is H's
+    /// capacity: at or below it the strongest level costs nothing, and above it
+    /// every level that still fits needs a near-maximal symbol.
+    public static let denseThreshold = 1273
+
+    /// The level to draw `byteCount` with, or nil if nothing can carry it.
+    public static func level(forByteCount byteCount: Int) -> String? {
+        guard byteCount <= 2953 else { return nil }
+        // A payload that fits the strongest level gets it.
+        if byteCount <= denseThreshold { return "H" }
+        // Otherwise the lowest redundancy, because that is the smallest symbol
+        // and therefore the largest modules for a camera to resolve.
+        return "L"
+    }
+
+    /// The STRONGEST level that could carry `byteCount`. Kept because it is the
+    /// honest answer to a different question — what the spec allows — and the
+    /// renderer falls back through these when a level will not draw.
+    public static func strongestLevel(forByteCount byteCount: Int) -> String? {
+        capacities.first { byteCount <= $0.bytes }?.level
+    }
+}
+
+/// RESOLVE A PAIR'S ROLE BY ASKING THE STORE.
+///
+/// WHY THIS EXISTS, stated honestly. The send and open models used to be handed a
+/// role by their parent, computed in `reload()` on appear, while
+/// `NavigationLink { SendView(model: sendModel()) }` builds its destination
+/// eagerly. That ORDERING DEPENDENCY was real and is removed here.
+///
+/// It was NOT an observed defect. During the two-device ceremony a bad
+/// accessibility query made it look as though an imported pad was failing to
+/// derive its role; on the device the role was in fact derived correctly, and the
+/// operator was never asked. The query was wrong, not the code.
+///
+/// The change is kept because a model owning its own fact is right regardless: it
+/// makes the answer independent of when a parent view happened to load, and it is
+/// testable on the host, which the models themselves are not.
+public enum PartyRoleResolver {
+    public static func resolve(engine: Engine, pairId: String) -> Party? {
+        (try? engine.status(pairId)).flatMap { PartyRole.derive(from: $0.origin) }
+    }
+}
+
+/// WHAT A PAD MAY STILL DO ONCE IT HAS BEEN HANDED OVER.
+///
+/// Two different questions were being answered by one flag, and collapsing them
+/// stranded pads. Sealing COMMITS a package to disk, and `sptSeal` called again
+/// with the SAME receive request returns those committed bytes verbatim —
+/// `reshared: true`, no new cryptography, no fresh confirmation. But the pad
+/// screen hid the sealed-transfer button the moment the handoff marker said
+/// `.sealed`, so an operator who sealed and then dismissed the sheet before
+/// saving the file had no route back to it. The package existed and the only
+/// affordance that could reach it was gone.
+///
+/// The two questions, kept apart:
+///
+///   - MAY THE RAW PAD LEAVE AS A FILE? Once a pad has been handed over by any
+///     route, no. Two copies in circulation is the reuse this app exists to
+///     prevent, and that answer never becomes yes again.
+///   - MAY THE ALREADY-SEALED PACKAGE BE HANDED OVER AGAIN? Yes, and only for a
+///     pad whose handoff is `.sealed`. It is the same bytes, already committed,
+///     already confirmed. Re-offering them creates no second copy — the copy was
+///     created when the seal was committed. Sealing to a DIFFERENT request is
+///     refused by the engine, not by this policy.
+///
+/// An imported pad is never passed on by either route.
+public enum HandoffPolicy {
+    /// Whether the raw pad may still be written to a file the operator chooses.
+    public static func mayExportRawPad(handedOver: Bool, imported: Bool) -> Bool {
+        !handedOver && !imported
+    }
+
+    /// Whether the committed sealed package may be offered again.
+    /// TRUE ONLY for a pad that was sealed — never for one handed over
+    /// physically, never for one whose spent-state cannot be read, and never for
+    /// an imported copy.
+    public static func mayResharedSealedPackage(sealed: Bool, imported: Bool) -> Bool {
+        sealed && !imported
+    }
+}
+
 public enum EgressPolicy {
     /// Pad material NEVER reaches the clipboard, and neither does plaintext.
     public static func mayCopyToClipboard(_ egress: Egress) -> Bool { egress == .publicText }

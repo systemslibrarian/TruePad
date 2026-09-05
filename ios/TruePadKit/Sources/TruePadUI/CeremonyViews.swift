@@ -1,5 +1,6 @@
 #if os(iOS)
 import SwiftUI
+import UniformTypeIdentifiers
 import TruePadCore
 import TruePadStorage
 
@@ -145,8 +146,27 @@ public struct ReceiveRequestView: View {
                          + "request. The key never leaves.")
                 }
             }
+
+            // THE RECEIVER HALF OF THE CEREMONY. `OpenSealedView` existed and was
+            // tested, and nothing in the app ever presented it — so a pad sealed to
+            // this device's own request could not be opened. Found by the
+            // two-device physical run.
+            Section {
+                NavigationLink("Open a sealed pad") {
+                    OpenSealedView(model: OpenSealedModel(engine: model.engine))
+                }
+            } header: {
+                Text("When the sealed file arrives")
+            } footer: {
+                Text("Choose the file the sender gave you. Nothing is saved until you have "
+                     + "compared the eight words with them.")
+            }
         }
         .navigationTitle("Receive a pad")
+        // RE-READ ON EVERY APPEARANCE, including on the way back from opening a
+        // sealed pad. Without this the screen kept advertising the request that
+        // open had just consumed, with a Cancel button that could only throw.
+        .onAppear { model.refresh() }
         .alert("TruePad refused", isPresented: $model.showingRefusal) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -326,6 +346,29 @@ public struct OpenSealedView: View {
                 } footer: {
                     Text("Rejecting cancels the request permanently. Nothing is saved.")
                 }
+            }
+        }
+        // ON THE VIEW ROOT, not on the Button. Attached to a Button inside a
+        // Form's Section it simply never presented — the screen stayed put and
+        // the receiver could not choose a file at all.
+        .fileImporter(isPresented: $model.choosingFile,
+                      allowedContentTypes: [.data],
+                      allowsMultipleSelection: false) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                // A picked file lives outside the sandbox until it is opened
+                // under a security scope.
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                if let data = try? Data(contentsOf: url) {
+                    model.open(packageBytes: [UInt8](data))
+                } else {
+                    model.refuse(SptRefusalText.unreadableFile)
+                }
+            case .failure:
+                // Cancelling is not a refusal and must not look like one.
+                break
             }
         }
         .navigationTitle("Open a sealed pad")

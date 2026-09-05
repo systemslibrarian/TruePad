@@ -189,19 +189,38 @@ public struct OpenView: View {
 /// rather than at every call site.
 public struct QrCodeView: View {
     public let payload: QrPayload
+    @State private var enlarged = false
 
     public init(payload: QrPayload) { self.payload = payload }
 
     public var body: some View {
         VStack(spacing: 12) {
             #if canImport(UIKit)
-            if let image = Self.render(payload.text) {
+            if let rendered = Self.renderModules(payload.text) {
+                let image = rendered.image
+                // TAP TO ENLARGE. The inline code is NOT the scan path.
+                //
+                // Found on two real handsets: a receive request is ~1652 bytes,
+                // which is 149 modules across even at the lowest redundancy. At
+                // 320 points that is about 2 points per module, and an Android
+                // camera reading an iPhone screen could not resolve it. The code
+                // rendered perfectly and still could not be scanned.
+                //
+                // What fixes it is physical size and contrast, not the encoder:
+                // fill the screen's shortest side, on white, at an integer size
+                // so module edges stay crisp, and raise the backlight while it is
+                // up. The payload is public TPR2, so nothing is exposed by
+                // showing it large.
                 Image(uiImage: image)
                     .interpolation(.none)
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: 320)
                     .accessibilityLabel("A QR code. " + VerbatimText.qrCarriesOnlyPublicData)
+                    .accessibilityHint("Opens the code full screen so the other phone can scan it.")
+                    .onTapGesture { enlarged = true }
+                Button("Show it full screen to be scanned") { enlarged = true }
+                    .font(.callout)
             } else {
                 Text("This code could not be drawn. Use the text instead.")
                     .foregroundStyle(.secondary)
@@ -212,23 +231,119 @@ public struct QrCodeView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+        #if canImport(UIKit)
+        .fullScreenCover(isPresented: $enlarged) {
+            if let r = Self.renderModules(payload.text) {
+                FullScreenQrView(image: r.image, modules: r.modules)
+            }
+        }
+        #endif
     }
 
     #if canImport(UIKit)
     /// CoreImage, on-device, with no network and no third-party generator. The
     /// highest error correction the payload allows, because these are read off a
     /// screen at an angle in bad light.
-    static func render(_ text: String) -> UIImage? {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(text.utf8)
-        filter.correctionLevel = "H"
-        guard let output = filter.outputImage else { return nil }
-        let scaled = output.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
-        let context = CIContext()
-        guard let cg = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-        return UIImage(cgImage: cg)
+    /// The symbol at ONE PIXEL PER MODULE, with its module count.
+    ///
+    /// Deliberately NOT pre-scaled. A QR is a grid, and the decoder is looking
+    /// for that grid: if the image is scaled by a non-integer factor — 1390 pixels
+    /// shown across 1170 — then with nearest-neighbour some modules land on 8
+    /// pixels and their neighbours on 9, the grid stops being uniform, and the
+    /// finder patterns stop measuring what they are supposed to measure. Handing
+    /// back 1:1 lets the view choose a WHOLE-NUMBER pixels-per-module.
+    static func renderModules(_ text: String) -> (image: UIImage, modules: Int)? {
+        let data = Data(text.utf8)
+        // Readability-first: see QrCorrection. A dense code the other phone
+        // cannot read is not a working ceremony, however much redundancy it has.
+        let chosen = QrCorrection.level(forByteCount: data.count) ?? "L"
+        let levels = [chosen] + QrCorrection.capacities.map(\.level).filter { $0 != chosen }
+        for level in levels {
+            let filter = CIFilter.qrCodeGenerator()
+            filter.message = data
+            filter.correctionLevel = level
+            guard let output = filter.outputImage else { continue }
+            let context = CIContext()
+            guard let cg = context.createCGImage(output, from: output.extent) else { continue }
+            return (UIImage(cgImage: cg), cg.width)
+        }
+        return nil
     }
+
+    static func render(_ text: String) -> UIImage? { renderModules(text)?.image }
+
     #endif
+}
+
+/// THE SCAN PATH. A QR read off one phone's screen by another phone's camera is
+/// resolution-limited, so this exists to make the modules as physically large and
+/// as high-contrast as the display allows:
+///
+///   · sized to the screen's SHORTEST side, floored to a whole point so module
+///     edges do not land on fractional pixels and blur;
+///   · pure white behind it, ignoring the safe area, because the quiet zone and
+///     the contrast ratio are what the decoder actually keys on;
+///   · `.interpolation(.none)`, so scaling does not smooth the modules;
+///   · the backlight raised to full while it is shown, and RESTORED afterwards.
+///
+/// The payload is public TPR2 — a one-time request key — so showing it large
+/// exposes nothing. That is not true of everything in this app, which is why this
+/// view is only ever handed a `QrPayload`, a type that only exists after the
+/// payload has been re-validated as public.
+struct FullScreenQrView: View {
+    let image: UIImage
+    let modules: Int
+    @Environment(\.dismiss) private var dismiss
+    @State private var previousBrightness: CGFloat = UIScreen.main.brightness
+
+    /// The empirical floor below which a phone camera reads nothing off a screen.
+    /// Reported from a production app that solved this same problem: around 4.5
+    /// physical pixels per module decodes nothing, and comfortable reading starts
+    /// near 5.7.
+    static let usablePixelsPerModule: CGFloat = 5.7
+
+    var body: some View {
+        GeometryReader { geo in
+            let scale = UIScreen.main.scale
+            // WHOLE PIXELS PER MODULE. Flooring is the point: a fractional scale
+            // makes neighbouring modules differ in width, and the grid the
+            // decoder is looking for stops being a grid.
+            let availablePx = floor(min(geo.size.width, geo.size.height) * scale)
+            let pxPerModule = max(1, floor(availablePx / CGFloat(modules)))
+            let sidePt = (pxPerModule * CGFloat(modules)) / scale
+            ZStack {
+                // White beyond the safe area: the quiet zone is part of the
+                // symbol, and the contrast ratio is what the binarizer keys on.
+                Color.white.ignoresSafeArea()
+                VStack(spacing: 14) {
+                    Image(uiImage: image)
+                        .interpolation(.none)
+                        .resizable()
+                        .frame(width: sidePt, height: sidePt)
+                        .accessibilityLabel("A QR code, full screen. "
+                                            + VerbatimText.qrCarriesOnlyPublicData)
+                    Text(pxPerModule >= Self.usablePixelsPerModule
+                         ? "Hold the other phone's camera in front of this. Tap to close."
+                         : "This screen is small for a code this size. Hold the other "
+                           + "phone close and steady. Tap to close.")
+                        .font(.footnote)
+                        .foregroundStyle(.black.opacity(0.6))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture { dismiss() }
+        }
+        .ignoresSafeArea()
+        .onAppear {
+            previousBrightness = UIScreen.main.brightness
+            UIScreen.main.brightness = 1.0
+        }
+        // RESTORED, not left at full.
+        .onDisappear { UIScreen.main.brightness = previousBrightness }
+    }
 }
 
 // MARK: - the share-sheet carrier

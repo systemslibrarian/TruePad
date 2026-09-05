@@ -208,6 +208,26 @@ extension Engine {
     /// and the identifier is never reissued — cancelling is as final as using it,
     /// which is what makes "cancel" a safe thing to offer.
     @discardableResult
+    /// Is THIS request still pending — not consumed, cancelled, rejected or
+    /// expired?
+    ///
+    /// `sptRestorePendingReceiveRequest` answers a different question ("what is
+    /// the newest pending request?") and cannot be used to decide whether a
+    /// request the screen is already holding is still live: with two pending
+    /// requests it returns the other one, and a caller comparing identities would
+    /// wrongly conclude the held one was spent.
+    ///
+    /// The Receive screen needs the exact question, because after an open commits
+    /// it must stop advertising the request that open just consumed.
+    public func sptReceiveRequestIsPending(requestIdHex: String) -> Bool {
+        guard isSptHex32(requestIdHex) else { return false }
+        if case .pending = readReceiverState(vfs: sptVfs, idHex: requestIdHex,
+                                             nowMillis: nowMillis()) {
+            return true
+        }
+        return false
+    }
+
     public func sptCancelReceiveRequest(requestIdHex: String,
                                         reason: CancelReason = .operatorCancelled) throws -> ReceiverState {
         try fs.withLock("spt-req:\(requestIdHex)") {

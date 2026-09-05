@@ -123,6 +123,15 @@ public struct PadDetailView: View {
                 } else {
                     Text(model.handOffRefusal ?? "This pad has already been handed over.")
                         .foregroundStyle(.secondary)
+                    // THE SEALED PACKAGE IS STILL REACHABLE. Sealing commits the
+                    // package to disk and `sptSeal` returns those exact bytes for
+                    // the same receive request. Without this the operator who
+                    // dismissed the sheet before saving the file had no way back
+                    // to it, and the pad was stranded — the raw pad stays blocked
+                    // either way, which is the part that matters for reuse.
+                    if model.mayReshareSealed {
+                        Button("Hand over the sealed file again…") { model.beginSealedTransfer() }
+                    }
                 }
                 Text(VerbatimText.shareSheetIsACarrier)
                     .font(.footnote).foregroundStyle(.secondary)
@@ -140,6 +149,11 @@ public struct PadDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $model.fileToShare, onDismiss: { model.discardSharedFile() }) { file in
             ShareSheet(items: [file.url])
+        }
+        // THE SENDER HALF OF THE CEREMONY. `SealView` existed, was tested, and was
+        // presented by nothing at all until the physical two-device run found it.
+        .sheet(isPresented: $model.sealing, onDismiss: { model.reload() }) {
+            NavigationStack { SealView(model: model.sealModel()) }
         }
         .alert("TruePad refused", isPresented: $model.showingRefusal) {
             Button("OK", role: .cancel) {}

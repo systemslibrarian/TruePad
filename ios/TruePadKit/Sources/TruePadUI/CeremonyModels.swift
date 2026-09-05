@@ -129,6 +129,27 @@ public final class ReceiveRequestModel: ObservableObject {
         adopt(restored)
     }
 
+    /// RE-READ THE DURABLE STATE. Called whenever the Receive screen appears.
+    ///
+    /// The screen used to hold whatever it was last handed. Once opening a sealed
+    /// pad became reachable, that meant a request the operator had just CONSUMED
+    /// by importing a pad went on being displayed as live — its QR, its twelve
+    /// words, and a "Cancel this request" button that could only throw, because
+    /// the engine refuses to cancel a consumed request. The screen stayed in that
+    /// state until the app was relaunched, and `restore()` could not replace it
+    /// because it only fills an empty slot.
+    ///
+    /// Nothing here is a guess: it asks the store about the exact request being
+    /// held, and only then offers whatever is genuinely pending instead.
+    public func refresh() {
+        if let held = request, !engine.sptReceiveRequestIsPending(requestIdHex: held.requestIdHex) {
+            request = nil
+            qr = nil
+            requestWords = []
+        }
+        restore()
+    }
+
     public func create() {
         do {
             adopt(try engine.sptCreateReceiveRequest())
@@ -285,6 +306,13 @@ public final class SealModel: ObservableObject {
 
 // MARK: - the recipient opens what arrived
 
+/// Refusal text for the few failures that are not engine refusals.
+public enum SptRefusalText {
+    public static let unreadableFile =
+        "That file could not be read. Nothing was used, and the receive request is "
+        + "untouched — choose the file again."
+}
+
 @MainActor
 public final class OpenSealedModel: ObservableObject {
     @Published public var choosingFile = false
@@ -308,6 +336,12 @@ public final class OpenSealedModel: ObservableObject {
 
     /// Open the package into a TRANSIENT session. Nothing durable happens here,
     /// and nothing is consumed — the operator can still walk away.
+    /// Refuse with a plain message, for failures that never reached the engine.
+    public func refuse(_ message: String) {
+        refusalMessage = message
+        showingRefusal = true
+    }
+
     public func open(packageBytes: [UInt8]) {
         do {
             let result = try engine.sptOpen(packageBytes: packageBytes)
