@@ -344,12 +344,25 @@ public struct SealView: View {
                 }
                 if model.confirmed {
                     Section {
-                        Button("Seal this pad and send it") { model.seal() }
+                        Button(model.isReshare ? "Get the sealed file again" : "Seal this pad and send it") {
+                            model.seal()
+                        }
                     } footer: {
-                        Text("A sealed transfer sends the WHOLE pad, and this pad can only leave "
-                             + "once. Its delivery is protected by post-quantum cryptography, not "
-                             + "by the one-time pad — so the pad will read NOT ELIGIBLE at both "
-                             + "ends, permanently.")
+                        if model.isReshare {
+                            // NOTHING IS ENCAPSULATED HERE. The engine returns the
+                            // bytes it already committed for this request. Saying
+                            // "this pad can only leave once" at this point would
+                            // imply a second send is about to happen — the one
+                            // thing that cannot occur.
+                            Text("This pad was already sealed to this request. TruePad will hand "
+                                 + "back the SAME sealed file it made then — nothing is encrypted "
+                                 + "again and no second copy is created.")
+                        } else {
+                            Text("A sealed transfer sends the WHOLE pad, and this pad can only leave "
+                                 + "once. Its delivery is protected by post-quantum cryptography, not "
+                                 + "by the one-time pad — so the pad will read NOT ELIGIBLE at both "
+                                 + "ends, permanently.")
+                        }
                     }
                 }
             }

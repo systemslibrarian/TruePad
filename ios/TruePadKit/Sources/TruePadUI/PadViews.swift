@@ -173,7 +173,19 @@ public struct PadDetailView: View {
                         LabeledContent("This device is party", value: role == .a ? "A" : "B")
                             .accessibilityLabel("This device is party \(role == .a ? "A" : "B") for this pad.")
                     }
+                    // NAMED PER DIRECTION. Each meter used to sit in its own
+                    // `Section(row.direction)`; collapsing them into one
+                    // disclosure without a heading ran both halves' offsets,
+                    // record counts and verdicts together as one undifferentiated
+                    // list, so a reader could not tell which number belonged to
+                    // which direction. The heading carries BOTH the plain name
+                    // and the wire name, because this is the screen where the
+                    // wire name is the useful one.
                     ForEach(model.meters, id: \.direction) { row in
+                        Text("\(row.plainDirection(role: model.derivedRole)) (\(row.direction))")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityAddTraits(.isHeader)
                         MeterSection(row: row)
                     }
                 }

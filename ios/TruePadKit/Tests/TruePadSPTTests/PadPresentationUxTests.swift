@@ -14,11 +14,18 @@ final class PadPresentationUxTests: XCTestCase {
 
     /// DESTROYED OUTRANKS EVERYTHING. A pad that is gone must never be rendered
     /// as merely frozen or merely low, whatever else is true of it.
-    func testDestroyedOutranksEveryOtherRowState() {
-        XCTAssertEqual(PadRowState.of(destroyed: true, frozen: true, remainingSends: 0), .destroyed)
+    func testTheRowStatePriorityIsDestroyedThenRollbackThenPaused() {
+        // Destroyed outranks everything, whatever else is true.
+        XCTAssertEqual(PadRowState.of(destroyed: true, rollbackSuspected: true,
+                                      frozen: true, remainingSends: 0), .destroyed)
         XCTAssertEqual(PadRowState.of(destroyed: true, frozen: false, remainingSends: 99), .destroyed)
-        XCTAssertEqual(PadRowState.of(destroyed: false, frozen: true, remainingSends: 99), .frozen)
-        XCTAssertEqual(PadRowState.of(destroyed: false, frozen: false, remainingSends: 7), .ready(sends: 7))
+        // A suspected rollback outranks a pause: one is a reuse risk, the other
+        // is a brake the operator can release.
+        XCTAssertEqual(PadRowState.of(destroyed: false, rollbackSuspected: true,
+                                      frozen: true, remainingSends: 99), .rollbackSuspected)
+        XCTAssertEqual(PadRowState.of(destroyed: false, frozen: true, remainingSends: 99), .paused)
+        XCTAssertEqual(PadRowState.of(destroyed: false, frozen: false, remainingSends: 7),
+                       .ready(sends: 7))
     }
 
     /// Destroyed must be unmistakable, in the line and to VoiceOver.
@@ -39,8 +46,8 @@ final class PadPresentationUxTests: XCTestCase {
         XCTAssertFalse(PadRowState.ready(sends: 1).isProblem)
         XCTAssertEqual(PadRowState.ready(sends: 1).line, "1 message left")
         XCTAssertEqual(PadRowState.ready(sends: 5).line, "5 messages left")
-        XCTAssertTrue(PadRowState.frozen.isProblem)
-        XCTAssertTrue(PadRowState.frozen.line.lowercased().contains("cannot send"))
+        XCTAssertTrue(PadRowState.paused.isProblem)
+        XCTAssertTrue(PadRowState.rollbackSuspected.isProblem)
     }
 
     /// Negative remaining sends can never produce a negative count on screen.
@@ -49,10 +56,53 @@ final class PadPresentationUxTests: XCTestCase {
                        .ready(sends: 0))
     }
 
+    /// THE FREEZE IS PAIR-WIDE AND BLOCKS OPENING TOO. `requireNotFrozen` is
+    /// called by both `burn` and `open` and refuses if EITHER half has tripped, so
+    /// a line saying only "cannot send" would leave an operator wondering why a
+    /// message they received will not open either.
+    func testThePausedStateDoesNotUnderstateWhatAFreezeBlocks() {
+        let line = PadRowState.paused.line.lowercased()
+        XCTAssertTrue(line.contains("send"))
+        XCTAssertTrue(line.contains("open"), "the freeze blocks opening too")
+        XCTAssertTrue(PadRowState.paused.spoken(label: "p").lowercased().contains("cannot send or open"))
+    }
+
+    /// And the PER-DIRECTION line must not claim that pair-wide fact.
+    func testThePerDirectionLineSaysNothingAboutTheFreeze() throws {
+        let engine = Engine(fs: MemoryFs(), clock: { Date(timeIntervalSince1970: 0) })
+        let pair = try engine.gen(label: "f", sources: [
+            SourceInput(name: "device-random", declaredOrigin: "test",
+                        bytes: randomBytes(try Partition.requiredSourceLength(capacity: 256,
+                                                                             capacityRecords: 4)))
+        ], encryptionBytes: 256, authRecords: 4)
+        let summary = try engine.status(pair.pair.pairId)
+        let row = try XCTUnwrap(summary.meters[PadDirection.aToB].map(MeterRow.init))
+        for banned in ["frozen", "paused", "cannot send", "needs attention"] {
+            XCTAssertFalse(row.remainingLine.lowercased().contains(banned),
+                           "the per-direction line is reporting a pair-wide state")
+        }
+    }
+
+    /// A REGRESSED WITNESS IS THE ROLLBACK SIGNAL and must reach the row. Removing
+    /// the deployment verdict from every row also removed the only hint this state
+    /// used to have there.
+    func testARegressedWitnessIsSurfacedOnTheRow() {
+        let state = PadRowState.of(destroyed: false, rollbackSuspected: true,
+                                   frozen: false, remainingSends: 50)
+        XCTAssertEqual(state, .rollbackSuspected)
+        XCTAssertTrue(state.isProblem)
+        XCTAssertTrue(state.line.lowercased().contains("rollback"))
+        XCTAssertTrue(state.spoken(label: "p").lowercased().contains("restored"),
+                      "VoiceOver must say what a rollback suspicion means")
+        XCTAssertFalse(state.line.contains("messages left"),
+                       "a pad under rollback suspicion must not read as ordinarily usable")
+    }
+
     /// THE VERDICT IS NOT IN THE ROW. It was in every row, so every
     /// device-generated pad read NOT ELIGIBLE next to its name forever.
     func testTheRowNeverCarriesTheDeploymentVerdict() {
-        let states: [PadRowState] = [.destroyed, .frozen, .ready(sends: 0), .ready(sends: 64)]
+        let states: [PadRowState] = [.destroyed, .paused, .rollbackSuspected,
+                                     .ready(sends: 0), .ready(sends: 64)]
         for state in states {
             XCTAssertFalse(state.line.contains("ELIGIBLE"), "\(state) puts the verdict in the row")
             XCTAssertFalse(state.spoken(label: "x").contains("ELIGIBLE"))
@@ -119,6 +169,21 @@ final class PadPresentationUxTests: XCTestCase {
         // A live request gets no notice at all.
         XCTAssertNil(ReceiveRequestOutcomeText.headline(.pending))
         XCTAssertNil(ReceiveRequestOutcomeText.detail(.pending))
+    }
+
+    /// CONSUMED DOES NOT MEAN A PAD ARRIVED. The engine spends the one-time key
+    /// BEFORE importing — "CONSUME. After this returns valid, any failure below
+    /// is LOSS." — so a request can read consumed with nothing saved. The notice
+    /// must not tell the operator they hold a pad they may not have.
+    func testConsumedNeverAssertsThatAPadWasSaved() {
+        let headline = ReceiveRequestOutcomeText.headline(.consumed)!
+        let detail = ReceiveRequestOutcomeText.detail(.consumed)!
+        XCTAssertFalse(headline.lowercased().contains("pad received"),
+                       "the headline asserts a pad arrived, which consumed does not establish")
+        XCTAssertTrue(headline.lowercased().contains("used"))
+        // It must account for the loss case explicitly.
+        XCTAssertTrue(detail.lowercased().contains("lost in transfer"))
+        XCTAssertTrue(detail.lowercased().contains("spent"))
     }
 
     /// A REJECTION IS NAMED AS ONE. It is the outcome the comparison exists to

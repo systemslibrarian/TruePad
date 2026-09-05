@@ -189,18 +189,30 @@ public enum CeremonyPhrase {
 public enum PadRowState: Equatable, Sendable {
     /// Destroyed. Must remain unmistakable and must never be offered as usable.
     case destroyed
-    /// Durable state says this pad cannot send right now — a rollback witness
-    /// that does not agree with the store. This is the "action needed" case, and
-    /// it is the one row state that is genuinely a warning.
-    case frozen
+    /// The rollback witness for this pad does not agree with the store — the
+    /// signal that a copy may have been restored from a backup, which is the
+    /// reuse this whole design exists to catch. The most serious state a pad that
+    /// still exists can be in.
+    case rollbackSuspected
+    /// The failure brake has tripped (§8.4): the pair reached its failure
+    /// threshold. PAIR-WIDE and it blocks BOTH sending and opening — `burn` and
+    /// `open` each call `requireNotFrozen`, which refuses if EITHER half has
+    /// tripped. Reversible: clear-freeze resumes, and it burns nothing.
+    case paused
     /// Usable, with the number of messages still sendable in the thinner half.
     case ready(sends: Int)
 
-    public static func of(destroyed: Bool, frozen: Bool, remainingSends: Int) -> PadRowState {
-        // ORDER MATTERS AND IS DELIBERATE. Destroyed outranks everything: a pad
-        // that is gone must never be rendered as merely frozen or merely low.
+    /// ORDER MATTERS AND IS DELIBERATE. Destroyed outranks everything: a pad that
+    /// is gone must never be drawn as merely paused or merely low. A suspected
+    /// rollback outranks a pause, because one is a reuse risk and the other is a
+    /// brake the operator can release.
+    public static func of(destroyed: Bool,
+                          rollbackSuspected: Bool = false,
+                          frozen: Bool,
+                          remainingSends: Int) -> PadRowState {
         if destroyed { return .destroyed }
-        if frozen { return .frozen }
+        if rollbackSuspected { return .rollbackSuspected }
+        if frozen { return .paused }
         return .ready(sends: max(0, remainingSends))
     }
 
@@ -208,7 +220,11 @@ public enum PadRowState: Equatable, Sendable {
     public var line: String {
         switch self {
         case .destroyed: return "Destroyed — permanently unusable"
-        case .frozen: return "Needs attention — cannot send"
+        case .rollbackSuspected: return "Needs attention — rollback suspected"
+        // NOT "cannot send". The freeze stops opening too, and saying only
+        // "cannot send" would leave an operator wondering why a message they
+        // received will not open either.
+        case .paused: return "Paused — cannot send or open"
         case .ready(let sends):
             return sends == 1 ? "1 message left" : "\(sends) messages left"
         }
@@ -218,7 +234,7 @@ public enum PadRowState: Equatable, Sendable {
     /// small the number — running low is not an error.
     public var isProblem: Bool {
         switch self {
-        case .destroyed, .frozen: return true
+        case .destroyed, .rollbackSuspected, .paused: return true
         case .ready: return false
         }
     }
@@ -226,8 +242,14 @@ public enum PadRowState: Equatable, Sendable {
     /// What VoiceOver reads for the whole row.
     public func spoken(label: String) -> String {
         switch self {
-        case .destroyed: return "\(label). Destroyed, and permanently unusable."
-        case .frozen: return "\(label). Needs attention: this pad cannot send."
+        case .destroyed:
+            return "\(label). Destroyed, and permanently unusable."
+        case .rollbackSuspected:
+            return "\(label). Needs attention: this pad's rollback witness does not agree with "
+                 + "its stored state, which can mean a copy was restored."
+        case .paused:
+            return "\(label). Paused: this pad cannot send or open messages until the freeze is "
+                 + "cleared."
         case .ready(let sends):
             return "\(label). You can send \(sends) more \(sends == 1 ? "message" : "messages")."
         }
@@ -262,10 +284,15 @@ public struct MeterRow: Sendable, Equatable {
         return sends ? "Messages you send" : "Messages you receive"
     }
 
-    /// The headline number for the summary row, without the counters.
+    /// The headline number for this direction, without the counters.
+    ///
+    /// DELIBERATELY SAYS NOTHING ABOUT THE FREEZE. The freeze is PAIR-WIDE —
+    /// `requireNotFrozen` refuses if either half has tripped, and it blocks
+    /// opening as well as sending — so reporting it on one direction's row would
+    /// say something both too narrow and too specific. The pad's own state line
+    /// carries it, once, correctly.
     public var remainingLine: String {
-        if frozen { return "Cannot send — needs attention" }
-        return maxRemainingSends == 1 ? "1 message left" : "\(maxRemainingSends) messages left"
+        maxRemainingSends == 1 ? "1 message left" : "\(maxRemainingSends) messages left"
     }
 
     public init(_ m: DirectionMeters) {
@@ -399,7 +426,8 @@ public enum SourceClaimText {
 
     public static let notEligibleReason =
         "This pad was generated by the iPhone's cryptographic random generator rather than from "
-        + "operator-supplied physical random material."
+        + "operator-supplied physical random material. That classification is PERMANENT for this "
+        + "pad: no later step can raise it."
 
     /// And, just as importantly, what it does NOT mean. Every line here is a
     /// property that remains fully in force.
@@ -425,7 +453,12 @@ public enum ReceiveRequestOutcomeText {
     public static func headline(_ status: ReceiveRequestStatus) -> String? {
         switch status {
         case .pending:    return nil
-        case .consumed:   return "Pad received"
+        // NOT "Pad received". `consumed` means the one-time key was SPENT, which
+        // the engine does BEFORE importing — its own comment reads "CONSUME.
+        // After this returns valid, any failure below is LOSS." So a request can
+        // be consumed with no pad saved, and a headline asserting a pad arrived
+        // would tell the operator they hold something they do not.
+        case .consumed:   return "Receive code used"
         case .cancelled:  return "Receive code cancelled"
         case .rejected:   return "Transfer rejected"
         case .expired:    return "Receive code expired"
@@ -440,8 +473,10 @@ public enum ReceiveRequestOutcomeText {
         case .pending, .absent:
             return nil
         case .consumed:
-            return "This receive code has done its job and cannot receive another pad. "
-                 + "Create a new one if you are expecting a second pad."
+            return "This receive code has been used and cannot receive another pad. If the pad "
+                 + "did not appear in your list, it was lost in transfer — the code is spent "
+                 + "either way, and the sender must start again with a new one. Create a new "
+                 + "code if you are still expecting a pad."
         case .cancelled:
             return "You cancelled this receive code. It cannot be used again. Create a new one "
                  + "to receive a pad."

@@ -191,6 +191,12 @@ public final class ReceiveRequestModel: ObservableObject {
 
     public func create() {
         do {
+            // THE NOTICE BELONGS TO THE REQUEST IT DESCRIBES. Without this, an
+            // operator who rejected a transfer, made a fresh request and then
+            // cancelled it would be shown "Transfer rejected" as the account of
+            // the request they had just cancelled — the previous request's
+            // ending, attached to a different request.
+            outcome = nil
             adopt(try engine.sptCreateReceiveRequest())
         } catch {
             refuse(error)
@@ -216,6 +222,9 @@ public final class ReceiveRequestModel: ObservableObject {
         guard let request else { return }
         do {
             _ = try engine.sptCancelReceiveRequest(requestIdHex: request.requestIdHex)
+            // Record THIS ending, so the screen reports the cancellation the
+            // operator just performed rather than whatever happened last time.
+            outcome = .cancelled
             self.request = nil
             qr = nil
             requestWords = []
@@ -276,6 +285,18 @@ public final class SealModel: ObservableObject {
         } catch {
             refuse(error)
         }
+    }
+
+    /// Whether this pad has ALREADY been sealed, asked of durable state.
+    ///
+    /// Matters because the wording differs: a first seal sends the whole pad and
+    /// can happen only once, while coming back to an already-sealed pad hands
+    /// over the SAME committed package and encapsulates nothing. Telling an
+    /// operator mid-re-share that "this pad can only leave once" implies a second
+    /// send is about to happen, which is precisely what cannot occur.
+    public var isReshare: Bool {
+        if case .sealed = engine.handoffState(pairId: pairId) { return true }
+        return false
     }
 
     public func confirm() {

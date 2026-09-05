@@ -67,12 +67,18 @@ public final class PadListModel: ObservableObject {
                 // A direction that cannot send is the one thing on this screen
                 // that genuinely needs the operator's attention.
                 let frozen = summary.meters.values.contains { $0.frozen }
+                // A WITNESS THAT DOES NOT AGREE IS THE ROLLBACK SIGNAL. Removing
+                // the deployment verdict from the row also removed the only hint
+                // this state ever had here, so it is surfaced directly rather
+                // than left to a screen the operator has to open.
+                let rollback = summary.meters.values.contains { $0.witnessState == .regressed }
                 // NO VERDICT HERE. The deployment classification is a property of
                 // the pad, not its status, and putting it in every row made every
                 // device-generated pad look broken at a glance. It is on the pad's
                 // own screen, under Security details, unchanged.
                 return Row(pairId: entry.pairId, label: entry.label,
-                           state: .of(destroyed: false, frozen: frozen, remainingSends: sends))
+                           state: .of(destroyed: false, rollbackSuspected: rollback,
+                                      frozen: frozen, remainingSends: sends))
             }
         } catch {
             refuse(error)
@@ -145,11 +151,18 @@ public final class PadDetailModel: ObservableObject {
             // without mutating anything: a pad that already left must not be
             // offered a button that will only refuse.
             let imported = summary.origin == .imported
+            // ONE ROLE PER PAIR, derived from how this pad was ACQUIRED — which
+            // does not depend on whether it has since been handed over. This was
+            // assigned inside the `.absent` branch only, so a pad that had been
+            // sealed or handed over physically reported no role at all. That was
+            // harmless while nothing read it; it stopped being harmless when the
+            // direction labels started asking which half this device owns, and a
+            // handed-over pad would have fallen back to "A to B".
+            //
+            // See `PartyRole` for what defaulting instead of deriving cost.
+            derivedRole = PartyRole.derive(from: summary.origin)
             switch engine.handoffState(pairId: pairId) {
             case .absent:
-                // ONE ROLE PER PAIR, derived from how this pad was acquired.
-                // See `PartyRole` for what defaulting instead cost.
-                derivedRole = PartyRole.derive(from: summary.origin)
                 mayHandOff = HandoffPolicy.mayExportRawPad(handedOver: false, imported: imported)
                 mayReshareSealed = false
                 handOffRefusal = imported
