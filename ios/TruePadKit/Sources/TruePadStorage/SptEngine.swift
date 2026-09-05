@@ -55,7 +55,13 @@ public final class FsSptVfs: SptVfs, @unchecked Sendable {
 public enum ReceiveRequestStatus: String, Equatable, Sendable {
     /// Live: may be shown, may be cancelled, may receive a sealed package.
     case pending
-    /// A pad arrived and was kept. Terminal, and the one-time key is spent.
+    /// The one-time key was SPENT. Terminal.
+    ///
+    /// NOT "a pad arrived and was kept". The key is consumed BEFORE the pad is
+    /// imported — "CONSUME. After this returns valid, any failure below is LOSS."
+    /// — so a failure in between leaves this state with no pad saved, and the
+    /// engine reports that separately as `spt-receive-loss`. This value cannot
+    /// distinguish the two, and nothing built on it may claim a pad was received.
     case consumed
     /// The operator ended it themselves. Terminal.
     case cancelled
