@@ -516,6 +516,50 @@ it: an envelope is `publicText`, and copying it is the workflow.
 
 ---
 
+### The operator's role: derived from the pad, never defaulted
+
+**This was a REUSE defect, found in the release-candidate audit and fixed before
+the RC was frozen.** It is recorded in full because it is the exact failure the
+governing invariant exists to prevent, and because it survived every automated
+gate the project had.
+
+**What was wrong.** A pair has two halves. Which half a device may spend is
+decided by which party the operator is, and that fact was a UI default rather
+than a property of the pad:
+
+- **iOS** carried two INDEPENDENT defaults — `SendModel.role = .a` and
+  `OpenModel.role = .b`. A device that IMPORTED a pad therefore opened correctly
+  at its default, which hid the problem completely, and then SENT on party A's
+  half.
+- **Android** carried a single GLOBAL `UiState.role = Party2.A`, shared by every
+  pad, behind a radio on the Security screen introduced as *"Implementation
+  detail. You never need this to use TruePad."*
+- **Browser** pinned the role per pair at acquisition, but `readRole` fell back to
+  `"A"` whenever `localStorage` was missing or threw — a private window, blocked
+  storage, or site data cleared while the OPFS pad store survived.
+
+**What it cost.** Two devices holding one pair both burned `A->B`: the same
+encryption offsets, and the same one-time Wegman–Carter authentication record.
+Two plaintexts under the same pad bytes is the failure the product exists to
+prevent, and it happened on the ordinary no-error path with no adversary present.
+
+**Why no engine caught it.** Each store's counters advanced monotonically on its
+own copy, each witness recorded an aligned advance, and every refusal stayed
+silent — correctly. **The reuse is ACROSS two copies, not within one store**, and
+no engine can see the other copy. That is why the guard has to live above the
+engine, and why it is tested above the engine in all three editions.
+
+**The rule now.** One role per pair, derived from `PairMeta.origin`: created here
+→ A, imported → B. An `unknown` origin returns nothing and the operator is asked,
+exactly as the CLI has always asked (`--as A or --as B is required: it names YOUR
+role, and picks which half of the pair is used`). **Refusing to proceed is LOSS,
+which this project accepts. Guessing is REUSE, which it does not.**
+
+No wire changed. `origin` was already durable in all three editions; it was
+simply never consulted for this.
+
+---
+
 ## 7. Files, sharing, and extra physical copies
 
 A pad or a sealed package that leaves the app through the share sheet or Files
@@ -533,7 +577,11 @@ information-theoretic: **a sealed `.tps2` delivery is computational, permanently
 
 ## 8. What the deployment evaluator may NEVER claim on iOS
 
-**NOT YET IMPLEMENTED. Specification.**
+**BUILT**, and held to the shared cross-edition corpus
+(`test-vectors/deployment-evaluator-v3.json`) by `DeploymentEvaluatorParityTests`.
+This section previously read "NOT YET IMPLEMENTED. Specification." while the
+status table at the top of this same document already recorded it as BUILT; the
+table was right. The prohibitions below are enforced rules, not a plan.
 
 The evaluator derives an assurance classification from evidence. It must never
 persist a verdict as authority, and on iOS specifically it may never conclude:

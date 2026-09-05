@@ -323,6 +323,86 @@ public enum HandoffScratch {
     }
 }
 
+/// OWNS THE LIFETIME OF ONE HANDOFF SCRATCH FILE.
+///
+/// This exists as a separate, host-testable type because the first version of the
+/// cleanup was a NO-OP and every test was green.
+///
+/// The models are `#if os(iOS)`, so `swift test` cannot reach them at all — the
+/// cleanup lived somewhere CI structurally could not execute. And the bug itself
+/// was invisible by inspection: `discardSharedFile()` read `fileToShare`, the same
+/// property the `.sheet(item:)` presentation is bound to, and **SwiftUI clears an
+/// `item:` binding BEFORE it calls `onDismiss`**. By the time the cleanup ran the
+/// binding was nil, the `if let` failed, nothing was removed, and a complete copy
+/// of the pad stayed in `tmp/` for the rest of the session.
+///
+/// So the rule this type enforces is: the thing to delete is remembered
+/// INDEPENDENTLY of anything the view layer is allowed to clear.
+public final class HandoffScratchFile {
+    private var tracked: URL?
+
+    public init() {}
+
+    /// Remember a scratch file that has just been written.
+    public func track(_ url: URL) { tracked = url }
+
+    public var isTracking: Bool { tracked != nil }
+
+    /// Remove whatever was tracked, and forget it. Returns whether a file was
+    /// actually removed — false both when nothing was tracked and when the
+    /// removal failed, which the caller must not confuse with proof of deletion.
+    ///
+    /// Removal is UNLINKING, not erasure. See `VerbatimText.destructionLimitation`.
+    @discardableResult
+    public func discard(using fm: FileManager = .default) -> Bool {
+        guard let url = tracked else { return false }
+        tracked = nil
+        return (try? fm.removeItem(at: url)) != nil
+    }
+}
+
+/// WHICH HALF OF THE PAIR THIS DEVICE OWNS.
+///
+/// THE DEFECT THIS CLOSES. The Browser Edition pins the operator's role per pair
+/// at acquisition (creator -> A, importer -> B) and the CLI refuses to guess at
+/// all: `--as A or --as B is required: it names YOUR role, and picks which half
+/// of the pair is used`. Both mobile editions dropped that guard. iOS carried two
+/// INDEPENDENT defaults — `SendModel.role = .a` and `OpenModel.role = .b` — so a
+/// device that IMPORTED a pad opened correctly at its default (masking the
+/// problem entirely) and then SENT on party A's half.
+///
+/// Two devices holding one pair therefore both burned `A->B`, at the same
+/// offsets, against the same one-time authentication record. Each store's own
+/// counters advanced monotonically, each witness agreed, and no engine on either
+/// side could see it: the reuse is ACROSS two copies, not within one store. Two
+/// plaintexts under the same pad bytes is the failure the whole product exists to
+/// prevent, and it happened on the ordinary no-error path with no adversary.
+///
+/// THE RULE. One role per pair, derived from how the pad was acquired — never a
+/// free-floating default, and never a different answer for sending than for
+/// opening. `unknown` returns nil: the operator is asked, exactly as the CLI asks.
+/// Refusing to proceed is LOSS, which this project accepts; guessing is REUSE,
+/// which it does not.
+public enum PartyRole {
+    public static func derive(from origin: PairOrigin) -> Party? {
+        switch origin {
+        case .generatedHere: return .a
+        case .imported:      return .b
+        // NOT `.a`. An unreadable or absent origin is exactly the case where a
+        // guess is most likely to be wrong, because it is the case where the
+        // provenance evidence was lost.
+        case .unknown:       return nil
+        }
+    }
+
+    /// What to tell an operator whose pad cannot say which half is theirs.
+    public static let unknownOriginPrompt =
+        "TruePad cannot tell which half of this pair is yours, so it will not "
+        + "guess. Choose the role you were given when this pad was created. "
+        + "Choosing wrong does not corrupt the pad, but it spends material the "
+        + "other person is also spending."
+}
+
 public enum EgressPolicy {
     /// Pad material NEVER reaches the clipboard, and neither does plaintext.
     public static func mayCopyToClipboard(_ egress: Egress) -> Bool { egress == .publicText }

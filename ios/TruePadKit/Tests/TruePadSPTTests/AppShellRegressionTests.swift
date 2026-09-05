@@ -218,6 +218,203 @@ final class AppShellRegressionTests: XCTestCase {
                       "the sweep must not delete files it does not own")
     }
 
+    // MARK: - one role per pair, derived, never guessed
+
+    /// THE REUSE DEFECT THIS CLOSES, stated as the scenario that produced it.
+    ///
+    /// The Browser Edition pins the role per pair at acquisition and the CLI
+    /// refuses to guess. Both mobile editions dropped that guard: iOS carried two
+    /// INDEPENDENT defaults, `SendModel.role = .a` and `OpenModel.role = .b`. A
+    /// device that IMPORTED a pad therefore opened correctly at its default —
+    /// which is what hid the problem — and then SENT on party A's half.
+    ///
+    /// Two devices holding one pair both burned `A->B` at the same offsets
+    /// against the same one-time authentication record. No engine could catch it:
+    /// each store's counters advance monotonically on its own copy, so the reuse
+    /// is ACROSS copies, not within a store.
+    func testTheRoleIsDerivedFromHowThePadWasAcquired() {
+        // The creating device is A; the importing device is B. That is the whole
+        // rule, and it is what makes two copies of one pair burn opposite halves.
+        XCTAssertEqual(PartyRole.derive(from: .generatedHere), .a)
+        XCTAssertEqual(PartyRole.derive(from: .imported), .b)
+    }
+
+    /// AN UNKNOWN ORIGIN MUST NOT DEFAULT TO A.
+    ///
+    /// Returning `.a` here would reinstate the defect for exactly the pads most
+    /// likely to be wrong — the ones whose provenance evidence was lost. Refusing
+    /// costs LOSS, which this project accepts. Guessing costs REUSE, which it
+    /// does not.
+    func testAnUnknownOriginRefusesToGuess() {
+        XCTAssertNil(PartyRole.derive(from: .unknown),
+                     "an unknown origin must ask the operator, not pick a side")
+        XCTAssertFalse(PartyRole.unknownOriginPrompt.isEmpty,
+                       "and it must have something to say when it asks")
+    }
+
+    /// TWO COPIES OF ONE PAIR BURN OPPOSITE HALVES. This is the property the
+    /// defect violated, exercised end to end against the real engine.
+    func testTwoCopiesOfOnePairBurnOppositeDirections() throws {
+        // A generates; B imports the courier bundle. Two independent stores, as
+        // two handsets would have.
+        let fsA = MemoryFs()
+        let pairId = "5ab1e2c30d4f5a6b7c8d9e0fa1b2c3d4"
+        let engineA = Engine(fs: fsA, clock: { Date(timeIntervalSince1970: 0) },
+                             pairIdSource: { Hex.decode(pairId)! })
+        let need = try Partition.requiredSourceLength(capacity: 512, capacityRecords: 8)
+        _ = try engineA.gen(label: "pair", sources: [SourceInput(name: deviceSourceNameWire,
+                                                                declaredOrigin: "test",
+                                                                bytes: randomBytes(need))],
+                            encryptionBytes: 512, authRecords: 8)
+
+        let exported = try engineA.exportPair(pairId: pairId)
+        let fsB = MemoryFs()
+        let engineB = Engine(fs: fsB, clock: { Date(timeIntervalSince1970: 0) })
+        _ = try engineB.importPair(label: "pair", container: exported.container)
+
+        let originA = try engineA.status(pairId).origin
+        let originB = try engineB.status(pairId).origin
+        XCTAssertEqual(originA, .generatedHere)
+        XCTAssertEqual(originB, .imported, "the importing device must record that it imported")
+
+        let roleA = try XCTUnwrap(PartyRole.derive(from: originA))
+        let roleB = try XCTUnwrap(PartyRole.derive(from: originB))
+        XCTAssertNotEqual(roleA, roleB,
+                          "two copies of one pair must not be the same party — that is the "
+                          + "reuse this rule exists to prevent")
+
+        // AND THE DIRECTIONS THEY BURN MUST DIFFER. Identical roles produced
+        // identical directions, identical offsets and an identical auth record.
+        let sentA = try engineA.burn(pairId: pairId, role: roleA, plaintext: Array("from A".utf8))
+        let sentB = try engineB.burn(pairId: pairId, role: roleB, plaintext: Array("from B".utf8))
+        XCTAssertNotEqual(sentA.envelope, sentB.envelope)
+
+        // Each side opens what the other sent, which is only possible if they
+        // spent opposite halves.
+        let atB = try engineB.open(pairId: pairId, role: roleB, envelopeText: sentA.envelope)
+        XCTAssertEqual(String(decoding: atB.plaintext, as: UTF8.self), "from A")
+        let atA = try engineA.open(pairId: pairId, role: roleA, envelopeText: sentB.envelope)
+        XCTAssertEqual(String(decoding: atA.plaintext, as: UTF8.self), "from B")
+    }
+
+    /// THE OLD DEFAULTS, DEMONSTRATED AS THE FAILURE THEY WERE. Had both devices
+    /// used the previous send default of `.a`, they would have produced two
+    /// envelopes over the same pad material.
+    func testTheOldSharedDefaultWouldHaveSpentTheSameMaterialTwice() throws {
+        let pairId = "5ab1e2c30d4f5a6b7c8d9e0fa1b2c3d4"
+        func freshCopy() throws -> Engine {
+            let fs = MemoryFs()
+            let e = Engine(fs: fs, clock: { Date(timeIntervalSince1970: 0) },
+                           pairIdSource: { Hex.decode(pairId)! })
+            let need = try Partition.requiredSourceLength(capacity: 512, capacityRecords: 8)
+            _ = try e.gen(label: "pair",
+                          sources: [SourceInput(name: deviceSourceNameWire,
+                                                declaredOrigin: "test",
+                                                bytes: [UInt8](repeating: 0x5A, count: need))],
+                          encryptionBytes: 512, authRecords: 8)
+            return e
+        }
+        // Two copies of the SAME pad material, as two handsets holding one pair.
+        let copy1 = try freshCopy()
+        let copy2 = try freshCopy()
+
+        // Both at the old default role .a — the bug.
+        let one = try copy1.burn(pairId: pairId, role: .a, plaintext: Array("aaaa".utf8))
+        let two = try copy2.burn(pairId: pairId, role: .a, plaintext: Array("bbbb".utf8))
+
+        // Neither engine refused. Both succeeded. That is precisely why this had
+        // to be fixed above the engine: one-time material spent twice, and
+        // nothing in the store could see it.
+        XCTAssertNotEqual(one.envelope, two.envelope,
+                          "different plaintexts, but the SAME pad offsets and the same "
+                          + "one-time authentication record — this is the reuse")
+    }
+
+    // MARK: - the share-sheet cleanup actually removes the file
+
+    /// THE FIRST VERSION OF THIS FIX WAS A NO-OP, and every test was green.
+    ///
+    /// `discardSharedFile()` read `fileToShare` — the same property the
+    /// `.sheet(item:)` presentation is bound to — and SwiftUI clears an `item:`
+    /// binding BEFORE it calls `onDismiss`. The binding was already nil, the
+    /// `if let` failed, nothing was removed, and a complete copy of the pad
+    /// stayed in `tmp/` for the rest of the session.
+    ///
+    /// Two things had to change for CI to be able to see that. The lifetime now
+    /// lives in `HandoffScratchFile`, which is host-reachable — the models are
+    /// `#if os(iOS)` and `swift test` cannot execute them at all — and the rule
+    /// is stated as "remember the file independently of anything the view layer
+    /// may clear".
+    func testTheScratchFileIsRemovedWithoutConsultingAnyBinding() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("truepad-scratch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let file = dir.appendingPathComponent("pad.tpair")
+        try Data("a whole pad".utf8).write(to: file)
+
+        let scratch = HandoffScratchFile()
+        XCTAssertFalse(scratch.isTracking)
+        scratch.track(file)
+        XCTAssertTrue(scratch.isTracking)
+
+        XCTAssertTrue(scratch.discard(), "a tracked file must actually be removed")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path),
+                       "the scratch copy of the pad must be gone")
+        XCTAssertFalse(scratch.isTracking)
+    }
+
+    /// Idempotent, and honest about what it did: a second discard removes nothing
+    /// and says so, rather than reporting a deletion that did not happen.
+    func testDiscardIsIdempotentAndReportsWhatItActuallyDid() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("truepad-scratch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let scratch = HandoffScratchFile()
+        XCTAssertFalse(scratch.discard(), "nothing tracked means nothing removed")
+
+        let file = dir.appendingPathComponent("transfer.tps2")
+        try Data("sealed".utf8).write(to: file)
+        scratch.track(file)
+        XCTAssertTrue(scratch.discard())
+        XCTAssertFalse(scratch.discard(), "a second dismiss must not claim a removal")
+
+        // A tracked file that vanished underneath us reports false rather than
+        // pretending. The launch sweep is what covers that case.
+        let ghost = dir.appendingPathComponent("pad.tpair")
+        scratch.track(ghost)
+        XCTAssertFalse(scratch.discard(), "removing an absent file is not a deletion")
+    }
+
+    /// THE GUARD THAT WOULD HAVE CAUGHT THE ORIGINAL BUG.
+    ///
+    /// The models cannot be executed by `swift test`, so their WIRING is checked
+    /// as source instead: neither `discardSharedFile` may decide what to delete by
+    /// reading `fileToShare`, because that binding is already nil when SwiftUI
+    /// calls it.
+    func testNeitherModelDecidesWhatToDeleteFromThePresentationBinding() throws {
+        for name in ["Models.swift", "CeremonyModels.swift"] {
+            let file = PostureGuardTests.kitRoot
+                .appendingPathComponent("Sources/TruePadUI/\(name)")
+            let text = PostureGuardTests.stripComments(
+                try String(contentsOf: file, encoding: .utf8))
+
+            guard let r = text.range(of: "func discardSharedFile()") else {
+                return XCTFail("\(name) no longer has discardSharedFile — this guard is "
+                               + "now looking at nothing")
+            }
+            let body = text[r.lowerBound...].prefix(320)
+            XCTAssertTrue(body.contains("scratch.discard()"),
+                          "\(name) must delegate to HandoffScratchFile")
+            XCTAssertFalse(body.contains("if let file = fileToShare"),
+                           "\(name) must not read the presentation binding to decide what to "
+                           + "remove — SwiftUI has already cleared it by then")
+        }
+    }
+
     // MARK: - a published receive request is reachable after a restart
 
     /// FOUND ON THE HANDSET. The Receive tab held the published request in memory

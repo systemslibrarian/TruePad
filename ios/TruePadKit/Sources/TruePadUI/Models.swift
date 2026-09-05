@@ -108,9 +108,18 @@ public struct ShareableFile: Identifiable, Equatable {
 public final class PadDetailModel: ObservableObject {
     @Published public private(set) var label: String = ""
     @Published public private(set) var meters: [MeterRow] = []
+    /// Which half of the pair this device owns, derived — nil when the pad's
+    /// origin is unknown, in which case the operator is asked rather than guessed
+    /// at.
+    @Published public private(set) var derivedRole: Party?
     @Published public private(set) var mayHandOff = true
     @Published public private(set) var handOffRefusal: String?
     @Published public var fileToShare: ShareableFile?
+    /// Holds the scratch file's lifetime OUTSIDE the presentation binding, because
+    /// SwiftUI clears an `item:` binding before calling `onDismiss`. The rule and
+    /// its tests live in `HandoffScratchFile`, which CI can actually reach.
+    private let scratch = HandoffScratchFile()
+
     @Published public var showingRefusal = false
     @Published public var refusalMessage: String?
 
@@ -132,6 +141,9 @@ public final class PadDetailModel: ObservableObject {
             // offered a button that will only refuse.
             switch engine.handoffState(pairId: pairId) {
             case .absent:
+                // ONE ROLE PER PAIR, derived from how this pad was acquired.
+                // See `PartyRole` for what defaulting instead cost.
+                derivedRole = PartyRole.derive(from: summary.origin)
                 mayHandOff = summary.origin != .imported
                 handOffRefusal = summary.origin == .imported
                     ? "This pad arrived from someone else, so TruePad will not pass it on. Two "
@@ -161,6 +173,7 @@ public final class PadDetailModel: ObservableObject {
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent(EgressPolicy.fileName(for: .fileOnly, sealed: false))
             try Data(result.container).write(to: url, options: [.atomic, .completeFileProtection])
+            scratch.track(url)
             fileToShare = ShareableFile(url: url)
             reload()
         } catch {
@@ -172,17 +185,22 @@ public final class PadDetailModel: ObservableObject {
     /// cancelled, or swiped down. The file is written BEFORE the sheet appears,
     /// so cancelling still leaves a complete copy of the pad on disk unless this
     /// runs.
+    ///
+    /// Reads `scratchToRemove`, NOT `fileToShare`: by the time SwiftUI calls
+    /// `onDismiss` the item binding is already nil. See the field's comment.
     public func discardSharedFile() {
-        if let file = fileToShare {
-            try? FileManager.default.removeItem(at: file.url)
-        }
+        scratch.discard()
         fileToShare = nil
     }
 
     public func beginSealedTransfer() { /* presented by the ceremony flow */ }
 
-    public func sendModel() -> SendModel { SendModel(engine: engine, pairId: pairId) }
-    public func openModel() -> OpenModel { OpenModel(engine: engine, pairId: pairId) }
+    public func sendModel() -> SendModel {
+        SendModel(engine: engine, pairId: pairId, role: derivedRole)
+    }
+    public func openModel() -> OpenModel {
+        OpenModel(engine: engine, pairId: pairId, role: derivedRole)
+    }
     public func destroyModel() -> DestroyModel { DestroyModel(engine: engine, pairId: pairId) }
 
     func refuse(_ error: Error) {
@@ -194,7 +212,12 @@ public final class PadDetailModel: ObservableObject {
 @MainActor
 public final class SendModel: ObservableObject {
     @Published public var plaintext = ""
-    @Published public var role: Party = .a
+    /// NOT a default. nil means the pad could not say which half is ours, and
+    /// the operator must choose before anything is burned.
+    @Published public var role: Party?
+    /// True when the pad itself supplied the role, so the picker is shown only
+    /// when there is a real question to answer.
+    public let roleWasDerived: Bool
     @Published public private(set) var envelopeText: String?
     @Published public private(set) var qr: QrPayload?
     @Published public var showingRefusal = false
@@ -203,12 +226,25 @@ public final class SendModel: ObservableObject {
     let engine: Engine
     let pairId: String
 
-    public init(engine: Engine, pairId: String) {
+    public init(engine: Engine, pairId: String, role: Party?) {
         self.engine = engine
         self.pairId = pairId
+        self.role = role
+        self.roleWasDerived = role != nil
     }
 
+    /// Sending needs BOTH a message and a known role. A pad whose origin is
+    /// unknown cannot be sent on until the operator says which half is theirs.
+    public var canSend: Bool { !plaintext.isEmpty && role != nil }
+
     public func send() {
+        // FAIL CLOSED ON AN UNKNOWN ROLE. Burning on a guess is how two devices
+        // spend the same one-time material; refusing is only loss.
+        guard let role else {
+            refusalMessage = PartyRole.unknownOriginPrompt
+            showingRefusal = true
+            return
+        }
         do {
             let result = try engine.burn(pairId: pairId, role: role,
                                          plaintext: Array(plaintext.utf8))
@@ -235,7 +271,8 @@ public final class SendModel: ObservableObject {
 @MainActor
 public final class OpenModel: ObservableObject {
     @Published public var envelopeText = ""
-    @Published public var role: Party = .b
+    @Published public var role: Party?
+    public let roleWasDerived: Bool
     @Published public private(set) var plaintext: String?
     @Published public private(set) var skippedNote: String?
     @Published public var showingRefusal = false
@@ -244,12 +281,21 @@ public final class OpenModel: ObservableObject {
     let engine: Engine
     let pairId: String
 
-    public init(engine: Engine, pairId: String) {
+    public init(engine: Engine, pairId: String, role: Party?) {
         self.engine = engine
         self.pairId = pairId
+        self.role = role
+        self.roleWasDerived = role != nil
     }
 
+    public var canOpen: Bool { !envelopeText.isEmpty && role != nil }
+
     public func open() {
+        guard let role else {
+            refusalMessage = PartyRole.unknownOriginPrompt
+            showingRefusal = true
+            return
+        }
         do {
             // Either spelling, one door: the engine takes canonical JSON or the
             // TP2 compact form, and refuses a malformed compact input AS compact.

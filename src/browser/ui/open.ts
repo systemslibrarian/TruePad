@@ -12,7 +12,7 @@
 import { h, icon, mount } from "./dom.ts";
 import { backLink, callout, copyButton, filePicker, saveBytesButton, screenHead } from "./components.ts";
 import { consequenceFor, fmtBytes } from "./format.ts";
-import { readRole } from "./role.ts";
+import { UNKNOWN_ORIGIN_PROMPT, resolveRole } from "./role.ts";
 import type { Ctx } from "./context.ts";
 import type { EngineOk } from "../engine/protocol.ts";
 
@@ -90,9 +90,25 @@ function renderAccepted(ctx: Ctx, root: HTMLElement, reply: Extract<EngineOk, { 
 }
 
 export async function renderOpen(ctx: Ctx, root: HTMLElement, pairId: string, mode: "message" | "file"): Promise<void> {
-  const role = readRole(pairId);
   const isMessage = mode === "message";
   const back = () => ctx.navigate({ name: "pair", pairId });
+
+  // THE ROLE COMES FROM THE PAD. Opening with the wrong half costs a
+  // verification attempt rather than pad material, but the role is one fact per
+  // pair and deriving it in one place is what keeps SEND correct too. See role.ts.
+  const statusReply = await ctx.engine.status({ pairId });
+  if (!statusReply.ok) {
+    mount(root, h("div", { class: "screen" }, backLink(back, "Pad"),
+      callout({ tone: "danger", title: "Cannot open", body: statusReply.message })));
+    return;
+  }
+  const resolved = resolveRole(pairId, statusReply.pair.origin);
+  if (resolved === null) {
+    mount(root, h("div", { class: "screen" }, backLink(back, "Pad"),
+      callout({ tone: "danger", title: "TruePad does not know which half of this pair is yours", body: UNKNOWN_ORIGIN_PROMPT })));
+    return;
+  }
+  const role: "A" | "B" = resolved;
 
   const pasteBox = h("textarea", { rows: 5, spellcheck: false, class: "mono", placeholder: "Paste the encrypted message here…" }) as HTMLTextAreaElement;
   const picker = filePicker({

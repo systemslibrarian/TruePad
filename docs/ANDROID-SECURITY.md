@@ -38,7 +38,7 @@ green tick means nothing until you know what ran.
 |---|---|---|
 | **JVM** | The whole protocol and storage state machine — both engine modules are pure Kotlin/JVM and the SAME compiled code runs on ART. Plus the app's source audits and the release-manifest gate. | Every CI run, every local build. |
 | **EMULATOR** | The instrumentation suite and the on-device security checks: the real UI, real `java.nio` on ART, real process kill, the real installed package. | Every CI run (`instrumentation` job) and locally. |
-| **PHYSICAL DEVICE** | Whatever an emulator cannot be: a real flash translation layer, a real TEE, a vendor's own backup implementation. | **NOT YET RUN.** `android/tools/physical-device-check.sh` is the gate and refuses to run against an emulator. |
+| **PHYSICAL DEVICE** | Whatever an emulator cannot be: a real flash translation layer, a real TEE, a vendor's own backup implementation. | **DONE.** `android/tools/physical-device-check.sh` ran on a **Samsung SM-A176U (Android 16)**: the 44-test instrumentation suite and the 15 on-device security checks passed. The gate refuses to run against an emulator. Its first hardware run also corrected three defects in the script's own observations (see commit `6582d22`) — the APK was byte-identical, test tooling only. |
 | **HUMAN** | Using the app with TalkBack. | **NOT YET PERFORMED.** The automated baseline in `AccessibilityTest` is not a substitute and does not claim to be. |
 
 So: everything below is JVM- and EMULATOR-validated unless it says otherwise.
@@ -671,7 +671,11 @@ appears, or if backup is turned back on.
 Two items, and neither is a code feature. Both are kinds of evidence that cannot
 be manufactured, listed with what would close them.
 
-- **PHYSICAL-DEVICE VALIDATION — not yet run.** Connect one authorised handset
+- **PHYSICAL-DEVICE VALIDATION — DONE** on a Samsung SM-A176U (Android 16):
+  44 instrumentation tests and 15 on-device security checks passed. What remains
+  on Android is **human TalkBack** and the **Android↔iPhone two-device
+  ceremony**, neither of which an automated run can supply. To repeat it,
+  connect one authorised handset
   and run:
 
   ```
@@ -731,6 +735,27 @@ Also open, none blocking:
 
 ---
 
+## 11.5 The operator's role: derived from the pad, never defaulted
+
+**A REUSE defect found in the release-candidate audit and fixed before the RC was
+frozen.** Android carried a single GLOBAL `UiState.role = Party2.A`, shared by
+every pad, behind a Security-screen radio labelled "Implementation detail. You
+never need this to use TruePad."
+
+Two devices holding one pair therefore both burned `A_TO_B` — the same encryption
+offsets and the same one-time Wegman–Carter authentication record. No engine
+could catch it: each store's counters advance monotonically on its own copy, so
+the reuse is ACROSS copies, not within a store.
+
+The role is now derived per pad from `PairMeta.origin` by
+`PartyRole.derive` — `GENERATED_HERE` → A, `IMPORTED` → B — and an `UNKNOWN`
+origin returns null so the operator is asked rather than guessed at. Sending and
+opening both fail closed on a null role. Refusing is LOSS, which this project
+accepts; guessing is REUSE, which it does not. The same defect existed in the iOS
+and Browser editions and is closed the same way. No wire changed.
+
+---
+
 ## 12. Dependency currency — reviewed, deliberately unchanged
 
 Reviewed at closure. Nothing here has a concrete security or build-support
@@ -740,6 +765,7 @@ person inherits a decision rather than a silence.
 
 | Component | Pinned | Current | Assessment |
 |---|---|---|---|
+| **Bouncy Castle** (`bcprov-jdk18on`) | **1.85.2** | 1.85.x | **The only third-party CRYPTOGRAPHIC runtime dependency the Android Edition ships**, and the only entry in this table whose currency is a security question rather than a maintenance one. Used through the low-level `org.bouncycastle.pqc.crypto.*` / `crypto.*` APIs for ML-KEM-768 and X25519 — the two halves of the X-Wing KEM that protects pad **delivery**. It is **not** on the OTP message path: `truepad-core` links no cryptography library, so no Bouncy Castle change can alter the frozen message wire. No applicable unpatched advisory identified at this pin. |
 | Gradle | 8.14 | 9.x | Behind but acceptable. 8.14 builds clean with zero deprecation warnings. |
 | AGP | 8.7.3 | 9.x | Behind but acceptable. Caps `compileSdk`/`targetSdk` at 35, which is why `OldTargetApi` is suppressed. Raising it is the head of the upgrade chain. |
 | Kotlin | 2.0.21 | 2.2.x | Behind but acceptable. |
@@ -752,7 +778,10 @@ person inherits a decision rather than a silence.
 | `gradle/actions/setup-gradle` | v4 | v6 | Behind by two majors. |
 | `reactivecircus/android-emulator-runner` | v2.38.0 | v2.38.0 | **Current**, pinned to an exact tag. |
 
-**Security-sensitive updates advisable: none identified.** No pinned component is
+**Security-sensitive updates advisable: none identified.** Note that this table
+previously omitted Bouncy Castle entirely — the one component here whose currency
+is genuinely a security question — while still concluding that none was advisable.
+It is now listed first. No pinned component is
 a cryptographic dependency — the engine has none, and the only production
 dependencies are the Kotlin stdlib, coroutines, and androidx UI. The engine
 modules depend on nothing but the standard library.

@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.systemslibrarian.truepad.core.Direction
 import dev.systemslibrarian.truepad.spt.SptRefused
+import dev.systemslibrarian.truepad.storage.PartyRole
 import dev.systemslibrarian.truepad.storage.EngineRefused
 import dev.systemslibrarian.truepad.storage.PairListEntry
 import dev.systemslibrarian.truepad.storage.PairSummary
@@ -138,7 +139,15 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 withContext(Dispatchers.IO) { runCatching { engine.status(open) }.getOrNull() }
             }
-            _state.value = _state.value.copy(pads = visible, current = current, loaded = true)
+            // ONE ROLE PER PAIR, derived from the pad itself. This used to be a
+            // single global default of Party2.A shared by every pad, which is how
+            // two devices holding one pair both burned A_TO_B.
+            val derivedRole = current?.let { PartyRole.derive(it.origin) }
+            _state.value = _state.value.copy(
+                pads = visible, current = current, loaded = true,
+                role = derivedRole ?: _state.value.role.takeIf { current == null },
+                roleWasDerived = derivedRole != null,
+            )
         }
     }
 
@@ -253,7 +262,19 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
 
     /* ---- the daily verbs ---------------------------------------------------- */
 
-    fun send(pairId: String, role: Party2, text: String) {
+    fun send(pairId: String, role: Party2?, text: String) {
+        // FAIL CLOSED ON AN UNKNOWN ROLE. Burning on a guess is how two devices
+        // spend the same one-time material; refusing is only loss.
+        if (role == null) {
+            _state.value = _state.value.copy(banner = Banner.Refused(
+                    UserFacingRefusal(
+                        reason = "role-unknown",
+                        headline = "TruePad does not know which half of this pair is yours",
+                        detail = PartyRole.UNKNOWN_ORIGIN_PROMPT,
+                    )
+                ))
+            return
+        }
         operate {
             val envelope = withContext(Dispatchers.IO) {
                 val plaintext = text.toByteArray(Charsets.UTF_8)
@@ -267,7 +288,17 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun open(pairId: String, role: Party2, envelope: String) {
+    fun open(pairId: String, role: Party2?, envelope: String) {
+        if (role == null) {
+            _state.value = _state.value.copy(banner = Banner.Refused(
+                    UserFacingRefusal(
+                        reason = "role-unknown",
+                        headline = "TruePad does not know which half of this pair is yours",
+                        detail = PartyRole.UNKNOWN_ORIGIN_PROMPT,
+                    )
+                ))
+            return
+        }
         operate {
             val plaintext = withContext(Dispatchers.IO) {
                 val bytes = engine.open(pairId, role, envelope).plaintext
@@ -457,7 +488,13 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
-    /** Which half of the pair this device sends on. Persisted per pad by the operator's choice. */
+    /**
+     * Override the role for the CURRENT pad. Only reachable when the pad's origin
+     * is unknown, so the operator is answering a question TruePad could not.
+     *
+     * The previous comment here said "Persisted per pad by the operator's choice";
+     * it was neither persisted nor per pad — one global field served every pad.
+     */
     fun setRole(role: Party2) {
         _state.value = _state.value.copy(role = role)
     }
@@ -546,7 +583,14 @@ data class UiState(
     val pads: List<PairListEntry> = emptyList(),
     val currentPairId: String? = null,
     val current: PairSummary? = null,
-    val role: Party2 = Party2.A,
+    /**
+     * Which half of the pair this device owns, DERIVED per pad from how it was
+     * acquired — never a default. Null means the pad's origin is unknown and the
+     * operator must choose; see [dev.systemslibrarian.truepad.storage.PartyRole].
+     */
+    val role: Party2? = null,
+    /** True when the pad supplied the role, so the picker is shown only when there is a question. */
+    val roleWasDerived: Boolean = false,
     val banner: Banner? = null,
     val lastResult: OpResult? = null,
     val spt: SptUi = SptUi(),

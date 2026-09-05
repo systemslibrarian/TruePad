@@ -16,7 +16,7 @@ import { bytesToHex } from "../../core/hex.ts";
 import { encodeCompactEnvelope2 } from "../../core/compact-envelope2.ts";
 import { backLink, callout, copyButton, filePicker, payloadBlock, saveBytesButton, screenHead } from "./components.ts";
 import { fmtBytes, fmtInt } from "./format.ts";
-import { readRole, sendDirection } from "./role.ts";
+import { UNKNOWN_ORIGIN_PROMPT, resolveRole, sendDirection } from "./role.ts";
 import type { Ctx } from "./context.ts";
 
 export async function renderSend(ctx: Ctx, root: HTMLElement, pairId: string, mode: "message" | "file"): Promise<void> {
@@ -27,8 +27,15 @@ export async function renderSend(ctx: Ctx, root: HTMLElement, pairId: string, mo
     return;
   }
   const pair = reply.pair;
-  const role = readRole(pairId);
-  const m = pair.meters[sendDirection(role)];
+  // DERIVED FROM THE PAD, not from a browser-profile default. See role.ts.
+  const role = resolveRole(pairId, pair.origin);
+  if (role === null) {
+    mount(root, h("div", { class: "screen" }, backLink(back, "Pad"),
+      callout({ tone: "danger", title: "TruePad does not know which half of this pair is yours", body: UNKNOWN_ORIGIN_PROMPT })));
+    return;
+  }
+  const myRole: "A" | "B" = role;
+  const m = pair.meters[sendDirection(myRole)];
   const isMessage = mode === "message";
 
   const textarea = h("textarea", { rows: 6, placeholder: "Type your message…" }) as HTMLTextAreaElement;
@@ -57,7 +64,7 @@ export async function renderSend(ctx: Ctx, root: HTMLElement, pairId: string, mo
       : (file ? new Uint8Array(await file.arrayBuffer()) : new Uint8Array(0));
     if (plaintext.length === 0) return;
     encryptBtn.disabled = true;
-    const rep = await ctx.engine.burn({ pairId, as: role, plaintext });
+    const rep = await ctx.engine.burn({ pairId, as: myRole, plaintext });
     encryptBtn.disabled = false;
     if (!rep.ok) {
       mount(errorSlot, callout({ tone: "danger", title: "Could not encrypt", body: friendlySendError(rep.kind === "refused" ? rep.reason : "", rep.message) }));

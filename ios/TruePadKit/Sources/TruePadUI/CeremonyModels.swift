@@ -184,6 +184,11 @@ public final class SealModel: ObservableObject {
     @Published public private(set) var sealed: SptSealResult?
     @Published public private(set) var confirmationWords: [String] = []
     @Published public var fileToShare: ShareableFile?
+    /// Holds the scratch file's lifetime OUTSIDE the presentation binding, because
+    /// SwiftUI clears an `item:` binding before calling `onDismiss`. The rule and
+    /// its tests live in `HandoffScratchFile`, which CI can actually reach.
+    private let scratch = HandoffScratchFile()
+
     @Published public var showingRefusal = false
     @Published public var refusalMessage: String?
 
@@ -248,10 +253,11 @@ public final class SealModel: ObservableObject {
     /// Same contract as `PadDetailModel.discardSharedFile()`: a sealed package is
     /// pad material under a computational wrapper, and cancelling the share sheet
     /// must not leave it on disk.
+    ///
+    /// Reads `scratchToRemove`, NOT `fileToShare` — SwiftUI has already cleared
+    /// the item binding by the time `onDismiss` runs.
     public func discardSharedFile() {
-        if let file = fileToShare {
-            try? FileManager.default.removeItem(at: file.url)
-        }
+        scratch.discard()
         fileToShare = nil
     }
 
@@ -264,6 +270,7 @@ public final class SealModel: ObservableObject {
                 .appendingPathComponent(EgressPolicy.fileName(for: .fileOnly, sealed: true))
             try Data(sealed.packageBytes).write(to: url,
                                                 options: [.atomic, .completeFileProtection])
+            scratch.track(url)
             fileToShare = ShareableFile(url: url)
         } catch {
             refuse(error)

@@ -47,15 +47,32 @@ public struct SendView: View {
                     .autocorrectionDisabled()
                     .accessibilityLabel("The message to send. It is encrypted with pad material "
                                         + "that is then destroyed.")
-                Picker("Send as", selection: $model.role) {
-                    Text("A").tag(Party.a)
-                    Text("B").tag(Party.b)
+                // THE PICKER IS SHOWN ONLY WHEN THE PAD CANNOT SAY.
+                //
+                // It used to be offered always, defaulted to A, and independently
+                // of the Open screen's picker — so an importing device opened
+                // correctly at ITS default and then sent on party A's half. Two
+                // devices holding one pair both burned A->B. See `PartyRole`.
+                if model.roleWasDerived {
+                    LabeledContent("Sending as",
+                                   value: model.role == .a ? "A" : "B")
+                        .accessibilityLabel("You are party "
+                                            + (model.role == .a ? "A" : "B")
+                                            + " for this pad. TruePad derived that from how the "
+                                            + "pad was created, so it is not a choice to make here.")
+                } else {
+                    Text(PartyRole.unknownOriginPrompt)
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Picker("Send as", selection: $model.role) {
+                        Text("A").tag(Party?.some(.a))
+                        Text("B").tag(Party?.some(.b))
+                    }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
             }
             Section {
                 Button("Encrypt and consume the pad") { model.send() }
-                    .disabled(model.plaintext.isEmpty)
+                    .disabled(!model.canSend)
             } footer: {
                 Text("The pad material this uses is destroyed as the message is written. It cannot "
                      + "be recovered, and it will never be used again.")
@@ -97,15 +114,25 @@ public struct OpenView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 Button("Scan a code instead…") { scanning = true }
-                Picker("Open as", selection: $model.role) {
-                    Text("A").tag(Party.a)
-                    Text("B").tag(Party.b)
+                if model.roleWasDerived {
+                    LabeledContent("Opening as",
+                                   value: model.role == .a ? "A" : "B")
+                        .accessibilityLabel("You are party "
+                                            + (model.role == .a ? "A" : "B")
+                                            + " for this pad, derived from how the pad was created.")
+                } else {
+                    Text(PartyRole.unknownOriginPrompt)
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Picker("Open as", selection: $model.role) {
+                        Text("A").tag(Party?.some(.a))
+                        Text("B").tag(Party?.some(.b))
+                    }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
             }
             Section {
                 Button("Open") { model.open() }
-                    .disabled(model.envelopeText.isEmpty)
+                    .disabled(!model.canOpen)
             } footer: {
                 Text("A message that does not verify costs one verification attempt and consumes "
                      + "no pad material. That is the price of a bounded forgery guarantee.")

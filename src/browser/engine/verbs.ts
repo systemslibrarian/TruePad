@@ -440,6 +440,7 @@ async function buildSummary(vfs: Vfs, pairId: string): Promise<PairSummary> {
     label: meta.label,
     createdAt: meta.createdAt,
     destroyed: false,
+    origin: meta.origin,
     meters: {
       "A->B": await directionMeters(vfs, pair["A->B"], meta.witness),
       "B->A": await directionMeters(vfs, pair["B->A"], meta.witness)
@@ -1710,6 +1711,7 @@ async function listImpl(vfs: Vfs): Promise<ListResult> {
           label: meta.label,
           createdAt: meta.createdAt,
           destroyed: true,
+          origin: meta.origin,
           meters: { "A->B": zeroMeters("A->B"), "B->A": zeroMeters("B->A") }
         });
         continue;

@@ -42,6 +42,7 @@ import dev.systemslibrarian.truepad.app.UiState
 import dev.systemslibrarian.truepad.app.AndroidStorage
 import dev.systemslibrarian.truepad.app.copySensitiveText
 import dev.systemslibrarian.truepad.app.shareEncryptedMessage
+import dev.systemslibrarian.truepad.storage.PartyRole
 import dev.systemslibrarian.truepad.storage.Party2
 
 /*
@@ -505,7 +506,7 @@ fun DetailsScreen(state: UiState, vm: PadViewModel) {
 
     BackLink("Pad") { vm.back() }
     ScreenTitle("Security", Modifier.testTag("title-security"))
-    Faint("Implementation detail. You never need this to use TruePad.")
+    Faint("Which half of each pad is yours, and what remains on it.")
     BannerArea(state, vm)
 
     if (summary == null) {
@@ -514,6 +515,23 @@ fun DetailsScreen(state: UiState, vm: PadViewModel) {
     }
 
     SectionTitle("You are")
+    // DERIVED, NOT CHOSEN — when the pad can say. It used to be a free radio with
+    // a global default of Alice for every pad, so two devices holding one pair
+    // both sent on the same half and spent the same one-time material. The pad's
+    // own origin decides: created here -> Alice, imported -> Bob.
+    if (state.roleWasDerived) {
+        Text(
+            if (state.role == Party2.A) "Alice" else "Bob",
+            Modifier.testTag("role-derived"),
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        Faint(
+            "TruePad worked this out from how this pad reached this device, so it is not a " +
+                "setting. Both halves of a pair must not be the same person: if they were, " +
+                "both devices would spend the same pad material."
+        )
+    } else {
+    Faint(PartyRole.UNKNOWN_ORIGIN_PROMPT)
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(
             Modifier.weight(1f).heightIn(min = 48.dp)
@@ -533,6 +551,7 @@ fun DetailsScreen(state: UiState, vm: PadViewModel) {
             RadioButton(selected = state.role == Party2.B, onClick = null)
             Text("Bob", Modifier.padding(start = 4.dp), style = MaterialTheme.typography.bodyLarge)
         }
+    }
     }
     Faint("The two halves of a pad are separate. You send on one and receive on the other; the other person is the mirror of this.")
 

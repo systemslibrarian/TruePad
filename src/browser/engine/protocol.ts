@@ -59,11 +59,20 @@ export type DirectionMeters = {
   witness: { class: BrowserWitnessClass; state: "n/a" | "fresh" | "aligned" | "ahead" | "regressed" | "unreachable" | "inconsistent" };
 };
 
+export type PairOrigin = "generated-here" | "imported" | "unknown";
+
 export type PairSummary = {
   pairId: string;
   label: string; // operator-chosen display name; non-secret metadata only
   createdAt: string;
   destroyed: boolean;
+  // HOW THIS DEVICE GOT THE PAD, which is what decides WHICH HALF IT OWNS.
+  // The UI used to keep the role in localStorage and silently default to "A"
+  // when that was missing or blocked — so a party-B operator in a private window
+  // sent on party A's half, and two devices spent the same one-time material.
+  // Carried here so the answer travels with the pad rather than with the browser
+  // profile. See src/browser/ui/role.ts.
+  origin: PairOrigin;
   meters: { "A->B": DirectionMeters; "B->A": DirectionMeters };
 };
 

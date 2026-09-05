@@ -25,7 +25,7 @@ import {
   padStatusWord,
   recordModeLabel
 } from "./format.ts";
-import { readRole, sendDirection } from "./role.ts";
+import { resolveRole, sendDirection } from "./role.ts";
 import { removePair } from "./removed.ts";
 import { PARTY_NAME } from "./format.ts";
 import { savePadFileButton } from "./courier.ts";
@@ -248,7 +248,9 @@ export async function renderDashboard(ctx: Ctx, root: HTMLElement, pairId: strin
   }
 
   const pair = reply.pair;
-  const role = readRole(pairId);
+  // null when the pad cannot say; the meters fall back to showing A->B, and the
+  // send screen is what actually refuses.
+  const role = resolveRole(pairId, pair.origin) ?? "A";
   const unusable = pair.destroyed;
 
   const header = h(
