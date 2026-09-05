@@ -187,19 +187,51 @@ resolved="$("$ADB" shell cmd package query-activities --brief -a android.intent.
 resolved="$("$ADB" shell cmd package query-activities --brief -a android.intent.action.VIEW -t 'application/json' 2>/dev/null | grep "$PKG" || true)"
 [ -z "$resolved" ] && ok "the app is not a file-open target" || bad "the app resolves ACTION_VIEW: $resolved"
 
-# PROVIDERS. TruePad has none of its own; androidx.startup merges one in to run
-# library initialisers, and it is not exported. What matters is that no authority
-# in this package is reachable from another app, and that no authority looks like
-# a FileProvider — because a FileProvider is the only thing that could hand a URI
-# into the pad store, and this app deliberately has none.
+# PROVIDERS. TruePad has none of its OWN. Two are merged in by dependencies:
+# androidx.startup's, which runs library initialisers, and ML Kit's
+# MlKitInitProvider, which arrived with the barcode decoder — deleting the latter
+# was tried and ML Kit then throws "MlKitContext has not been initialized", so it
+# is load-bearing rather than incidental.
+#
+# Both are named EXPLICITLY rather than matched by a pattern. A prefix or a
+# wildcard here would also wave through the next provider some future dependency
+# brings along, which is exactly how the ML Kit one would have arrived unnoticed.
+#
+# What matters is that no authority in this package is reachable from another app,
+# and that no authority looks like a FileProvider — a FileProvider is the only
+# thing that could hand a URI into the pad store, and this app deliberately has
+# none.
 dump="$("$ADB" shell dumpsys package "$PKG" 2>/dev/null || true)"
 authorities="$(printf '%s' "$dump" | sed -n '/ContentProvider Authorities:/,/^$/p' | grep -oE '\[[^]]+\]' | tr -d '[]' | sort -u || true)"
-unexpected_auth="$(printf '%s' "$authorities" | grep -v '^$' | grep -v "^$PKG.androidx-startup$" || true)"
+unexpected_auth="$(printf '%s' "$authorities" | grep -v '^$' \
+  | grep -v "^$PKG.androidx-startup$" \
+  | grep -v "^$PKG.mlkitinitprovider$" || true)"
 if [ -z "$unexpected_auth" ]; then
-  ok "the only provider authority is androidx-startup (${authorities:-none})"
+  ok "the only provider authorities are androidx-startup and mlkitinitprovider (${authorities:-none})"
 else
   bad "unexpected provider authorities: $unexpected_auth"
 fi
+# NO TELEMETRY UPLOADER — checked in ManifestHardeningTest/ScannerOfflineTest, NOT
+# here, and the reason is worth writing down.
+#
+# ML Kit merges in Google's datatransport components (a Clearcut backend, a
+# JobScheduler service, an AlarmManager receiver) and the manifest deletes them.
+# Two shell attempts to assert that from this script were both WRONG:
+#
+#   - grepping `dumpsys package` finds nothing either way, because dumpsys does
+#     not list un-exported components that have no intent filter. That version
+#     passed with the components present — it was mutation-tested and did not fire.
+#   - grepping `cmd package dump` finds the JobScheduler service even when the
+#     installed APK's manifest is clean, because a job SCHEDULED by an earlier
+#     install persists in system state keyed by component name. That is a
+#     different fact from "the manifest declares it", and it reports a package
+#     that is actually correct as a failure.
+#
+# The reliable reading is PackageManager.GET_SERVICES|GET_RECEIVERS, which is what
+# ScannerOfflineTest.noTelemetryUploaderComponentIsInstalled uses. A gate that
+# cannot distinguish the two states is worse than no gate, so this one is left to
+# the instrumentation suite rather than approximated here.
+
 if printf '%s' "$authorities" | grep -qi fileprovider; then
   bad "a FileProvider authority is present"
 else
