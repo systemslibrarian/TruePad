@@ -18,6 +18,18 @@ import UIKit
  * physically cannot ask this to render a pad.
  * ========================================================================= */
 
+
+/// Hoisted out of the view bodies. The type-checker cannot solve a long string
+/// concatenation inside a deeply nested SwiftUI builder in reasonable time, and
+/// it says so rather than compiling slowly — this file already carries one such
+/// hoist for the same reason.
+private func roleAnnouncement(_ role: Party?, verb: String) -> String {
+    let who = role == .a ? "A" : "B"
+    return "You are party \(who) for this pad. TruePad derived that from how the pad was "
+        + "created, so it is not a choice to make here. It decides which half of the pair "
+        + "\(verb) uses."
+}
+
 public struct SendView: View {
     @ObservedObject public var model: SendModel
 
@@ -54,18 +66,14 @@ public struct SendView: View {
                 // correctly at ITS default and then sent on party A's half. Two
                 // devices holding one pair both burned A->B. See `PartyRole`.
                 if model.roleWasDerived {
-                    LabeledContent("Sending as",
-                                   value: model.role == .a ? "A" : "B")
-                        .accessibilityLabel("You are party "
-                                            + (model.role == .a ? "A" : "B")
-                                            + " for this pad. TruePad derived that from how the "
-                                            + "pad was created, so it is not a choice to make here.")
+                    LabeledContent("Sending as", value: model.role == .a ? "A" : "B")
+                        .accessibilityLabel(roleAnnouncement(model.role, verb: "sending"))
                 } else {
                     Text(PartyRole.unknownOriginPrompt)
                         .font(.footnote).foregroundStyle(.secondary)
                     Picker("Send as", selection: $model.role) {
-                        Text("A").tag(Party?.some(.a))
-                        Text("B").tag(Party?.some(.b))
+                        Text("A").tag(Optional(Party.a))
+                        Text("B").tag(Optional(Party.b))
                     }
                     .pickerStyle(.segmented)
                 }
@@ -115,17 +123,14 @@ public struct OpenView: View {
                     .autocorrectionDisabled()
                 Button("Scan a code instead…") { scanning = true }
                 if model.roleWasDerived {
-                    LabeledContent("Opening as",
-                                   value: model.role == .a ? "A" : "B")
-                        .accessibilityLabel("You are party "
-                                            + (model.role == .a ? "A" : "B")
-                                            + " for this pad, derived from how the pad was created.")
+                    LabeledContent("Opening as", value: model.role == .a ? "A" : "B")
+                        .accessibilityLabel(roleAnnouncement(model.role, verb: "opening"))
                 } else {
                     Text(PartyRole.unknownOriginPrompt)
                         .font(.footnote).foregroundStyle(.secondary)
                     Picker("Open as", selection: $model.role) {
-                        Text("A").tag(Party?.some(.a))
-                        Text("B").tag(Party?.some(.b))
+                        Text("A").tag(Optional(Party.a))
+                        Text("B").tag(Optional(Party.b))
                     }
                     .pickerStyle(.segmented)
                 }
