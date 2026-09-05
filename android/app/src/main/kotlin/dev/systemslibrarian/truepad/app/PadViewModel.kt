@@ -593,17 +593,42 @@ data class PickedSource(val uri: Uri, val name: String, val declaredOrigin: Stri
  * Pad sizes in the units a person thinks in. The engine's real budgets are
  * E (encryption bytes) and N (authentication records); N is the number of
  * MESSAGES, because every message costs exactly one record whatever its length.
+ *
+ * THESE ARE CROSS-EDITION PRODUCT PRESETS. Small, Medium and Large must mean the
+ * SAME capacities on Browser, Android and iOS. They did not: this edition shipped
+ * Small 16 KB/128, Medium 64 KB/512 and Large 256 KB/2048 while the Browser and
+ * iOS editions used the values below, so two people choosing "Medium" got
+ * different pads depending on which app they happened to be holding. The values
+ * here are now the canonical ones (`src/browser/ui/create-pair.ts`), and
+ * `PadSizeParityTest` fails if this edition drifts from them again.
+ *
+ * They are CONVENIENCE DEFAULTS and nothing more. A preset writes E and N; the
+ * four-slice partition, the required-source rule, serialization, fixed-record
+ * behaviour and custom sizes are untouched, and pads that already exist keep the
+ * capacities they were created with.
  */
-enum class PadSize(val label: String, val encryptionBytes: Long, val authRecords: Long) {
-    Small("Small", 16L * 1024, 128),
-    Medium("Medium", 64L * 1024, 512),
-    Large("Large", 256L * 1024, 2048);
+enum class PadSize(
+    val label: String,
+    val blurb: String,
+    val encryptionBytes: Long,
+    val authRecords: Long,
+) {
+    Small("Small", "Occasional messages.", 16_384, 64),
+    Medium("Medium", "Regular conversation.", 262_144, 512),
+    Large("Large", "Messages and files.", 4_194_304, 4_096);
 
+    /** DERIVED, never tabulated: L = 2 * (E + 32 * N). */
     fun requiredSourceLength(): Long = 2 * (encryptionBytes + 32 * authRecords)
 
-    /** Plain language: what you actually get. */
-    fun describe(): String =
-        "about $authRecords messages, ${encryptionBytes / 1024} KB of text in total"
+    /**
+     * Plain language, matching the other editions.
+     *
+     * "Up to N messages each way" rather than the previous "about N messages":
+     * N is the number of one-time authentication records, which is a HARD
+     * ceiling, not an estimate. The old text also printed the encryption budget
+     * in KB, which at the canonical Large would have read "4096 KB".
+     */
+    fun describe(): String = "$blurb Up to $authRecords messages each way."
 }
 
 sealed interface OpResult {

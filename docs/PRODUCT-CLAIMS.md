@@ -322,6 +322,36 @@ strengthen B or C.
 
 ---
 
+## Size presets are a cross-edition product rule
+
+**Small, Medium and Large must have identical capacities on Browser, Android and
+iOS.** They are convenience defaults — a preset writes the two engine budgets and
+nothing else — but they are NAMES the operator reads, and a name that means two
+different things in two editions is a product defect even when neither pad is
+unsafe.
+
+| Preset | Encryption bytes (E) | Auth records / messages (N) | Source material required, `L = 2 · (E + 32 · N)` |
+|---|---:|---:|---:|
+| Small  | 16 384    | 64    | 36 864 |
+| Medium | 262 144   | 512   | 557 056 |
+| Large  | 4 194 304 | 4 096 | 8 650 752 |
+
+`N` is the number of one-time authentication records and therefore the HARD
+ceiling on messages in one direction — "up to N messages each way" is a statement
+of the cap, not an estimate. `L` is DERIVED from the four-slice rule and is never
+tabulated in code.
+
+This was not always true. The Android Edition shipped Small 16 KB/128, Medium
+64 KB/512 and Large 256 KB/2048, so two people who both chose "Medium" received
+pads of different capacities depending on which app they held. Android now uses
+the values above, and `PadSizeParityTest` reads the Browser Edition's own source
+so drift in EITHER direction fails the build.
+
+Nothing else about a preset is special: the four-slice partition, the
+required-source rule, serialization, fixed-record behaviour and custom sizes are
+untouched by which preset is chosen, and pads that already exist keep the
+capacities they were created with.
+
 ## What the Browser Edition explicitly does NOT claim
 
 Restated from `BROWSER-SECURITY.md` §8 so it sits beside the matrix:
