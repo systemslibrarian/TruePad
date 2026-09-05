@@ -91,10 +91,13 @@ build actually contains.
   durable store, the §12 verbs, the courier bundle, the Sealed Pad Transfer state
   machine and ceremony, the deployment evaluator, and a SwiftUI view layer) proven
   byte-identical to the frozen wire in all four cross-edition directions. There is
-  still **no installable iOS app**: the app SHELL — the Xcode app target, its
-  Info.plist and entitlements, the App entry point — is not built, and neither are
-  the pad-creation and ceremony screens. The view layer compiles for a real device
-  in CI, which is not the same as running on one.
+  now a **native app target** at `ios/TruePadApp` — a plain committed `.xcodeproj`
+  with one target, one source file and an explicit Info.plist — which BUILDS for
+  `generic/platform=iOS` in Debug and Release. It has **not been installed on a
+  physical iPhone**: that is blocked on adding an Apple ID to Xcode for
+  development signing, which is a local account action rather than a code
+  problem. Building for a device is not the same as running on one, and the
+  physical-device rows remain outstanding.
   Neither platform is released; there is no App Store build and no 3.0 tag.
   **Physical mobile validation is outstanding on both** — the two-device
   Android↔iPhone ceremony, human TalkBack and human VoiceOver have not been

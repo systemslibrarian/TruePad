@@ -1,0 +1,331 @@
+// !$*UTF8*$!
+//
+// TruePad — the application project.
+//
+// THIS FILE IS SECURITY-RELEVANT CONFIGURATION, not an incidental build artefact,
+// so it is kept small enough to read in full and every entry is deliberate.
+//
+// Choices a reviewer should be able to confirm at a glance:
+//
+//   · ONE target, one Swift file, one Info.plist. Nothing else is compiled.
+//   · EXPLICIT file references, NOT a PBXFileSystemSynchronizedRootGroup. A
+//     synchronized folder silently includes whatever is dropped into it later;
+//     an explicit list means adding a file to the app is a reviewable diff.
+//   · NO shell script build phase of any kind. Nothing is downloaded, generated,
+//     or executed at build time.
+//   · No remote package reference IN THIS PROJECT. The crypto comes from the
+//     LOCAL in-tree package at ../TruePadKit, which vendors and pins swift-crypto
+//     itself, so there is no second resolution path for security-critical code.
+//     BUT THE GRAPH IS NOT NETWORK-FREE, and pretending otherwise would be the
+//     kind of tidy claim this project does not make: the vendored swift-crypto
+//     declares a remote dependency on apple/swift-asn1, so resolving fetches it
+//     from github.com. It is reachable only through _CryptoExtras, which is not
+//     linked, and it is absent from the built binary (verified by symbol) - so it
+//     is a BUILD-MACHINE exposure, not a shipping-binary one. It is pinned by the
+//     committed Package.resolved, and ios/scripts/check-app-project.sh requires
+//     that pin to match the kit's.
+//   · Three package products, all first-party: TruePadUI, TruePadStorage,
+//     TruePadSPT. NOT TruePadKATSupport, which is test-only and is not a product
+//     at all, and not _CryptoExtras.
+//   · No frameworks beyond those products. SwiftUI, AVFoundation and CoreImage
+//     are used from the SDK and linked implicitly; none is added here, so none
+//     can be swapped for something else here.
+//   · PLATFORM REACH IS STATED, not left to a portal checkbox.
+//     SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD defaults to YES, which would let an
+//     archive run unmodified on Apple silicon. The store/witness failure-domain
+//     argument reasons about iOS Data Protection and iOS Keychain accessibility;
+//     those do not carry over identically, so the app would be running somewhere
+//     it was not audited for. Both it and Catalyst are explicitly NO.
+//
+//   · DEVELOPMENT_TEAM is EMPTY on purpose. Local device signing supplies it on
+//     the command line; a personal Team ID does not belong in source control.
+//
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		TP0000000000000000000008 /* TruePadAppMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = TP0000000000000000000007 /* TruePadAppMain.swift */; };
+		TP0000000000000000000017 /* TruePadUI in Frameworks */ = {isa = PBXBuildFile; productRef = TP0000000000000000000014 /* TruePadUI */; };
+		TP0000000000000000000018 /* TruePadSPT in Frameworks */ = {isa = PBXBuildFile; productRef = TP0000000000000000000015 /* TruePadSPT */; };
+		TP0000000000000000000019 /* TruePadStorage in Frameworks */ = {isa = PBXBuildFile; productRef = TP0000000000000000000016 /* TruePadStorage */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		TP0000000000000000000006 /* TruePad.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TruePad.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		TP0000000000000000000007 /* TruePadAppMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TruePadAppMain.swift; sourceTree = "<group>"; };
+		TP0000000000000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		TP000000000000000000000B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				TP0000000000000000000017 /* TruePadUI in Frameworks */,
+				TP0000000000000000000019 /* TruePadStorage in Frameworks */,
+				TP0000000000000000000018 /* TruePadSPT in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		TP0000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				TP0000000000000000000004 /* TruePadApp */,
+				TP0000000000000000000003 /* Products */,
+				TP000000000000000000001A /* Frameworks */,
+			);
+			sourceTree = "<group>";
+		};
+		TP0000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				TP0000000000000000000006 /* TruePad.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		TP0000000000000000000004 /* TruePadApp */ = {
+			isa = PBXGroup;
+			children = (
+				TP0000000000000000000007 /* TruePadAppMain.swift */,
+				TP0000000000000000000009 /* Info.plist */,
+			);
+			path = TruePadApp;
+			sourceTree = "<group>";
+		};
+		TP000000000000000000001A /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		TP0000000000000000000005 /* TruePadApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = TP000000000000000000000E /* Build configuration list for PBXNativeTarget "TruePadApp" */;
+			buildPhases = (
+				TP000000000000000000000A /* Sources */,
+				TP000000000000000000000B /* Frameworks */,
+				TP000000000000000000000C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TruePadApp;
+			packageProductDependencies = (
+				TP0000000000000000000014 /* TruePadUI */,
+				TP0000000000000000000016 /* TruePadStorage */,
+				TP0000000000000000000015 /* TruePadSPT */,
+			);
+			productName = TruePadApp;
+			productReference = TP0000000000000000000006 /* TruePad.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		TP0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					TP0000000000000000000005 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = TP000000000000000000000D /* Build configuration list for PBXProject "TruePadApp" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = TP0000000000000000000002;
+			packageReferences = (
+				TP0000000000000000000013 /* XCLocalSwiftPackageReference "../TruePadKit" */,
+			);
+			productRefGroup = TP0000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				TP0000000000000000000005 /* TruePadApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		TP000000000000000000000C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		TP000000000000000000000A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				TP0000000000000000000008 /* TruePadAppMain.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		TP000000000000000000000F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		TP0000000000000000000010 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		TP0000000000000000000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TruePadApp/Info.plist;
+				INSTALL_PATH = "$(LOCAL_APPS_DIR)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 3.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.systemslibrarian.truepad;
+				PRODUCT_NAME = TruePad;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		TP0000000000000000000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TruePadApp/Info.plist;
+				INSTALL_PATH = "$(LOCAL_APPS_DIR)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 3.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.systemslibrarian.truepad;
+				PRODUCT_NAME = TruePad;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		TP000000000000000000000D /* Build configuration list for PBXProject "TruePadApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				TP000000000000000000000F /* Debug */,
+				TP0000000000000000000010 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		TP000000000000000000000E /* Build configuration list for PBXNativeTarget "TruePadApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				TP0000000000000000000011 /* Debug */,
+				TP0000000000000000000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		TP0000000000000000000013 /* XCLocalSwiftPackageReference "../TruePadKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../TruePadKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		TP0000000000000000000014 /* TruePadUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TruePadUI;
+		};
+		TP0000000000000000000015 /* TruePadSPT */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TruePadSPT;
+		};
+		TP0000000000000000000016 /* TruePadStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TruePadStorage;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = TP0000000000000000000001 /* Project object */;
+}

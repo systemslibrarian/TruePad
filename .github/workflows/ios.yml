@@ -153,6 +153,13 @@ jobs:
       - name: The SBOM matches the tree
         run: ios/scripts/gen-sbom.sh --check
 
+      # The application project's configuration is edited by a GUI: one click can
+      # add a capability, link a framework, attach a shell script phase, or change
+      # a bundle identifier. This turns the settings TruePad depends on into a
+      # test, so such a change fails here rather than shipping.
+      - name: The app project declares only what TruePad committed to (static)
+        run: ios/scripts/check-app-project.sh
+
       - name: Release-configuration build
         working-directory: ios/TruePadKit
         run: swift build -c release 2>&1 | tail -5
@@ -192,6 +199,34 @@ jobs:
       # change ever reverted to the CryptoKit re-export, the X-Wing symbols would
       # be absent and the availability floor would jump to iOS 26 - a regression
       # that a passing test suite on macOS would not reveal.
+      # The APPLICATION, built exactly as a device build would be. Unsigned:
+      # CI has no signing identity, and signing is not what this proves. What it
+      # proves is what LINKED - that the shipping app carries the vendored X-Wing
+      # and carries neither the test-only KAT surface nor a networking framework.
+      - name: Build the application for a real device (unsigned)
+        working-directory: ios/TruePadApp
+        run: |
+          set -o pipefail
+          for config in Debug Release; do
+            echo "=== $config ==="
+            xcodebuild -project TruePadApp.xcodeproj \
+                       -scheme TruePadApp \
+                       -configuration "$config" \
+                       -destination 'generic/platform=iOS' \
+                       -derivedDataPath "$RUNNER_TEMP/dd-app" \
+                       CODE_SIGNING_ALLOWED=NO \
+                       build 2>&1 | tail -3
+          done
+
+      - name: The built application links only what it should
+        run: |
+          APP="$RUNNER_TEMP/dd-app/Build/Products/Release-iphoneos/TruePad.app"
+          if [ ! -d "$APP" ]; then
+            echo "no built app at $APP — the binary half would be skipped, which is not evidence"
+            exit 1
+          fi
+          ios/scripts/check-app-project.sh "$APP"
+
       - name: Inspect what the release binary actually contains
         run: ios/scripts/inspect-release-binary.sh
 

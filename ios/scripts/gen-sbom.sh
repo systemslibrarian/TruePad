@@ -74,6 +74,20 @@ vendored_digest() {
 
 file_digest() { shasum -a 256 "$1" | awk '{print $1}'; }
 
+# The one remote pin, read from the committed lockfile rather than restated. An
+# SBOM that omits a component which is fetched, pinned and compiled is an SBOM
+# that answers "what does this build pull in?" incorrectly.
+ASN1_VERSION="$(python3 -c "
+import json
+d=json.load(open('$ROOT/ios/TruePadKit/Package.resolved'))
+print(next((p['state'].get('version','') for p in d.get('pins',[]) if p['identity']=='swift-asn1'), 'unpinned'))
+")"
+ASN1_REVISION="$(python3 -c "
+import json
+d=json.load(open('$ROOT/ios/TruePadKit/Package.resolved'))
+print(next((p['state'].get('revision','') for p in d.get('pins',[]) if p['identity']=='swift-asn1'), ''))
+")"
+
 VENDORED_DIGEST="$(vendored_digest)"
 PATCH_DIGEST="$(file_digest "$VENDOR/EXPECTED-PATCH.diff" 2>/dev/null || echo "")"
 
@@ -156,6 +170,23 @@ build_sbom() {
     emit '      "properties": ['
     emit '        { "name": "truepad:origin", "value": "ships inside swift-crypto as CCryptoBoringSSL; not resolved separately" },'
     emit '        { "name": "truepad:provides", "value": "ML-KEM-768 and X25519, the two halves of the X-Wing KEM that protects pad DELIVERY. It is not on the OTP message path." }'
+    emit '      ]'
+    emit '    },'
+    emit '    {'
+    emit '      "type": "library",'
+    emit '      "name": "swift-asn1",'
+    emit "      \"version\": \"$ASN1_VERSION\","
+    emit '      "scope": "excluded",'
+    emit '      "licenses": [{ "license": { "id": "Apache-2.0" } }],'
+    emit "      \"purl\": \"pkg:swift/github.com/apple/swift-asn1@$ASN1_VERSION\","
+    emit '      "externalReferences": ['
+    emit '        { "type": "vcs", "url": "https://github.com/apple/swift-asn1.git" }'
+    emit '      ],'
+    emit '      "properties": ['
+    emit "        { \"name\": \"truepad:pinned-revision\", \"value\": \"$ASN1_REVISION\" },"
+    emit '        { "name": "truepad:origin", "value": "REMOTE. The vendored swift-crypto still declares this dependency, so resolving the graph fetches it from github.com. It is the only remote fetch in the iOS build." },'
+    emit '        { "name": "truepad:scope-rationale", "value": "Resolved and compiled as part of the dependency package, but reachable only through _CryptoExtras, which TruePad does not link. Verified ABSENT by symbol from a device Release build of the application. A build-machine exposure, not a shipping-binary one." },'
+    emit '        { "name": "truepad:pin-enforcement", "value": "Pinned identically by ios/TruePadKit/Package.resolved and the app Package.resolved; ios/scripts/check-app-project.sh fails if they disagree or if any other remote package appears." }'
     emit '      ]'
     emit '    },'
     emit '    {'

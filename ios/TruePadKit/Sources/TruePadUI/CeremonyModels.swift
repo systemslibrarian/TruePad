@@ -99,6 +99,12 @@ public final class ReceiveRequestModel: ObservableObject {
     @Published public var showingRefusal = false
     @Published public var refusalMessage: String?
 
+    /// Whether the full phrase is displayable. A ceremony step is actionable only
+    /// when the operator can actually SEE what they are being asked to compare.
+    public var requestWordsComplete: Bool {
+        CeremonyPhrase.isComplete(requestWords, expecting: CeremonyPhrase.requestWordCount)
+    }
+
     let engine: Engine
 
     public init(engine: Engine) { self.engine = engine }
@@ -152,6 +158,13 @@ public final class SealModel: ObservableObject {
     @Published public var showingRefusal = false
     @Published public var refusalMessage: String?
 
+    public var requestWordsComplete: Bool {
+        CeremonyPhrase.isComplete(requestWords, expecting: CeremonyPhrase.requestWordCount)
+    }
+    public var confirmationWordsComplete: Bool {
+        CeremonyPhrase.isComplete(confirmationWords, expecting: CeremonyPhrase.confirmationWordCount)
+    }
+
     let engine: Engine
     let pairId: String
 
@@ -173,6 +186,14 @@ public final class SealModel: ObservableObject {
 
     public func confirm() {
         guard let review else { return }
+        // Belt and braces with the disabled button: an operator must not be able
+        // to declare a match for a phrase this device could not display.
+        guard requestWordsComplete else {
+            refusalMessage = "TruePad cannot display the twelve comparison words on this device, "
+                + "so it will not record that you compared them."
+            showingRefusal = true
+            return
+        }
         do {
             // A DECLARATION that the operator said the words matched. It is not
             // evidence that they compared anything, and nothing downstream treats
@@ -227,6 +248,10 @@ public final class OpenSealedModel: ObservableObject {
     @Published public var showingRefusal = false
     @Published public var refusalMessage: String?
 
+    public var confirmationWordsComplete: Bool {
+        CeremonyPhrase.isComplete(confirmationWords, expecting: CeremonyPhrase.confirmationWordCount)
+    }
+
     let engine: Engine
     var label: String
 
@@ -249,6 +274,13 @@ public final class OpenSealedModel: ObservableObject {
 
     public func commit() {
         guard let session else { return }
+        guard confirmationWordsComplete else {
+            refusalMessage = "TruePad cannot display the eight confirmation words on this device, "
+                + "so it will not save a pad on the strength of a comparison you could not make. "
+                + "Rejecting this transfer is still available."
+            showingRefusal = true
+            return
+        }
         do {
             _ = try engine.sptCommitReceive(session: session, label: label)
             saved = true

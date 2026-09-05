@@ -15,8 +15,15 @@ let package = Package(
     ],
     dependencies: [
         // Vendored apple/swift-crypto 4.5.2 (Apache-2.0), upstream commit
-        // da9d28d69ebe3894b18376c8f2395c2f37b8448f. Two intentional patches, both
-        // in its Package.swift; see ios/vendor/README.md and ios/vendor/verify-vendor.sh.
+        // da9d28d69ebe3894b18376c8f2395c2f37b8448f. THREE intentional patches,
+        // pinned byte-for-byte by ios/vendor/EXPECTED-PATCH.diff: two in its
+        // Package.swift (the `development` switch, and exporting CCryptoBoringSSL
+        // for the test-only KAT support), and ONE IN CRYPTO CODE --
+        // Sources/Crypto/KEM/BoringSSL/XWing_boring.swift, an entropy-length
+        // guard closing the unfixed sibling of CVE-2026-28815. That third patch
+        // changes behaviour and IS in the shipping binary; this comment used to
+        // say "two patches, both in its Package.swift", which understated it.
+        // See ios/vendor/README.md and ios/vendor/verify-vendor.sh.
         .package(path: "../vendor/swift-crypto"),
     ],
     targets: [
@@ -66,16 +73,25 @@ let package = Package(
                 "TruePadCore",
                 // Crypto alone: SPT needs X-Wing, HKDF-SHA-256, AES-256-GCM and
                 // SHA-2/SHA-3, all of which live here. _CryptoExtras is deliberately
-                // omitted -- it would put SwiftASN1 and a large RSA/PAKE surface into
-                // the shipping module graph for no benefit. (SwiftPM still resolves
-                // and compiles them as part of the dependency package; what this
-                // controls is what the app's module graph actually links.)
+                // omitted, and the reason is narrower than it may look: it keeps
+                // the SWIFT RSA/PAKE surface -- and the CRITICAL RSA double-free
+                // advisory that lives in it -- out of the module graph, and keeps
+                // SwiftASN1 out of the linked binary.
+                //
+                // It does NOT mean no RSA code ships. `Crypto` depends on
+                // CCryptoBoringSSL, and that C object is ~2.6 MB and DOES contain
+                // RSA, DSA, DES, PEM, X.509 and SPAKE2 -- verified by symbol in
+                // the built app. Excluding _CryptoExtras removes a Swift surface
+                // and a specific advisory's code path; it does not shrink
+                // BoringSSL, and claiming otherwise would be false.
                 .product(name: "Crypto", package: "swift-crypto"),
             ],
-            // The comparison wordlist, byte-identical to the Browser and Android
-            // Editions'. Index position IS the protocol mapping, so its SHA-256
-            // is pinned by test to the same value Android pins.
-            resources: [.process("Resources")]
+            // The comparison wordlist ONLY. `.process("Resources")` would copy the
+            // whole directory, which shipped the provenance markdown inside the
+            // app bundle -- harmless, but it is not the app's business to carry a
+            // licence note to a phone. Naming the file means the bundle contains
+            // exactly what the ceremony needs.
+            resources: [.copy("Resources/comparison-words.txt")]
         ),
 
         // ---- Production: the presentation layer ---------------------------

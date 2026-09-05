@@ -53,10 +53,15 @@ public enum QrRefusal: String, Error, Sendable, Equatable {
 }
 
 public enum QrPayloadBuilder {
-    /// The largest QR a phone camera reliably reads at arm's length. A payload
-    /// past this is refused rather than split: TruePad has NO multi-frame or
-    /// animated QR, because a pad that arrives in pieces is a pad whose pieces
-    /// can be mixed.
+    /// The capacity ceiling of a version-40 QR at the error-correction level this
+    /// app draws, which is a property of the FORMAT — not a measured claim about
+    /// what a camera reads at arm's length. Nothing here has been tested against
+    /// real optics; that is the physical-device QR gate, and this constant is not
+    /// evidence for it.
+    ///
+    /// A payload past this is refused rather than split: TruePad has NO
+    /// multi-frame or animated QR, because a pad that arrives in pieces is a pad
+    /// whose pieces can be mixed.
     public static let maxQrCharacters = 2953
 
     /// Build a QR payload from a receive-request text, RE-VALIDATING it.
@@ -103,6 +108,32 @@ public enum SptConstantsBridge {
     /// Left nil in tests that do not need it, and then a receive-request QR is
     /// refused rather than rendered unvalidated.
     nonisolated(unsafe) public static var isCanonicalReceiveRequest: (String) -> Bool = { _ in false }
+}
+
+// MARK: - the comparison ceremony's phrase lengths
+
+/// The two ceremony phrase lengths, and the rule that a phrase must be COMPLETE
+/// before the step it belongs to is actionable.
+///
+/// These were briefly declared inside the iOS-only view file, which meant the
+/// rule that stops an operator confirming words they cannot see was unreachable
+/// from `swift test` on macOS — a safety gate with no test. They live here now,
+/// where this file's whole purpose is that its decisions are testable without a
+/// device.
+public enum CeremonyPhrase {
+    /// Twelve request words and eight confirmation words. These come from the
+    /// 11-bit index counts the protocol fixes; they are not layout choices.
+    public static let requestWordCount = 12
+    public static let confirmationWordCount = 8
+
+    /// Is this phrase displayable IN FULL?
+    ///
+    /// Length-exact, not merely non-empty. Eleven words is not a shorter phrase;
+    /// it is a different one, and it is precisely the case where two people read
+    /// past each other without either noticing.
+    public static func isComplete(_ words: [String], expecting expected: Int) -> Bool {
+        words.count == expected && !words.contains(where: { $0.isEmpty })
+    }
 }
 
 // MARK: - the verdict is DERIVED, and its words are not softened

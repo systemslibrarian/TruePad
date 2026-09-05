@@ -1319,8 +1319,19 @@ func zero(_ bytes: inout [UInt8]) {
     for i in bytes.indices { bytes[i] = 0 }
 }
 
-/// The ONLY randomness the engine draws, and only ever for a pairId — public
-/// metadata, never pad material.
+/// The system CSPRNG.
+///
+/// THE ENGINE draws randomness in exactly one place and for exactly one purpose:
+/// a pairId, which is public metadata. No verb ever manufactures a pad byte —
+/// pad material comes from the operator's declared sources (§7).
+///
+/// A CALLER may use this for something else, and one does: the iOS Create screen
+/// offers generating source material from this device's CSPRNG. That material is
+/// recorded under the frozen `device-random` source name, which the deployment
+/// evaluator classifies as software-csprng — a HARD disqualifier. So the honest
+/// statement is not "this is never pad material"; it is that pad material made
+/// this way can never be information-theoretically secure, and the product says
+/// so before the operator commits.
 public func randomBytes(_ count: Int) -> [UInt8] {
     var out = [UInt8](repeating: 0, count: count)
     let status = out.withUnsafeMutableBytes { buffer in

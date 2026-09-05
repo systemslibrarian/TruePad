@@ -6,3 +6,10 @@ playwright-report
 .lighthouseci
 *.local
 .claude/worktrees/
+
+# Xcode per-user state. Opening ios/TruePadApp in Xcode creates these; they are
+# machine-specific (window layout, selected scheme, last device) and must never
+# reach source control.
+xcuserdata/
+*.xcuserdatad
+DerivedData/

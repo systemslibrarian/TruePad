@@ -173,3 +173,38 @@ directions, alongside the cross-edition SPT corpora. The combiner was read
 directly and is the frozen construction — SHA3-256 over
 `mlkem_ss ‖ x25519_ss ‖ x25519_ct ‖ x25519_pk ‖ 5c2e2f2f5e5c`, label last. The
 header comment is stale; the bytes are not.
+
+---
+
+## The vendoring is not total, and this says where it stops
+
+Vendoring swift-crypto removes the network from everything TruePad **links**. It
+does not remove it from **resolution**, and calling the tree "vendored" without
+saying so would overstate it.
+
+`ios/vendor/swift-crypto/Package.swift` still declares a remote dependency:
+
+```
+.package(url: "https://github.com/apple/swift-asn1.git", from: "1.2.0")
+```
+
+So `xcodebuild -resolvePackageDependencies`, and therefore any clean build,
+fetches `apple/swift-asn1` from github.com.
+
+What that does and does not mean:
+
+* **It is not in the shipping binary.** swift-asn1 is used only by
+  `_CryptoExtras`, which TruePad deliberately does not link. Verified by symbol
+  against a real device Release build of the app: `SwiftASN1` is absent, as are
+  `_CryptoExtras` and `TruePadKATSupport`.
+* **It is a build-machine exposure, not a product one.** A compromised
+  swift-asn1 could run code during a build — which is a real thing to care about
+  — but it cannot reach an installed TruePad.
+* **It is pinned.** Both `ios/TruePadKit/Package.resolved` and the app's
+  `Package.resolved` pin revision `d9a5b374…` (1.7.2), and
+  `ios/scripts/check-app-project.sh` fails if those two ever disagree or if any
+  OTHER remote package appears.
+
+Removing it entirely would mean vendoring swift-asn1 as well, or patching the
+dependency out of the vendored manifest. Both are possible; neither has been
+done, and until one is, this section is the honest description.

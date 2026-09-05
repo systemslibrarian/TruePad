@@ -134,6 +134,21 @@ public enum ReceiveRequestCodec {
     /// makes the encoding canonical: without it, a final group with non-zero
     /// trailing bits decodes to the same 1235 bytes under a different spelling,
     /// and one request would have several texts.
+    /// Is this text a CANONICAL receive request — decodes, and re-encodes to
+    /// itself byte for byte?
+    ///
+    /// This exists so the predicate the app wires into the UI is the SAME code the
+    /// tests exercise. It was previously written out in the app's composition root
+    /// and hand-copied into the test suite, which meant the shipping copy was
+    /// never the tested copy — two implementations of one rule, and only one of
+    /// them checked.
+    public static func isCanonicalText(_ text: String) -> Bool {
+        guard case .ok(let request, let body) = decode(text) else { return false }
+        guard body.count == SptConstants.tpr2BodyBytes else { return false }
+        return (try? encode(requestId: request.requestId,
+                            encapsulationKey: request.encapsulationKey)) == text
+    }
+
     public static func decode(_ text: String) -> RequestDecode {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix(SptConstants.tpr2Prefix) else {

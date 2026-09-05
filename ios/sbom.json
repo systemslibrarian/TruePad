@@ -94,6 +94,23 @@
     },
     {
       "type": "library",
+      "name": "swift-asn1",
+      "version": "1.7.2",
+      "scope": "excluded",
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
+      "purl": "pkg:swift/github.com/apple/swift-asn1@1.7.2",
+      "externalReferences": [
+        { "type": "vcs", "url": "https://github.com/apple/swift-asn1.git" }
+      ],
+      "properties": [
+        { "name": "truepad:pinned-revision", "value": "d9a5b37470adc940d22c3bcd5ca6953a516b727f" },
+        { "name": "truepad:origin", "value": "REMOTE. The vendored swift-crypto still declares this dependency, so resolving the graph fetches it from github.com. It is the only remote fetch in the iOS build." },
+        { "name": "truepad:scope-rationale", "value": "Resolved and compiled as part of the dependency package, but reachable only through _CryptoExtras, which TruePad does not link. Verified ABSENT by symbol from a device Release build of the application. A build-machine exposure, not a shipping-binary one." },
+        { "name": "truepad:pin-enforcement", "value": "Pinned identically by ios/TruePadKit/Package.resolved and the app Package.resolved; ios/scripts/check-app-project.sh fails if they disagree or if any other remote package appears." }
+      ]
+    },
+    {
+      "type": "library",
       "name": "fiat-crypto",
       "version": "as vendored inside BoringSSL",
       "scope": "required",

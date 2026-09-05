@@ -36,8 +36,9 @@ public struct PadListView: View {
                     // than a compile fix.
                     VStack(alignment: .leading, spacing: 8) {
                         Text("No pads yet").font(.headline)
-                        Text("A pad is created from material you supply. TruePad does not invent "
-                             + "pad bytes.")
+                        Text("A pad is created from material you supply — or, if you choose, "
+                             + "from this device's random generator, which is weaker and is "
+                             + "labelled as such.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }

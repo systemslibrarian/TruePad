@@ -19,9 +19,10 @@ inherit — still stands and is still the governing text.
   all four directions. It carries the §12 verbs, the courier bundle, the SPT
   durable state machine and the full sealed-transfer ceremony, the deployment
   evaluator, the TP2 compact transport, and a SwiftUI view layer whose
-  security-carrying decisions are tested. There is still **no installable iOS
-  app**: the app shell (Xcode app target, Info.plist, entitlements, entry point)
-  and the pad-creation and ceremony screens are not built.
+  security-carrying decisions are tested — plus a **native app target** at
+  `ios/TruePadApp` that builds for `generic/platform=iOS` in Debug and Release.
+  The app has **not been installed on a physical iPhone**; that is blocked on a
+  local Apple ID for development signing, not on code.
 - **Neither is released.** No App Store build, no Play production build, no 3.0
   tag.
 - **Still outstanding on both, and not substitutable by any automated evidence:**

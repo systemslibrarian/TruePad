@@ -66,10 +66,24 @@ public final class DarwinFs: Fs, @unchecked Sendable {
     /// the diagnostics surface so a weaker guarantee is REPORTED, not assumed.
     public private(set) var fullFsyncUnsupported = false
 
+    /// True when the store could NOT be marked as excluded from backup.
+    ///
+    /// Observable for the same reason `fullFsyncUnsupported` is: a weaker
+    /// guarantee than the documentation states must be REPORTABLE, not silently
+    /// assumed away. §6 says the store is excluded from iCloud and Finder
+    /// backups; if the platform refused, that row is not true on this device.
+    public private(set) var backupExclusionUnavailable = false
+
     public init(root: URL, fileProtection: FileProtectionType = .completeUnlessOpen) throws {
         self.root = root
         self.fileProtection = fileProtection
         try Self.makeDirectory(root, protection: fileProtection)
+        // RE-APPLIED ON EVERY LAUNCH, not only when the directory is created.
+        // `makeDirectory` returns early for a directory that already exists, so
+        // the exclusion previously ran exactly once in the store's lifetime — and
+        // if it had failed then, or been cleared since, nothing would reassert it
+        // and nothing would report it.
+        backupExclusionUnavailable = !Self.excludeFromBackup(root)
     }
 
     // ---- paths --------------------------------------------------------------
@@ -99,7 +113,7 @@ public final class DarwinFs: Fs, @unchecked Sendable {
                 .posixPermissions: 0o700,
                 .protectionKey: protection,
             ])
-        try excludeFromBackup(dir)
+        _ = excludeFromBackup(dir)
     }
 
     /// Pad material and consumption state must NOT ride into iCloud or a Finder
@@ -107,11 +121,26 @@ public final class DarwinFs: Fs, @unchecked Sendable {
     /// the rollback that turns "spent" back into "unspent". Excluding the store
     /// does not make rollback impossible — a full device restore still exists —
     /// but it removes the routine path to it.
-    static func excludeFromBackup(_ url: URL) throws {
+    ///
+    /// SET, THEN READ BACK. The flag is verified rather than assumed, and the
+    /// result is returned rather than swallowed. docs/IOS-SECURITY.md §6 states
+    /// flatly that the store is "excluded → not captured"; an earlier version set
+    /// the flag with `try?` and discarded the outcome, so that documented property
+    /// could have been false with nothing able to notice.
+    @discardableResult
+    static func excludeFromBackup(_ url: URL) -> Bool {
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
         var mutable = url
-        try? mutable.setResourceValues(values)
+        do {
+            try mutable.setResourceValues(values)
+        } catch {
+            return false
+        }
+        // Read it back: setResourceValues can succeed on a volume that does not
+        // honour the attribute.
+        let readBack = try? url.resourceValues(forKeys: [.isExcludedFromBackupKey])
+        return readBack?.isExcludedFromBackup == true
     }
 
     // ---- syncing ------------------------------------------------------------

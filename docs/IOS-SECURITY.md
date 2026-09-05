@@ -43,7 +43,9 @@ part of the point.
 | SPT verbs (review / confirm / seal / open / commit) | **BUILT**, ceremony green end to end on two engines |
 | Deployment evaluator | **BUILT**, held to the shared cross-edition corpus |
 | TP2 compact envelope transport | **BUILT**, byte-exact vs the released corpus; `open` takes either spelling |
-| SwiftUI application layer | NOT YET BUILT |
+| SwiftUI application layer | **BUILT**; security-carrying decisions tested, layout/VoiceOver are the human gate |
+| Native app target (`ios/TruePadApp`) | **BUILT** — Debug and Release for `generic/platform=iOS`, minimum OS 16.0 verified on the binary |
+| Installed/launched on a physical iPhone | **OUTSTANDING** — blocked on a local Apple ID for development signing, not on code |
 | Human VoiceOver validation | **OUTSTANDING** (human gate) |
 | Physical iPhone validation | **OUTSTANDING** (hardware gate) |
 | Android↔iPhone two-device ceremony | **OUTSTANDING** (human gate) |

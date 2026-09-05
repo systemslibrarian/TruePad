@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    TruePad — the complete Info.plist, written out rather than generated.
+
+    EVERY KEY HERE IS DELIBERATE. This file is the app's declared surface to the
+    operating system, so it is kept explicit and short: a reviewer can read the
+    whole thing and see that TruePad asks for exactly one permission, declares no
+    URL scheme, registers no background mode, and exports no document type.
+
+    What is ABSENT is as much the point as what is present. There is no
+    UIBackgroundModes, no NSAppTransportSecurity (nothing makes a network
+    request), no CFBundleURLTypes, no NSUbiquitousContainers, no
+    NSLocalNetworkUsageDescription, no NSBonjourServices.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>TruePad</string>
+
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <!--
+        From the build settings, like the three keys above. These were literals
+        while MARKETING_VERSION and CURRENT_PROJECT_VERSION sat inert in the
+        project - two sources of truth, of which the one Xcode's General tab edits
+        was the one with no effect.
+    -->
+    <key>CFBundleShortVersionString</key>
+    <string>$(MARKETING_VERSION)</string>
+
+    <key>CFBundleVersion</key>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
+
+    <!--
+        THE ONLY PERMISSION TRUEPAD ASKS FOR, and it is requested lazily: the
+        prompt appears when the operator chooses "Scan", never at launch. The
+        wording states the scope and the retention in the two places an operator
+        actually looks — what it is used for, and what is not kept.
+    -->
+    <key>NSCameraUsageDescription</key>
+    <string>TruePad uses the camera only to scan a public receive QR code. Camera images are not saved or uploaded.</string>
+
+    <!--
+        Portrait only, on phone. A pad ceremony is read aloud from a held device;
+        there is no landscape layout to review, so none is offered.
+    -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
+
+    <key>UILaunchScreen</key>
+    <dict/>
+
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key>
+        <false/>
+    </dict>
+
+    <!--
+        NOT file-sharing enabled. The store lives in Application Support and is
+        never exposed to the Files app: a pad that a file picker can reach is a
+        pad that can be copied out of the app's control without the engine's
+        one-handoff rule ever running.
+    -->
+    <key>UIFileSharingEnabled</key>
+    <false/>
+
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <false/>
+
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <true/>
+</dict>
+</plist>

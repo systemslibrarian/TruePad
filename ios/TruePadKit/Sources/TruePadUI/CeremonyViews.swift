@@ -36,8 +36,8 @@ public struct CreatePadView: View {
         + "deployment assessment will say NOT ELIGIBLE, permanently, and no later step can raise it."
 
     static let fileSourceNote =
-        "TruePad does not invent pad bytes. The file you choose IS the pad, and TruePad cannot "
-        + "check where it came from — it records what you declare."
+        "The file you choose IS the pad. TruePad cannot check where it came from — it records "
+        + "what you declare, and a declaration is not evidence."
 
     public var body: some View {
         NavigationStack {
@@ -125,7 +125,7 @@ public struct ReceiveRequestView: View {
                         .accessibilityLabel("Your receive request, as text you can copy.")
                 }
                 Section("Read these twelve words aloud") {
-                    WordGrid(model.requestWords)
+                    WordGrid(model.requestWords, expecting: CeremonyPhrase.requestWordCount)
                     Text(VerbatimText.wordComparisonIsADeclaration)
                         .font(.footnote).foregroundStyle(.secondary)
                 }
@@ -162,10 +162,36 @@ struct WordGrid: View {
     /// in the SPT module and TruePadUI does not link it — the UI has no business
     /// reaching the KEM, and that separation is asserted by test.
     let rendered: [String]
+    /// How many words this step MUST show. A phrase of the wrong length is not a
+    /// shorter phrase; it is a broken ceremony.
+    let expected: Int
 
-    init(_ rendered: [String]) { self.rendered = rendered }
+    init(_ rendered: [String], expecting expected: Int) {
+        self.rendered = rendered
+        self.expected = expected
+    }
 
     var body: some View {
+        if !CeremonyPhrase.isComplete(rendered, expecting: expected) {
+            // AN INCOMPLETE PHRASE IS NOT SHOWN AT ALL, and says so.
+            //
+            // The first version rendered whatever it was given, so a wordlist
+            // that failed to load produced an EMPTY list — and the operator was
+            // still offered "All twelve words matched". Confirming a comparison
+            // that was never displayed is the worst outcome this screen can
+            // produce, and it was reachable.
+            Label("These words cannot be displayed, so this transfer cannot be "
+                  + "confirmed on this device.", systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+                .font(.callout)
+                .accessibilityLabel("The comparison words cannot be displayed. This transfer "
+                                    + "cannot be confirmed on this device.")
+        } else {
+            grid
+        }
+    }
+
+    private var grid: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(rendered.enumerated()), id: \.offset) { position, word in
                 HStack(alignment: .firstTextBaseline) {
@@ -208,13 +234,13 @@ public struct SealView: View {
 
             if let review = model.review {
                 Section("Compare these twelve words with the recipient") {
-                    WordGrid(model.requestWords)
+                    WordGrid(model.requestWords, expecting: CeremonyPhrase.requestWordCount)
                     Text(VerbatimText.wordComparisonIsADeclaration)
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
                     Button("All twelve words matched") { model.confirm() }
-                        .disabled(model.confirmed)
+                        .disabled(model.confirmed || !model.requestWordsComplete)
                 } footer: {
                     Text("Say this only if you compared them over a channel you already trust — a "
                          + "phone call you placed, or in person. TruePad records that you said so; "
@@ -234,7 +260,7 @@ public struct SealView: View {
 
             if let sealed = model.sealed {
                 Section("Read these eight words aloud") {
-                    WordGrid(model.confirmationWords)
+                    WordGrid(model.confirmationWords, expecting: CeremonyPhrase.confirmationWordCount)
                 }
                 Section {
                     Button("Hand over the sealed file…") { model.share() }
@@ -279,12 +305,13 @@ public struct OpenSealedView: View {
 
             if let session = model.session {
                 Section("Check these eight words against the sender") {
-                    WordGrid(model.confirmationWords)
+                    WordGrid(model.confirmationWords, expecting: CeremonyPhrase.confirmationWordCount)
                     Text(VerbatimText.wordComparisonIsADeclaration)
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
                     Button("The eight words matched — save this pad") { model.commit() }
+                        .disabled(!model.confirmationWordsComplete)
                 } footer: {
                     Text("Saving uses up this receive request. If saving fails after that point "
                          + "the transfer is lost and the request cannot be reused — ask for a new "
