@@ -69,6 +69,18 @@ final class TruePadPhysicalTests: XCTestCase {
             app.swipeUp()
             if target.exists { return true }
         }
+        // AND BACK THE OTHER WAY.
+        //
+        // This only ever scrolled toward the bottom, which was fine while every
+        // screen was read top to bottom once. It stopped being fine when the pad
+        // screen grew a "Security details" disclosure near the BOTTOM: reading a
+        // meter now scrolls down to open it, and the next thing a test looks for
+        // — "Write a message", which is at the TOP — was above the viewport with
+        // no way back. Two tests failed on exactly that, and the app was fine.
+        for _ in 0..<(swipes * 2) {
+            app.swipeDown()
+            if target.exists { return true }
+        }
         return target.exists
     }
 
@@ -180,13 +192,26 @@ final class TruePadPhysicalTests: XCTestCase {
     /// tapping it again would CLOSE it.
     @discardableResult
     func openSecurityDetails(_ app: XCUIApplication) -> Bool {
-        if element(containing: "You can still send", in: app).exists { return true }
+        func meter() -> XCUIElement { element(containing: "You can still send", in: app) }
+
+        // ALREADY OPEN, POSSIBLY JUST SCROLLED AWAY. A bare `.exists` is not
+        // enough to tell those apart: a SwiftUI row below the fold is ABSENT from
+        // the hierarchy, not merely off-screen. Treating "not visible" as "not
+        // open" is what made this tap a disclosure that was already open and
+        // CLOSE it — the pad screen is popped back to rather than rebuilt, so its
+        // disclosure keeps the state an earlier meter read left it in.
+        if reveal(meter(), in: app, swipes: 12) { return true }
+
         let disclosure = app.buttons["Security details"].exists
             ? app.buttons["Security details"]
             : element(containing: "Security details", in: app)
         guard reveal(disclosure, in: app, swipes: 12) else { return false }
         disclosure.tap()
-        return element(containing: "You can still send", in: app).waitForExistence(timeout: 5)
+        if reveal(meter(), in: app, swipes: 12) { return true }
+
+        // If that tap closed it, put it back.
+        disclosure.tap()
+        return reveal(meter(), in: app, swipes: 12)
     }
 
     /// The bytes-of-pad-material-remaining figure for the first direction shown.
