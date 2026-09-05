@@ -111,6 +111,21 @@
     },
     {
       "type": "library",
+      "name": "XKCP",
+      "version": "XKCP#master (heads/master-0-g11297f5)",
+      "scope": "required",
+      "licenses": [{ "license": { "name": "CC0-1.0 / public domain, with portions under Apache-2.0, as carried in the vendored tree" } }],
+      "externalReferences": [
+        { "type": "vcs", "url": "https://github.com/XKCP/XKCP" }
+      ],
+      "properties": [
+        { "name": "truepad:origin", "value": "ships inside swift-crypto as CXKCP/CXKCPShims (FIPS202-opt64). It SHIPS: a device Release build carries KeccakHash, KeccakSponge and KeccakP symbols, which are XKCP’s own and distinct from BoringSSL’s BORINGSSL_keccak_st." },
+        { "name": "truepad:provides", "value": "SHA-3 / SHAKE, used by ML-KEM inside the X-Wing KEM that protects pad DELIVERY. It is not on the OTP message path." },
+        { "name": "truepad:pin-quality", "value": "Upstream records this as a BRANCH (XKCP#master) with commit 11297f5. The commit is the integrity evidence; the branch name is NOT, because a branch moves. TruePad does not resolve XKCP itself — it inherits whatever the pinned swift-crypto commit vendored — so the swift-crypto pin is what actually fixes these bytes." }
+      ]
+    },
+    {
+      "type": "library",
       "name": "fiat-crypto",
       "version": "as vendored inside BoringSSL",
       "scope": "required",

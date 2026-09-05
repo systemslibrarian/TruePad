@@ -72,8 +72,7 @@ review brief. Reproduced counts at this SHA: **1585 unit tests / 72 files** and
 review brief; its count is not restated here, because a number quoted without
 being re-run is exactly the kind of stale claim this page exists to avoid.
 
-The mobile editions carry their own suites: **Android 184 JVM + 19 app unit
-tests**, and **iOS 325 tests** (`swift test --package-path ios/TruePadKit`), plus
+The mobile editions carry their own suites: **Android 232 JVM/unit tests**, and **iOS 339 tests** (`swift test --package-path ios/TruePadKit`), plus
 the iOS supply-chain and isolation gates in `ios/scripts/` and `ios/vendor/`. The
 iOS suite also runs under AddressSanitizer and ThreadSanitizer on every push, and
 CI checks the generated SBOM against the tree and inspects what a device Release

@@ -37,6 +37,15 @@ UPSTREAM_COMMIT="$(grep -oE 'UPSTREAM_COMMIT="[^"]+"' "$VENDOR/verify-vendor.sh"
 # The URL is declared with a mirror override, so take the default after the
 # ":-" rather than the whole expression.
 UPSTREAM_REPO="$(grep -oE 'https://github\.com/apple/swift-crypto\.git' "$VENDOR/verify-vendor.sh" | head -1)"
+# XKCP ships inside the vendored swift-crypto and is read from the file upstream
+# writes when it vendors it. Read rather than asserted: a hard-coded pin in an
+# SBOM is a claim about the tree, not evidence from it.
+XKCP_SRC="$VENDOR/swift-crypto/Sources/CXKCP/vendored-sources.txt"
+if [ -r "$XKCP_SRC" ]; then
+    XKCP_PIN="$(sed -n '1s/^Vendored code from \(.*\):$/\1/p' "$XKCP_SRC")"
+fi
+[ -n "${XKCP_PIN:-}" ] || XKCP_PIN="unknown (vendored-sources.txt unreadable)"
+
 BORINGSSL_COMMIT="$(grep -oE 'BoringSSL Commit: [0-9a-f]{40}' "$VENDOR/swift-crypto/Package.swift" \
     | head -1 | awk '{print $3}')"
 
@@ -187,6 +196,21 @@ build_sbom() {
     emit '        { "name": "truepad:origin", "value": "REMOTE. The vendored swift-crypto still declares this dependency, so resolving the graph fetches it from github.com. It is the only remote fetch in the iOS build." },'
     emit '        { "name": "truepad:scope-rationale", "value": "Resolved and compiled as part of the dependency package, but reachable only through _CryptoExtras, which TruePad does not link. Verified ABSENT by symbol from a device Release build of the application. A build-machine exposure, not a shipping-binary one." },'
     emit '        { "name": "truepad:pin-enforcement", "value": "Pinned identically by ios/TruePadKit/Package.resolved and the app Package.resolved; ios/scripts/check-app-project.sh fails if they disagree or if any other remote package appears." }'
+    emit '      ]'
+    emit '    },'
+    emit '    {'
+    emit '      "type": "library",'
+    emit '      "name": "XKCP",'
+    emit "      \"version\": \"$XKCP_PIN\","
+    emit '      "scope": "required",'
+    emit '      "licenses": [{ "license": { "name": "CC0-1.0 / public domain, with portions under Apache-2.0, as carried in the vendored tree" } }],'
+    emit '      "externalReferences": ['
+    emit '        { "type": "vcs", "url": "https://github.com/XKCP/XKCP" }'
+    emit '      ],'
+    emit '      "properties": ['
+    emit '        { "name": "truepad:origin", "value": "ships inside swift-crypto as CXKCP/CXKCPShims (FIPS202-opt64). It SHIPS: a device Release build carries KeccakHash, KeccakSponge and KeccakP symbols, which are XKCP’s own and distinct from BoringSSL’s BORINGSSL_keccak_st." },'
+    emit '        { "name": "truepad:provides", "value": "SHA-3 / SHAKE, used by ML-KEM inside the X-Wing KEM that protects pad DELIVERY. It is not on the OTP message path." },'
+    emit '        { "name": "truepad:pin-quality", "value": "Upstream records this as a BRANCH (XKCP#master) with commit 11297f5. The commit is the integrity evidence; the branch name is NOT, because a branch moves. TruePad does not resolve XKCP itself — it inherits whatever the pinned swift-crypto commit vendored — so the swift-crypto pin is what actually fixes these bytes." }'
     emit '      ]'
     emit '    },'
     emit '    {'

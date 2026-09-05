@@ -1,8 +1,13 @@
 # TruePad 3.0.0 — Release checklist
 
 This gates a **formal 3.0.0 release**. It is not satisfied today. The software
-gates are largely met on `master` (3.0.0-dev.0); the physical, human, and
-independent-review gates are **outstanding** and each is release-blocking.
+gates are met on `master` (3.0.0-dev.0); the **physical and human** gates are
+outstanding and each is release-blocking.
+
+**Independent human security review is NOT a release blocker for this project.**
+That is a standing project decision, not an oversight, and it must not be
+reintroduced as a gate. An earlier version of this document listed it as
+release-blocking; see Section C.
 
 Nothing here authorizes creating a `v3.0.0` tag, a GitHub 3.0 release, or an npm
 publication. Those happen only after every release-blocking item is green.
@@ -35,19 +40,36 @@ candidate SHA.
 | Android physical handset validation | run the Android build on real handsets (`docs/MOBILE-3.0-HANDOFF.md`) | send/receive, storage, QR, crash-safety pass | device matrix, logs | **OUTSTANDING** |
 | Human TalkBack (Android) accessibility | a human uses the app end-to-end with TalkBack | usable, no trap, claims read correctly | recorded session notes | **OUTSTANDING** |
 | Real handheld QR-camera validation | `docs/QR-VALIDATION.md` on Android + iPhone cameras | scan matrix passes; malformed rejected | device/lighting matrix, photos | **OUTSTANDING** |
-| iOS validation (once built) | native iOS build on real devices + VoiceOver | parity + honest deployment class | device matrix, logs | **OUTSTANDING (not built)** |
+| iOS on-device state pass | `ios/TruePadApp/TruePadAppUITests` on a physical iPhone | all on-device tests pass | test log + device/OS recorded | **DONE** — 9/9 on iPhone 12 / iOS 18.6.2 |
+| Human VoiceOver (iOS) accessibility | a human uses the app end-to-end with VoiceOver | usable, no trap, claims read correctly | recorded session notes | **OUTSTANDING** |
+| Android↔iPhone two-device optical SPT ceremony | `docs/CEREMONY.md` across two real handsets | words match; reject path works | photos + both device logs | **OUTSTANDING** |
 
-## C. Independent review gate (OUTSTANDING — release-blocking)
+## C. Independent review — NOT a release gate
 
-| Gate | Procedure | Expected result | Evidence | Status |
-| --- | --- | --- | --- | --- |
-| Independent human cryptography/security review | commission a review per `docs/INDEPENDENT-REVIEW-BRIEF.md` | no unresolved release-blocking finding | reviewer report + issue resolution | **OUTSTANDING** |
+Independent human cryptography/security review is **not required** to release
+this project, and must not be listed as release-blocking.
 
-## D. Release mechanics (only after A–C are green)
+`docs/INDEPENDENT-REVIEW-BRIEF.md` remains in the tree as a **standing offer to
+reviewers**, not as a gate: if someone wishes to review TruePad, it tells them
+where to start and what the project claims. Nothing waits on it.
+
+This is recorded explicitly because the previous version of this checklist made
+it release-blocking, which would have deadlocked the release on an event the
+project had already decided not to require.
+
+## D. Release mechanics (only after A and B are green)
 
 1. Re-run all Section A gates at the exact release-candidate SHA; confirm green.
 2. Confirm `origin/master` is the intended release SHA and unmoved.
-3. Set `package.json` / `package-lock` version to `3.0.0` (from `3.0.0-dev.0`);
+3. Set the version to `3.0.0` in **every** location. There are six, and only the
+   first two are npm's:
+   - `package.json` and `package-lock.json` (from `3.0.0-dev.0`)
+   - `android/app/build.gradle.kts` — `versionName` (from `3.0.0-dev.0`) and
+     `versionCode` (monotonic; currently 2)
+   - `ios/TruePadApp/TruePadApp.xcodeproj/project.pbxproj` — `MARKETING_VERSION`
+     in **all** build configurations (currently `3.0.0-dev.0`), and
+     `CURRENT_PROJECT_VERSION` (monotonic; currently 1)
+   Verify afterwards that no location still reads `-dev`;
    move the CHANGELOG "Unreleased — planned v3.0.0" heading to a dated `## v3.0.0`.
 4. Update README/SECURITY to state 3.0.0 as the latest formal release; keep the
    2.0.x historical wording accurate.

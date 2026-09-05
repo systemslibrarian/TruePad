@@ -17,12 +17,55 @@
 Run each step; record the actual output. A step that does not match the expected
 result is a **release-blocking** failure — report it, do not proceed.
 
+## Step 0 — PIN THE TCTI. Do this before anything else.
+
+**Every `tpm2_*` command below silently obeys `TPM2TOOLS_TCTI` if it is set.**
+This repository ships `scripts/tpm-interop.sh`, which runs against **swtpm** and
+exports exactly that variable. A shell that has run it — or any shell that
+inherited a `TPM2TOOLS_TCTI` from a profile — will send every command in this
+procedure to an emulator and produce a completely green run that is **not
+physical evidence at all**. Naming swtpm as excluded in prose does not prevent
+this; pinning the TCTI does.
+
+```sh
+# 1. Refuse to inherit anything.
+unset TPM2TOOLS_TCTI TPM2TOOLS_TCTI_NAME TPM2TOOLS_DEVICE_FILE TCTI
+
+# 2. Bind explicitly to the kernel resource manager for the REAL device.
+export TPM2TOOLS_TCTI="device:/dev/tpmrm0"     # or device:/dev/tpm0
+
+# 3. Prove it is not an emulator, and record the output verbatim.
+ls -l /dev/tpm0 /dev/tpmrm0
+tpm2_getcap properties-fixed | grep -iE "MANUFACTURER|VENDOR_STRING|FIRMWARE"
+```
+
+Expected: a real manufacturer (for example `IFX`, `INTC`, `STM`, `NTC`, `AMD`),
+**not** `IBM` + `SW   TPM`, which is the swtpm signature. Record the manufacturer,
+vendor string and firmware version in the evidence. If the manufacturer reads as
+a software TPM, **stop**: this gate has not been satisfied and no other step in
+this document means anything.
+
+Confirm too that `tpm2_getcap` fails when the TCTI is pointed at nothing —
+`TPM2TOOLS_TCTI=device:/dev/null tpm2_getcap properties-fixed` must error. A
+procedure whose commands succeed regardless of the TCTI is not measuring the TPM.
+
 ## Steps
 
-1. **Genuine hardware TPM discovery.** Confirm the TPM is real hardware
-   (`/dev/tpm0` or a hardware TCTI), not swtpm. Record the device path and vendor.
-2. **NV counter creation (operator).** Define an NV **counter** index
-   (`nt=1`, 8 octets, non-orderly). Expected: created; TruePad did not define it.
+1. **Genuine hardware TPM discovery.** Already established by Step 0 — record the
+   device path, manufacturer, vendor string and firmware version here.
+2. **NV counter creation (operator).** Define an NV **counter** index: `nt=1`
+   (counter), 8 octets, non-orderly. TruePad never defines one.
+
+   ```sh
+   NV=0x1500020   # any index the operator is willing to dedicate
+   tpm2_nvdefine -C o -s 8 -a "authread|authwrite|nt=1" "$NV"
+   ```
+
+   `nt=1` is the part that matters: `tpm2_nvincrement` in step 6 **fails on an
+   ordinary NV index**, so an index defined without it sends the operator back to
+   the start several steps later. Omit `orderly` deliberately — an orderly index
+   is refused by design, and step 3 checks for that.
+   Expected: created; TruePad did not define it.
 3. **Required attributes.** `tpm2_nvreadpublic` shows `nt=0x1` (counter), size 8,
    `TPMA_NV_ORDERLY` clear. Expected: matches; an orderly or non-counter index is
    later refused.

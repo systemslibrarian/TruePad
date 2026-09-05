@@ -17,12 +17,19 @@ intended shape. What has since been built, and what has not:
   known-answer vectors and the cross-edition SPT corpora in **all four**
   directions (Browser↔iOS, Android↔iOS).
 
-**Not built yet:** the OTP verbs (gen/send/open/retire/destroy) over the store,
-the SPT durable state machine, the deployment evaluator, and the entire SwiftUI
-application — including QR, the share sheet and accessibility.
+**All built.** This section previously listed the OTP verbs, the SPT durable
+state machine, the deployment evaluator and the SwiftUI application as "not built
+yet". Every one of them now exists: the verbs over the store, the SPT state
+machine and full ceremony, the evaluator held to the shared cross-edition corpus,
+and the SwiftUI application including QR, the share sheet and accessibility
+labelling. See `docs/IOS-SECURITY.md` for the current status table, which is
+authoritative.
 
-**Not claimed:** nothing has run on a physical iPhone. No App Store build exists,
-there is no 3.0 tag, and human VoiceOver validation has not been performed.
+**Not claimed:** no App Store build exists and there is no 3.0 tag. The app HAS
+been installed and launched on a physical iPhone (iPhone 12, iOS 18.6.2) with 9
+on-device automated tests passing — which is not the same as full physical
+validation. Human VoiceOver, human TalkBack, the Android↔iPhone two-device
+ceremony and physical TPM validation all remain outstanding.
 
 See `docs/IOS-SECURITY.md` for the security and durability boundaries, which is
 the document that governs where these claims stop.

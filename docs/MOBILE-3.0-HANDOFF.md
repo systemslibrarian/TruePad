@@ -21,7 +21,9 @@ inherit — still stands and is still the governing text.
   evaluator, the TP2 compact transport, and a SwiftUI view layer whose
   security-carrying decisions are tested — plus a **native app target** at
   `ios/TruePadApp` that builds for `generic/platform=iOS` in Debug and Release.
-  The app has **not been installed on a physical iPhone**; that is blocked on a
+  The app **has been installed and launched on a physical iPhone** (iPhone 12,
+  iOS 18.6.2), where 9 on-device automated tests pass. This paragraph previously
+  said it had not been, and that it was blocked on a
   local Apple ID for development signing, not on code.
 - **Neither is released.** No App Store build, no Play production build, no 3.0
   tag.
@@ -96,7 +98,8 @@ Verified by reading `origin/android-phase-2` (no checkout/merge performed):
 4. **Regenerate shared vectors against master HEAD** (not only the `v2.0.0` tag),
    and add the `DeploymentView`/status shape to the Kotlin protocol.
 5. **Physical-device gate:** run `android/tools/physical-device-check.sh` on a real
-   handset (it refuses emulators by design). **Status: NOT YET RUN — outstanding.**
+   handset (it refuses emulators by design). **Status: DONE** — Samsung
+   SM-A176U (Android 16), 44 instrumentation tests + 15 security checks passed.
 6. **Human TalkBack pass:** a human end-to-end run. Automated `AccessibilityTest`/
    `LargeFontTest` are baselines only. **Status: NOT YET RUN — outstanding.**
 

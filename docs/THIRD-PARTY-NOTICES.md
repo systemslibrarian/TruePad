@@ -254,15 +254,33 @@ iOS; every primitive is BoringSSL's.
   there, which supplies Apple's own X-Wing with an iOS 26 floor and no
   derandomized encapsulation). The rationale is recorded in full in
   `ios/vendor/README.md`.
-- **Local modifications:** two, both in the vendored `Package.swift`; no file
-  under `Sources/` is modified. The complete delta is recorded in
-  `ios/vendor/EXPECTED-PATCH.diff` (30 lines) and enforced by
+- **Local modifications:** THREE, in TWO files. Two are in the vendored
+  `Package.swift`; the third is in `Sources/`, and it is a behaviour change on a
+  shipping crypto path. The complete delta is recorded in
+  `ios/vendor/EXPECTED-PATCH.diff` (65 lines) and enforced by
   `ios/vendor/verify-vendor.sh`, which fails on any unreviewed drift.
   1. `let development = true` — upstream's own documented switch, which builds
      the open-source BoringSSL-backed API on Apple platforms.
   2. Exporting the `CCryptoBoringSSL` target as a product, so TruePad's
      test-only deterministic-encapsulation helper can live outside the shipping
      module graph rather than being patched into `Sources/Crypto`.
+  3. `Sources/Crypto/KEM/BoringSSL/XWing_boring.swift` — an entropy-length guard
+     on `encapsulateWithOptionalEntropy`. `CCryptoBoringSSL_XWING_encap_external_entropy`
+     is declared `const uint8_t eseed[64]` and takes no length, so a shorter
+     array is an out-of-bounds read inside C. Upstream's fix for the X-Wing
+     DECAPSULATION length bug (CVE-2026-28815) added the matching guard on the
+     decapsulation side of this same file and left the encapsulation buffer
+     unguarded; this is that defect on the other side, still present at 4.5.2.
+     It is unreachable upstream (the only in-tree caller passes `nil`) and
+     unreachable from TruePad (which never calls this method and validates its
+     own 64 bytes first), and is patched anyway. The randomized path is
+     untouched and correct 64-byte entropy still produces byte-identical output,
+     so no known-answer vector moves.
+
+  An earlier version of this section said "two, both in the vendored
+  `Package.swift`; no file under `Sources/` is modified" and "30 lines". All
+  three of those were wrong, and the third was the one that mattered: it told a
+  reviewer no shipping crypto source had been touched when one had.
 - **Not vendored:** upstream's tests, benchmarks, CI, lint configuration and
   CMake build are deliberately excluded; see `ios/vendor/PRUNED-PATHS.txt`.
 
@@ -284,6 +302,25 @@ iOS; every primitive is BoringSSL's.
   32-byte X25519 key. The comment is stale; the bytes are the ones the
   Appendix-C corpus pins, and the corpus — not the comment — is what TruePad
   tests against.
+
+### XKCP (vendored inside swift-crypto)
+
+- **What it is:** the eXtended Keccak Code Package, upstream's reference
+  implementation of the Keccak permutation and FIPS 202 (SHA-3 / SHAKE).
+- **Where it comes from:** <https://github.com/XKCP/XKCP>. It is not resolved by
+  TruePad; it arrives inside the vendored swift-crypto as `Sources/CXKCP` and
+  `Sources/CXKCPShims` (the `FIPS202-opt64` variant).
+- **Pin:** upstream records it in `Sources/CXKCP/vendored-sources.txt` as
+  `XKCP#master (heads/master-0-g11297f5)`. **The commit `11297f5` is the
+  integrity evidence; the branch name is not**, because a branch moves. What
+  actually fixes these bytes for TruePad is the swift-crypto commit pin, since
+  TruePad inherits whatever that commit vendored.
+- **It ships.** A device Release build carries `KeccakHash`, `KeccakSponge` and
+  `KeccakP` symbols, which are XKCP's own and distinct from BoringSSL's
+  `BORINGSSL_keccak_st`. It provides SHA-3/SHAKE to ML-KEM inside the X-Wing KEM
+  that protects pad **delivery**; it is not on the OTP message path.
+- **Licence:** CC0-1.0 / public domain, with portions under Apache-2.0, as
+  carried in the vendored tree.
 
 ### fiat-crypto (vendored inside BoringSSL)
 

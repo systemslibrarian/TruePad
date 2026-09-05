@@ -16,7 +16,12 @@
   patch, enforced byte-for-byte by `ios/vendor/verify-vendor.sh`.
 - Deterministic X-Wing encapsulation is **structurally** test-only: it is not a
   package product, and a shipping app cannot import it.
-- No iOS application yet, no App Store build, no physical-iPhone or VoiceOver
+- No App Store build and no human VoiceOver validation. There IS a native iOS
+  application (`ios/TruePadApp`), installed and launched on an iPhone 12 running
+  iOS 18.6.2, where 9 on-device automated tests pass. That is not the same as
+  full physical validation — the Android↔iPhone two-device ceremony, human
+  VoiceOver, human TalkBack and physical TPM all remain outstanding. Previously
+  this line said there was no iOS application and no physical-iPhone
   validation.
 
 ### Security fixes

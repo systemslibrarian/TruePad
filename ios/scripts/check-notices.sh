@@ -87,6 +87,52 @@ else
 fi
 
 echo
+echo "== 6. The vendored-patch claim matches the actual diff =="
+#
+# This section exists because the notices claimed "two [modifications], both in
+# the vendored Package.swift; no file under Sources/ is modified" and "30 lines",
+# while EXPECTED-PATCH.diff was 65 lines and patched a SHIPPING CRYPTO SOURCE.
+# Every other check in this script passed at the time. A supply-chain notice that
+# understates the delta is worse than none: it tells a reviewer not to look.
+#
+# Stated POSITIVELY — the notices must say the real size and name every patched
+# Sources/ file. A check phrased as "the notices must not DENY the modification"
+# matched this file's own quoted retraction of the old wording, which is the
+# prose-versus-code mistake these guards have made before.
+PATCH="$ROOT/ios/vendor/EXPECTED-PATCH.diff"
+if [ ! -r "$PATCH" ]; then
+    fail "EXPECTED-PATCH.diff is unreadable -- the delta claim cannot be checked"
+else
+    PATCH_LINES="$(wc -l < "$PATCH" | tr -d ' ')"
+    PATCHED_FILES="$(grep '^+++ ' "$PATCH" | sed 's|^+++ vendored/||' | sort -u)"
+    PATCH_FILE_COUNT="$(printf '%s\n' "$PATCHED_FILES" | grep -c . | tr -d ' ')"
+
+    if [ "$PATCH_FILE_COUNT" -gt 0 ]; then
+        pass "the patch probe works ($PATCH_FILE_COUNT patched file(s) seen)"
+    else
+        fail "no patched files parsed -- this probe is not working"
+    fi
+
+    if grep -qF "($PATCH_LINES lines)" "$NOTICES"; then
+        pass "the notices state the real patch size ($PATCH_LINES lines)"
+    else
+        fail "the notices do not state the real patch size ($PATCH_LINES lines)"
+    fi
+
+    # EVERY patched file must be named. A patch under Sources/ is a change to
+    # shipping code and a reviewer must be told which file.
+    while IFS= read -r pf; do
+        [ -n "$pf" ] || continue
+        base="$(basename "$pf")"
+        if grep -qF "$base" "$NOTICES"; then
+            pass "the notices name the patched file $base"
+        else
+            fail "the patch modifies $pf, which the notices never name"
+        fi
+    done <<< "$PATCHED_FILES"
+fi
+
+echo
 if [ "$FAIL" -eq 0 ]; then
     echo "RESULT: PASS -- the notices describe the code that is actually vendored."
 else
