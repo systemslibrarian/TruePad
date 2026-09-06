@@ -100,6 +100,36 @@ public struct CreatePadView: View {
 
                 advanced
             }
+            // ON THE VIEW ROOT, not on the Button — the same lesson the Open
+            // screen already learned. Attached inside a Form Section it simply
+            // never presents.
+            //
+            // THIS WAS MISSING ENTIRELY. "Choose a file…" set `choosingFile` and
+            // nothing observed it, so the external-material path was inert: no
+            // picker, `chosenFileBytes` never set, and `canCreate` therefore
+            // permanently false. The only route to the strongest deployment
+            // classification was a dead end, and the physical suite could not see
+            // it because that suite deliberately avoids the file picker.
+            .fileImporter(isPresented: $model.choosingFile,
+                          allowedContentTypes: [.data],
+                          allowsMultipleSelection: false) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    // A picked file lives outside the sandbox until it is opened
+                    // under a security scope. Read once, hand the bytes to the
+                    // model, and let the scope go — no second copy is written
+                    // anywhere for the interface's convenience.
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    let data = try? Data(contentsOf: url)
+                    model.acceptPickedFile(name: url.lastPathComponent,
+                                           bytes: data.map { [UInt8]($0) })
+                case .failure:
+                    // Cancelling is not a refusal and must not look like one.
+                    break
+                }
+            }
             .navigationTitle("New pad")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

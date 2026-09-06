@@ -70,6 +70,28 @@ public final class CreatePadModel: ObservableObject {
         authRecords = size.records
     }
 
+    /// Take the result of the document picker.
+    ///
+    /// The decision lives in `ExternalSourceIntake` so it is reachable by a host
+    /// test; this only applies it. Nothing here inspects the material or forms
+    /// any view about its randomness, and nothing falls back to the device
+    /// generator — an operator who asked for their own material and whose file
+    /// failed gets a refusal, not a silently device-generated pad.
+    public func acceptPickedFile(name: String, bytes: [UInt8]?) {
+        switch ExternalSourceIntake.decide(name: name, bytes: bytes?.count) {
+        case .accept:
+            chosenFileName = name
+            chosenFileBytes = bytes
+        case .refuse(let message):
+            chosenFileName = nil
+            chosenFileBytes = nil
+            refusalMessage = message
+            showingRefusal = true
+        case .cancelled:
+            break
+        }
+    }
+
     public var requiredSourceBytes: Int {
         (try? Partition.requiredSourceLength(capacity: encryptionBytes,
                                              capacityRecords: authRecords)) ?? 0

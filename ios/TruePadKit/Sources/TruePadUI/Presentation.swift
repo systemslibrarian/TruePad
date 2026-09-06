@@ -493,6 +493,56 @@ public enum ReceiveRequestOutcomeText {
     }
 }
 
+/// WHAT TO DO WITH A FILE THE OPERATOR PICKED AS PAD MATERIAL.
+///
+/// Kept out of the view and out of the iOS-only model so it can actually be
+/// tested: `CeremonyModels.swift` and `CeremonyViews.swift` are `#if os(iOS)`, so
+/// `swift test` on a Mac never compiles them. The defect this exists to prevent
+/// lived in exactly that blind spot — `CreatePadView` offered "Choose a file…",
+/// set `choosingFile = true`, and no `.fileImporter` anywhere observed that flag,
+/// so the whole external-material path was inert and no host test could see it.
+///
+/// The rules here are the EXISTING rules, written down rather than changed:
+///
+///   - A file that cannot be read is a refusal. Nothing is created, and the
+///     operator is told, rather than left with a button that silently does
+///     nothing.
+///   - A file that reads is ACCEPTED AS SUPPLIED. TruePad does not inspect it,
+///     score it, or form any view about whether it is random — it cannot, and
+///     saying otherwise would be the one claim this project must never make.
+///   - Whether it is BIG ENOUGH is not decided here. That stays with
+///     `canCreate`, which already compares the supplied length against the
+///     partition's required source length, so a short file leaves creation
+///     disabled exactly as it did before.
+///   - Cancelling is not a refusal and must never be presented as one.
+///
+/// There is NO fallback to the device generator. An operator who asked for their
+/// own material and whose file failed gets a refusal, not a quietly
+/// device-generated pad that reads NOT ELIGIBLE for a reason they never chose.
+public enum ExternalSourceIntake {
+    public enum Outcome: Equatable, Sendable {
+        /// Take these bytes as the pad material, under the operator's declaration.
+        case accept(name: String, byteCount: Int)
+        /// The file could not be read. Nothing changes.
+        case refuse(String)
+        /// The picker closed without a choice. Nothing changes, and nothing is said.
+        case cancelled
+    }
+
+    /// `bytes` is nil when the file could not be read at all.
+    public static func decide(name: String, bytes: Int?) -> Outcome {
+        guard let bytes else { return .refuse(unreadableFile) }
+        // A zero-byte file is readable and useless; it is not a read FAILURE, and
+        // `canCreate` will refuse it on length like any other short file. Saying
+        // "could not be read" about a file that read fine would be untrue.
+        return .accept(name: name, byteCount: bytes)
+    }
+
+    public static let unreadableFile =
+        "That file could not be read. Nothing was used and no pad was created — "
+        + "choose the file again."
+}
+
 public enum VerbatimText {
     /// The §17 destruction limitation.
     public static var destructionLimitation: String { destroyLimitation }
