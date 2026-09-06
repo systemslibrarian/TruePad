@@ -31,8 +31,16 @@ export default defineConfig({
       manifest: {
         name: "TruePad — private one-time-pad messaging",
         short_name: "TruePad",
+        // THE SAME SENTENCE THE FRONT DOOR USES, and for the same reason.
+        //
+        // This previously opened "Send messages only you and one other person can
+        // read." — an UNCONDITIONAL confidentiality promise, in the one surface a
+        // person sees while deciding to install. TruePad's secrecy claim is
+        // conditional on the one-time-pad premises holding, and every other
+        // surface says so; the install manifest was the only place that did not,
+        // and nothing tested it.
         description:
-          "Send messages only you and one other person can read. An authenticated one-time pad that runs entirely in your browser — no backend, no accounts, no sync.",
+          "An educational system for authenticated one-time-pad messaging with one other person, running entirely in your browser — no backend, no accounts, no sync.",
         start_url: "./",
         scope: "./",
         theme_color: "#11100c",

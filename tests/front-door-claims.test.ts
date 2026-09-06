@@ -21,8 +21,57 @@ const SECURITY = readFileSync(join(ROOT, "SECURITY.md"), "utf8");
 const CHANGELOG = readFileSync(join(ROOT, "CHANGELOG.md"), "utf8");
 const HOME = readFileSync(join(ROOT, "src/browser/ui/home.ts"), "utf8");
 const PKG = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+const VITE = readFileSync(join(ROOT, "vite.config.ts"), "utf8");
 /** The first screen: everything above the deep-dive sections. */
 const FIRST_SCREEN = README.slice(0, README.indexOf("## The exhibit"));
+
+describe("the PWA install manifest makes no claim the rest of the product conditions", () => {
+  // The manifest description is the sentence a person reads while deciding to
+  // install, and it lives in vite.config.ts rather than in any document — so it
+  // sat outside every claims test and drifted. It shipped "Send messages only
+  // you and one other person can read", which promises confidentiality flatly,
+  // where TruePad's secrecy is conditional on the one-time-pad premises holding.
+  const description = (() => {
+    const m = VITE.match(/description:\s*\n?\s*"([^"]+)"/);
+    return m ? m[1] : "";
+  })();
+
+  it("has a description this test can actually see", () => {
+    // POSITIVE CONTROL, and ONLY that. It asserts the field was located and is
+    // substantial — nothing about its wording, so it cannot fail for a reason
+    // that belongs to one of the assertions below. A control that fails for the
+    // wrong reason tells you nothing about whether the real check works.
+    expect(description.length).toBeGreaterThan(40);
+  });
+
+  it("makes no unconditional promise about who can read a message", () => {
+    const forbidden = [
+      /only you and one other person can read/i,
+      /nobody else can read/i,
+      /no one else can read/i,
+      /unbreakable/i,
+      /perfect secrecy/i,
+      /guaranteed private/i,
+    ];
+    for (const pattern of forbidden) {
+      expect(description).not.toMatch(pattern);
+    }
+  });
+
+  it("keeps the architectural claims, which are facts rather than promises", () => {
+    expect(description).toMatch(/no backend/i);
+    expect(description).toMatch(/no accounts/i);
+    expect(description).toMatch(/no sync/i);
+  });
+
+  it("stays in step with the front door rather than inventing its own vocabulary", () => {
+    const html = readFileSync(join(ROOT, "index.html"), "utf8");
+    const meta = html.match(/name="description"\s*\n?\s*content="([^"]+)"/);
+    expect(meta).not.toBeNull();
+    // The manifest is a prefix of the page description: same words, shorter.
+    expect(meta![1]).toContain(description);
+  });
+});
 
 describe("README describes the TruePad that ships", () => {
   it("no longer opens as an exhibit plus a CLI", () => {
