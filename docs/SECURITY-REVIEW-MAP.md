@@ -5,7 +5,9 @@ reviewer who wants to check *correctness of the security claims* without reading
 every UI file. Each entry names the file, its purpose, the invariant it must
 hold, the consequence if it fails, and the tests that exercise it.
 
-Master SHA this map describes: **`a6a8b6…` (3.0.0-dev.0)**. The literal OTP/WC
+Master SHA this map describes: the current `master`. It previously pinned
+`a6a8b6…`, which drifted many commits stale; pinning a SHA in prose guarantees
+that outcome, so this now names the branch and lets the reader resolve it. The literal OTP/WC
 combiner and the message/SPT/QR wire are byte-identical to the released
 **v2.0.0** (`240d7f0`); the 3.0 additions are the state/authority/ceremony
 layers under `src/cli/v2/` and the single evaluator in `src/claims/`.

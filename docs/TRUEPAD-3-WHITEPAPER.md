@@ -179,7 +179,9 @@ shown beside these.
 
 ## 18. Testing / falsification evidence
 
-At this SHA: ~1563 unit tests across ~69 files; 36 Playwright browser tests; a
+At the 3.0.0 release: ~1621 unit tests across ~75 files in the Browser/CLI
+edition, plus 246 Android JVM tests, 51 Android on-device instrumentation tests
+and 386 iOS tests; 36 Playwright browser tests; a
 mutation-style falsification matrix (single-line mutations of security predicates
 must be caught by a targeted test) totalling 43 mutations with 0 real escapes;
 machine guards forbidding persisted verdicts and pad-derived metadata; claims
@@ -203,8 +205,13 @@ not proof of design correctness and not an independent human review**.
   exists to prevent. TruePad had previously removed an equivalent all-zero check
   for the same reasons. A non-refusing UI *hint* remains possible as optional UX
   polish, outside the engine, claiming nothing.
-- **Mobile** (Android completion, native iOS) is unbuilt; no mobile secure element
-  is assumed equivalent to the TPM monotonic authority.
+- **Mobile** now ships: the Android Edition and the native iOS Edition are both
+  built, physically validated on real handsets, and interoperable with each other
+  and with the Browser Edition. An earlier revision said mobile was unbuilt.
+  What has NOT changed is the assurance ceiling: **no mobile secure element is
+  assumed equivalent to the TPM monotonic authority.** The iOS rollback witness is
+  a separate Keychain domain, not a monotonic hardware counter, and neither mobile
+  edition can reach the strongest deployment classification on that basis.
 - **Browser** rollback exposure and OPFS eviction are real and disclosed.
 - The X-Wing delivery KEM is an IETF **draft**, not an RFC.
 

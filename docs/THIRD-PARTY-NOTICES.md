@@ -5,9 +5,33 @@ into the Browser Edition and keep their own licenses and notices, reproduced
 here. Nothing on this list is fetched at runtime — the build makes no network
 request during operation. The three **direct** runtime dependencies are pinned to
 exact versions in `package.json`; their transitive dependencies are pinned by
-`package-lock.json` (lockfileVersion 3, with sha512 integrity). The full runtime
+`package-lock.json` (lockfileVersion 3, with sha512 integrity). The npm runtime
 closure is six packages: `@noble/post-quantum` and its three `@noble/*` transitive
 dependencies, plus `qrcode-generator` and `jsqr`.
+
+**That is the DEPENDENCY closure, and it is not the whole of what ships.** The
+deployed bundle also contains Google **Workbox**, which is not an npm runtime
+dependency of this project at all: `vite-plugin-pwa` (a devDependency, pinned
+1.3.0) EMITS it into `dist/` at build time. The artifact published to GitHub
+Pages therefore includes `dist/sw.js`, `dist/workbox-*.js` and
+`dist/assets/workbox-window.prod.*.js`. An earlier version of this section said
+the closure was six packages full stop, which was true of `package.json` and
+untrue of the thing people actually download.
+
+#### Workbox (service worker, emitted into the bundle)
+
+- **Packages:** the `workbox-*` family at **7.4.1**, pinned transitively through
+  `vite-plugin-pwa` 1.3.0 in `package-lock.json`.
+- **Repository:** https://github.com/GoogleChrome/workbox
+- **License:** MIT, © Google LLC.
+- **What it does here:** precaches the built assets and serves them offline. It
+  is ordinary service-worker plumbing — it holds no pad material, performs no
+  cryptography, and is not on the message path. It is listed because it is
+  third-party code inside a distributed artifact, and a notices file that
+  enumerates a closure has to enumerate the whole of it.
+
+The MIT license text is reproduced under "MIT License" below, and covers this
+component as well as the other MIT-licensed packages listed there.
 
 The prior vendored component, the BIP-39 English wordlist, has its own detailed
 provenance record at [`src/browser/ui/wordlist/PROVENANCE.md`](../src/browser/ui/wordlist/PROVENANCE.md).

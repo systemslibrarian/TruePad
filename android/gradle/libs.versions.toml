@@ -1,6 +1,6 @@
 # TruePad 2 — Android toolchain versions (see docs/ANDROID-SECURITY.md).
 #
-# NOTE for the :app module, which does not exist yet: AGP 8.7.3 supports
+# NOTE for the :app module (which now EXISTS — this comment predated it): AGP 8.7.3 supports
 # compileSdk up to 35, NOT the 36 an earlier version of this comment implied.
 # The installed SDK has platforms 34-36.1 and build-tools 35.0.0/36.0.0, so the
 # app module must set compileSdk = 35 and buildToolsVersion = "35.0.0"

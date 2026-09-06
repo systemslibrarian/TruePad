@@ -116,7 +116,10 @@ requires the result to equal `EXPECTED-PATCH.diff` byte for byte. Drift in eithe
 direction fails. Set `TRUEPAD_SWIFT_CRYPTO_MIRROR` to use a local mirror offline.
 
 To update the vendored copy: change the pins in `verify-vendor.sh`, re-vendor,
-re-apply the two patches, run `--write`, **review the regenerated diff**, then
+re-apply ALL THREE changes (two in `Package.swift`, one in `XWing_boring.swift` —
+this said "the two patches", and the one most easily dropped is the hardening
+patch, which is the only one that changes cryptographic behaviour), run
+`--write`, **review the regenerated diff**, then
 re-run the full X-Wing gate — the Appendix-C vectors and the SPT interop corpus
 are the authority on whether a bump changed any byte.
 

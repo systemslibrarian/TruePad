@@ -690,20 +690,32 @@ true` through every parse failure. LOSS IS ACCEPTABLE; REUSE IS NOT.
 
 ## 11. What the iOS Edition does NOT claim today
 
-- No physical *validation* on an iPhone. The app has been **installed and
-  launched on an iPhone 12 running iOS 18.6.2**, and that is all that phrase
-  covers: the process starts, stays up, and creates its container. The state
-  pass — pad creation, send/open, burn-before-output across process death,
-  destruction staying terminal, receive-request one-time-ness across a relaunch,
-  and the camera-permission sequence — has **NOT** run on hardware, because the
-  handset would not enter UI-automation mode. **OUTSTANDING.**
+- Physical validation on an iPhone: **DONE**, and this entry used to say the
+  opposite while the same document's own status table said otherwise. The app is
+  built, signed, installed and launched on an **iPhone 12 running iOS 18.6.2**,
+  and the on-device state pass — pad creation, send/open, burn-before-output
+  across process death, destruction staying terminal, receive-request
+  one-time-ness across a relaunch, and the camera-permission sequence — RUNS
+  THERE and passes. The UI-automation obstacle that blocked it was a device
+  setting, since resolved.
 - No human VoiceOver validation. Automated accessibility checks are not a
-  substitute. **OUTSTANDING.**
-- No two-device Android↔iPhone optical ceremony. **OUTSTANDING.**
+  substitute, and none is claimed. **OUTSTANDING — NON-BLOCKING** by
+  project-owner decision.
+- Two-device Android↔iPhone ceremony: **DONE.** Optical QR read by each phone's
+  real camera from the other's screen in both directions, twelve- and eight-word
+  comparisons matching across the gap, `.tps2` import both ways, real messages
+  opened both ways, role and directional separation observed, replay refused.
+  Two qualifications kept deliberately: the word comparisons were read by
+  AUTOMATION rather than spoken between two people, so this is not a human
+  ceremony; and the message round trips used host/test carriers, so only the SPT
+  gates were optical.
 - No independent human security review. AI-assisted audits are internal
-  engineering review only. **OUTSTANDING.**
-- No physical TPM hardware validation anywhere in the project. **OUTSTANDING**,
-  and no emulator, VM, Secure Enclave, or Android keystore substitutes for it.
+  engineering review only. **NOT PERFORMED — NON-BLOCKING** by project-owner
+  decision; it is a residual-risk disclosure rather than a gate.
+- No physical TPM hardware validation anywhere in the project. **OUTSTANDING —
+  NON-BLOCKING** by project-owner decision, and no emulator, VM, Secure Enclave or
+  Android keystore substitutes for it. The swtpm evidence in CI is emulator
+  interoperability only.
 - No power-loss durability claim.
 - No secure-erasure claim.
 - No hardware monotonic rollback authority.
@@ -716,12 +728,12 @@ true` through every parse failure. LOSS IS ACCEPTABLE; REUSE IS NOT.
 | --- | --- | --- |
 | One writer per pair | in-process lock + `flock(2)`, bounded | BUILT |
 | Burn before output | header → journal → witness → return | header/journal BUILT |
-| Persist before use | attempt reservation before tag verification | NOT YET |
+| Persist before use | attempt reservation before tag verification | BUILT |
 | No cursor rewind | `regressed-below-mark` on load | BUILT |
 | Torn state fails closed | strict head/journal/secret validation | BUILT |
 | Byte-exact wire | frozen fixtures, all four interop directions | BUILT |
-| Sealed ancestry permanent | evaluator facts | NOT YET |
-| Rollback detection | Keychain `ThisDeviceOnly` witness | NOT YET |
+| Sealed ancestry permanent | evaluator facts | BUILT |
+| Rollback detection | Keychain `ThisDeviceOnly` witness | BUILT — a separate Keychain domain, NOT a monotonic hardware authority |
 | Physical erasure | **not claimed by any mechanism** | N/A |
 | Hardware monotonicity | **not claimed by any mechanism** | N/A |
 

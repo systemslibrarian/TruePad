@@ -214,10 +214,13 @@ fun writeTombstone(
  *
  * There is deliberately no `catch { return absent }` anywhere in this section.
  *
- * This Android build performs only the PHYSICAL handoff (save the pad file);
- * Sealed Pad Transfer is not implemented here. A `sealed` marker written by
- * another edition is still parsed and still refuses — never ignored, and never
- * mistaken for absence.
+ * This Android build performs BOTH handoff routes: the physical one (save the pad
+ * file) and Sealed Pad Transfer. This comment used to say SPT "is not implemented
+ * here", which was true when it was written and stopped being true when
+ * `truepad-spt` landed.
+ *
+ * Either marker is parsed and either refuses a second handoff — never ignored,
+ * and never mistaken for absence. ONE PAD LEAVES ONCE, by whichever route.
  */
 
 const val REFUSE_UNREADABLE = "handoff-state-unreadable"

@@ -1,6 +1,15 @@
 # Remaining physical and human gates
 
-> **STATUS: PREPARED — NONE EXECUTED.** Every procedure here is written to be run
+> **STATUS: THE DEVICE GATES HAVE BEEN EXECUTED; the human and TPM gates have
+> not.** This banner said "NONE EXECUTED" long after the handset work was done.
+> Executed: Android handset, iOS handset, handheld QR both directions, the
+> Android<->iPhone SPT ceremony and physical message interoperability. Not
+> executed and NON-BLOCKING by owner decision: human VoiceOver, human TalkBack,
+> physical TPM 2.0.
+>
+> Original note follows.
+>
+> **PREPARED.** Every procedure here is written to be run
 > later. Nothing in this document has been performed, and nothing in it may be
 > cited as evidence until it has been, with the recorded artefacts each section
 > asks for.
@@ -14,7 +23,7 @@ in for a second handset, a human ear, or real hardware.
 - iOS: installed and launched on an iPhone 12 / iOS 18.6.2, with 9 on-device
   automated tests passing.
 - Android: `android/tools/physical-device-check.sh` on a Samsung SM-A176U
-  (Android 16) — 44 instrumentation tests and 15 on-device security checks.
+  (Android 16) — 51 instrumentation tests and 18 on-device security checks.
 
 **A note on evidence.** Each procedure asks for artefacts. Record them verbatim,
 including failures. A gate that "passed but we did not keep the photographs" has

@@ -1,11 +1,20 @@
 /* ============================================================================
  * TruePad 2 Browser Edition — the operator's role for a pair
  * ----------------------------------------------------------------------------
- * A device holds BOTH directions of a pair. Which party the local operator
- * acts as decides the direction a send burns and an open consumes. That choice
- * is a UI convenience only — never a secret — so it is remembered per pair in
- * localStorage, defaulting to Alice. burn/open still pass `as` explicitly; the
- * engine derives the direction.
+ * A device holds BOTH directions of a pair. Which party the local operator acts
+ * as decides the direction a send burns and an open consumes, so it is NOT a UI
+ * convenience and it does NOT default.
+ *
+ * THIS HEADER USED TO SAY IT DID — "a UI convenience only ... defaulting to
+ * Alice" — which is the exact behaviour the cross-copy reuse fix removed. Two
+ * copies of one pair that each defaulted to Alice would both spend the A->B half
+ * while each local store looked perfectly monotonic.
+ *
+ * The role is DERIVED FROM ORIGIN: generated-here is A, imported is B. Only when
+ * the origin cannot say does the stored per-pair choice apply, and when there is
+ * no stored choice either, `resolveRole` returns null and the send screen REFUSES
+ * rather than guessing (see `UNKNOWN_ORIGIN_PROMPT`). burn/open still pass `as`
+ * explicitly; the engine derives the direction.
  * ========================================================================= */
 
 import type { PadDirection } from "../../core/pad.ts";

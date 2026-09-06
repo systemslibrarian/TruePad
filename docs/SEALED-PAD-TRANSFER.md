@@ -458,7 +458,10 @@ for the SMALLEST version that fits at EC-M, which for the current 1652-character
 request is **version 34 (153×153 modules)**. **QR is optional convenience;
 copy/paste and file export remain the normative channels.**
 
-**Status: IMPLEMENTED (post-2.0.0), Browser Edition only.** The receiver can
+**Status: IMPLEMENTED (post-2.0.0) in the Browser, Android and iOS Editions.**
+This line said "Browser Edition only" until the mobile editions shipped it; both
+now display and scan the receive code, and the optical path has been exercised
+between two physical handsets in both directions. The receiver can
 "Show QR code"; the sender can "Scan QR code" (camera) or "Choose QR image"
 (a screenshot or photo), and paste is never removed. What is guaranteed:
 

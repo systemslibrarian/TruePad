@@ -99,9 +99,10 @@ Verified by reading `origin/android-phase-2` (no checkout/merge performed):
    and add the `DeploymentView`/status shape to the Kotlin protocol.
 5. **Physical-device gate:** run `android/tools/physical-device-check.sh` on a real
    handset (it refuses emulators by design). **Status: DONE** — Samsung
-   SM-A176U (Android 16), 44 instrumentation tests + 15 security checks passed.
+   SM-A176U (Android 16), 51 instrumentation tests + 18 security checks passed.
 6. **Human TalkBack pass:** a human end-to-end run. Automated `AccessibilityTest`/
-   `LargeFontTest` are baselines only. **Status: NOT YET RUN — outstanding.**
+   `LargeFontTest` are baselines only. **Status: NOT TESTED — NON-BLOCKING** by
+   project-owner decision.
 
 ## 6. Deployment class on Android (must be honest)
 

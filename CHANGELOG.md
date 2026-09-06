@@ -16,16 +16,43 @@
   patch, enforced byte-for-byte by `ios/vendor/verify-vendor.sh`.
 - Deterministic X-Wing encapsulation is **structurally** test-only: it is not a
   package product, and a shipping app cannot import it.
-- No App Store build and no human VoiceOver validation. There IS a native iOS
-  application (`ios/TruePadApp`), installed and launched on an iPhone 12 running
-  iOS 18.6.2, where 9 on-device automated tests pass. That is not the same as
-  full physical validation — the Android↔iPhone two-device ceremony, human
-  VoiceOver, human TalkBack and physical TPM all remain outstanding. Previously
-  this line said there was no iOS application and no physical-iPhone
-  validation.
+- No App Store build. There IS a native iOS application (`ios/TruePadApp`),
+  installed and launched on a physical iPhone 12 running iOS 18.6.2, where the
+  on-device automated suite passes.
+- **The two-device physical ceremony is DONE**, and an earlier version of this
+  entry still listed it as outstanding. Between a physical iPhone 12 and a
+  physical Samsung SM-A176U: optical QR scanned by each phone's real camera from
+  the other's screen in **both** directions; the twelve-word and eight-word
+  comparisons matching across the gap; `.tps2` sealed-pad import in both
+  directions; real messages encrypted on one handset and opened on the other in
+  both directions; creator/importer role separation and directional meter
+  separation observed on the durable stores; and replay refused on both devices
+  with nothing consumed.
+  Two honest qualifications. The word comparisons were read from the two screens
+  by AUTOMATION, not spoken aloud by two people — that is not a human ceremony and
+  is not offered as one. And the message round trips used host/test carriers (a
+  screenshot decoded offline, and a share to a non-shipping catcher); only the SPT
+  gates were optical.
+- Still NOT performed, and non-blocking by project-owner decision: **human
+  VoiceOver**, **human TalkBack**, and **physical TPM 2.0** (the swtpm evidence in
+  CI is emulator interoperability only).
 
 ### Security fixes
 
+- **Cross-copy role/reuse (the most serious defect fixed this cycle).** Direction
+  was decided locally rather than being a durable property of the pair, so an
+  edition could settle which half it acted as independently of the other copy.
+  Two copies of the SAME pair could therefore both operate on the same directional
+  half — spending the same one-time material twice — while each local store's
+  counters advanced monotonically and looked entirely healthy. Nothing in a single
+  store could see it, which is why it survived so long.
+  The repair makes the role derived, not chosen: a pad **generated here** is party
+  A, an **imported** pad is party B, and an origin that cannot say produces a
+  **refusal rather than a guess**. Every edition derives it the same way, and the
+  send path refuses outright rather than defaulting.
+  It was subsequently demonstrated on hardware: two physical handsets holding the
+  same pair sent on opposite halves, each device's send meter moved only for its
+  own half, and neither device's material was touched by the other's activity.
 - **Android SPT:** `requirePadSealable` now tests `attemptsReserved` alongside the
   two cursors, matching the frozen authority. A pad that took a failed open at
   genesis is no longer sealable.

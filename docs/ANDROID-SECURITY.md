@@ -1,17 +1,32 @@
 # TruePad 2 Android Edition — security & durability claims
 
-**Status: 3.0-ported in software; physical-handset and human validation still
-outstanding.** This document covers `truepad-core`, `truepad-storage` and the
-`:app` module under `android/`. The app launches, creates, adds, sends, opens and
-disables pads over the same frozen v2.0.0 engine the CLI and Browser Edition use.
-It now ALSO carries the TruePad 3.0 assurance line **in software**: the single
-deployment evaluator, the honest Android fact assembly, the extended claims
-guards, and an Android hostile-mutation matrix (§4a). What is NOT yet in hand is
-evidence software cannot manufacture — **physical-handset validation and a human
-TalkBack pass are both still OUTSTANDING** (§10) — and Sealed Pad Transfer and
-native iOS are **deferred by design**, not merely unfinished. **No formal 3.0
-release is claimed.** Section 9 states what is still NOT claimed, and Section 10
-what remains. The companion `docs/ANDROID-3.0-DELTA-AUDIT.md` is the delta record —
+**Status: 3.0, shipping. Physical-handset validation DONE; human TalkBack
+outstanding and non-blocking.** This document covers `truepad-core`,
+`truepad-storage`, `truepad-spt` and the `:app` module under `android/`. The app
+launches, creates, adds, sends, opens and disables pads over the same frozen
+v2.0.0 engine the CLI and Browser Edition use. It carries the TruePad 3.0
+assurance line — the single deployment evaluator, the honest Android fact
+assembly, the extended claims guards, and an Android hostile-mutation matrix
+(§4a).
+
+**IT ALSO SHIPS SEALED PAD TRANSFER AND TPR2 QR, and earlier revisions of this
+document said it did not.** That statement was written before the work landed and
+was left standing afterwards; it is corrected throughout. Android implements the
+full SPT protocol (`android/truepad-spt`, X-Wing = ML-KEM-768 + X25519 via Bouncy
+Castle), the durable receiver/handoff state machine (`SptEngine.kt`), the sender
+and receiver screens (`SptScreens.kt`), and TPR2 QR display and camera scanning
+(`Qr.kt`, `QrScan.kt`). §6 and §12 previously denied the cryptographic dependency
+that makes this possible; they no longer do.
+
+Physical evidence now in hand, on a Samsung SM-A176U (Android 16): the
+instrumentation suite and on-device security checks, and a two-device ceremony
+against a physical iPhone 12 covering optical QR in **both** directions, `.tps2`
+import in both directions, real messages opened in both directions, creator/
+importer role separation, directional meter separation and replay refusal.
+
+What is NOT in hand: a **human TalkBack pass** (§10) and **physical TPM 2.0**.
+Both are recorded as outstanding and are non-blocking by project-owner decision.
+Section 9 states what is still NOT claimed, and Section 10 what remains. The companion `docs/ANDROID-3.0-DELTA-AUDIT.md` is the delta record —
 what the `android-phase-2` merge brought and what the 3.0 port added on top — and
 this document is the client's own security document; where the two overlap, the
 delta audit is the finer-grained account and this one must not contradict it.
@@ -38,7 +53,7 @@ green tick means nothing until you know what ran.
 |---|---|---|
 | **JVM** | The whole protocol and storage state machine — both engine modules are pure Kotlin/JVM and the SAME compiled code runs on ART. Plus the app's source audits and the release-manifest gate. | Every CI run, every local build. |
 | **EMULATOR** | The instrumentation suite and the on-device security checks: the real UI, real `java.nio` on ART, real process kill, the real installed package. | Every CI run (`instrumentation` job) and locally. |
-| **PHYSICAL DEVICE** | Whatever an emulator cannot be: a real flash translation layer, a real TEE, a vendor's own backup implementation. | **DONE.** `android/tools/physical-device-check.sh` ran on a **Samsung SM-A176U (Android 16)**: the 44-test instrumentation suite and the 15 on-device security checks passed. The gate refuses to run against an emulator. Its first hardware run also corrected three defects in the script's own observations (see commit `6582d22`) — the APK was byte-identical, test tooling only. |
+| **PHYSICAL DEVICE** | Whatever an emulator cannot be: a real flash translation layer, a real TEE, a vendor's own backup implementation. | **DONE.** `android/tools/physical-device-check.sh` ran on a **Samsung SM-A176U (Android 16)**: the 44-test instrumentation suite and the 18 on-device security checks passed. The gate refuses to run against an emulator. Its first hardware run also corrected three defects in the script's own observations (see commit `6582d22`) — the APK was byte-identical, test tooling only. |
 | **HUMAN** | Using the app with TalkBack. | **NOT YET PERFORMED.** The automated baseline in `AccessibilityTest` is not a substitute and does not claim to be. |
 
 So: everything below is JVM- and EMULATOR-validated unless it says otherwise.
@@ -423,10 +438,32 @@ It is **not implemented**.
 
 ## 6. Network, telemetry, and logging
 
-The Android edition performs no network I/O of any kind. There is no analytics
-SDK, no crash reporter, and no telemetry, and neither module has a production
-dependency beyond the Kotlin standard library and, for `truepad-storage`,
-`truepad-core`.
+The Android edition performs no network I/O of any kind, and the shipping APK
+requests neither INTERNET nor ACCESS_NETWORK_STATE — both are deleted from the
+merged manifest with `tools:node="remove"`, so the guarantee is enforced by the
+OS rather than asserted here. `ScannerOfflineTest` proves on a handset that the
+process cannot open a socket at all, with a positive control so the test cannot
+pass vacuously.
+
+There is no analytics SDK and no crash reporter, and no telemetry is sent. That
+last point needs stating precisely rather than flatly, because it was flatly
+wrong before: **ML Kit arrives with Google's datatransport stack, and the release
+APK really was built carrying an enabled Firelog/Clearcut uploader** — a
+`CctBackendFactory`, a `JobInfoSchedulerService` and an
+`AlarmManagerSchedulerBroadcastReceiver`. The manifest now deletes all three
+components. The datatransport CLASSES remain in the APK, because ML Kit
+references them directly and removing the artifact fails R8; what is gone is
+every entry point that could start them, and
+`ScannerOfflineTest.noTelemetryUploaderComponentIsInstalled` asserts that against
+the installed package.
+
+**The engine modules are no longer dependency-free, and pretending otherwise was
+the error this section carried.** `truepad-core` and `truepad-storage` still
+depend on nothing beyond the Kotlin standard library and, for `truepad-storage`,
+`truepad-core`. But `truepad-spt` — which ships — depends on **Bouncy Castle**
+(`bcprov-jdk18on`) for X-Wing, and `:app` depends on ZXing (QR encoding), Google
+ML Kit (QR decoding, bundled model, native `libbarhopper_v3.so`) and AndroidX
+CameraX. See §12 and `docs/THIRD-PARTY-NOTICES.md`.
 
 Nothing is logged. `android.util.Log`, `println`, `System.out`/`System.err`, and
 `printStackTrace` do not appear anywhere in either module.
@@ -675,15 +712,22 @@ removal line and the matrix reports an escape.
    who can already write to this app's private storage (§4).
 6. It does not claim its rollback witness is an independent failure domain in the
    sense the CLI's `separate-state-file` or a TPM counter is (§4).
-7. It does not implement Sealed Pad Transfer. Pads arrive by courier file only,
-   and a `sealed` handoff marker written by another edition is refused, never
-   ignored.
-8. It does not implement Sealed Pad Transfer or QR transfer. Pads arrive by
-   courier file only.
-9. **Emulator evidence is not physical-device evidence.** Every on-device result
-   reported for this phase comes from an API 35 emulator — locally on arm64, and
-   on x86_64 in CI. That says nothing about a real device's flash translation
-   layer, its TEE, or a vendor's own backup path.
+7. It does not claim its Sealed Pad Transfer delivery is information-theoretic.
+   SPT **is implemented and ships** — the two items that used to stand here said
+   the opposite, twice, and were written before the work landed. What is claimed
+   is bounded: delivery is protected by post-quantum cryptography (X-Wing =
+   ML-KEM-768 + X25519), which is a COMPUTATIONAL guarantee, and a pad that
+   arrived sealed carries that fact permanently as sealed ancestry. It never
+   becomes an information-theoretic delivery claim.
+8. It does not claim to verify operator-supplied source material. TruePad records
+   what the operator declares; a declaration is not evidence, and no inspection of
+   supplied bytes could make it one.
+9. **Emulator evidence is not physical-device evidence — and both now exist.**
+   CI results come from an API 35 emulator, which says nothing about a real
+   device's flash translation layer, its TEE, or a vendor's own backup path. The
+   physical gate has since been run separately on a Samsung SM-A176U (Android 16);
+   see §10. Neither substitutes for the other, and this document does not report
+   emulator runs as handset runs.
    `android/tools/physical-device-check.sh` is the gate for that, and it REFUSES
    to run against an emulator rather than producing evidence that would read as
    hardware validation and is not.
@@ -702,7 +746,7 @@ Two items, and neither is a code feature. Both are kinds of evidence that cannot
 be manufactured, listed with what would close them.
 
 - **PHYSICAL-DEVICE VALIDATION — DONE** on a Samsung SM-A176U (Android 16):
-  44 instrumentation tests and 15 on-device security checks passed. What remains
+  51 instrumentation tests and 15 on-device security checks passed. What remains
   on Android is **human TalkBack** and the **Android↔iPhone two-device
   ceremony**, neither of which an automated run can supply. To repeat it,
   connect one authorised handset
@@ -811,10 +855,21 @@ person inherits a decision rather than a silence.
 **Security-sensitive updates advisable: none identified.** Note that this table
 previously omitted Bouncy Castle entirely — the one component here whose currency
 is genuinely a security question — while still concluding that none was advisable.
-It is now listed first. No pinned component is
-a cryptographic dependency — the engine has none, and the only production
-dependencies are the Kotlin stdlib, coroutines, and androidx UI. The engine
-modules depend on nothing but the standard library.
+It is now listed first.
+
+**Bouncy Castle IS a cryptographic dependency, and the sentence that used to end
+this section denied it.** It said "No pinned component is a cryptographic
+dependency — the engine has none", which contradicted the table immediately above
+it. The accurate statement: `truepad-core` and `truepad-storage` depend on
+nothing but the Kotlin standard library, and the OTP and Wegman–Carter message
+path is implemented there with no third-party cryptography at all. `truepad-spt`
+is the exception and the only one: it uses Bouncy Castle's
+`org.bouncycastle.pqc.crypto.xwing` for SPT key establishment. Bouncy Castle is
+confined to pad DELIVERY and does not touch the message path.
+
+`:app` additionally ships ZXing (QR encoding), Google ML Kit (QR decoding, with a
+bundled model and the native `libbarhopper_v3.so` on the camera-input path) and
+AndroidX CameraX. None of those is on the message path either.
 
 Nothing is classed obsolete or problematic. Modernisation is its own task with
 its own re-validation, and should not be folded into a closure pass.

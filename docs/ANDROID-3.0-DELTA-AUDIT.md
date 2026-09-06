@@ -1,5 +1,29 @@
 # Android 3.0 delta audit — classifying what the `android-phase-2` merge brought, and what the 3.0 port added
 
+> ## SUPERSEDED IN PART — READ THIS FIRST
+>
+> **This is a HISTORICAL audit record of the `android-phase-2` merge, not current
+> product guidance.** It was written when Android had no Sealed Pad Transfer, no
+> TPR2 QR and no PQC dependency, and it correctly recorded those as deferred *at
+> that time*. All three shipped afterwards.
+>
+> What changed after this audit was written:
+>
+> | This document says | Current tree |
+> | --- | --- |
+> | SPT deliberately not on Android; "do not bolt on a Kotlin PQC stack" | SPT ships — `android/truepad-spt`, X-Wing via **Bouncy Castle** |
+> | Native TPR2 QR deferred | Ships — `Qr.kt` encodes, `QrScan.kt` scans via **ML Kit** |
+> | Native iOS a separate later task | Ships — `ios/TruePadApp`, physically installed and validated |
+> | Physical-handset gate not yet performed | **DONE** — Samsung SM-A176U, plus a two-device ceremony against a physical iPhone 12 |
+>
+> **The instruction "do not bolt on a Kotlin PQC stack" was scoped to that
+> snapshot and is NOT a current requirement.** The stack it warned against was
+> subsequently designed, reviewed, tested against cross-edition vectors, and
+> physically proven between two handsets.
+>
+> For the CURRENT Android claims boundary, read `docs/ANDROID-SECURITY.md`. Where
+> the two differ, that document is authoritative and this one is history.
+
 **What this is.** A reviewer-facing classification of the entire delta the
 `android-phase-2` branch introduced to `master`, sorted by the *kind* of work each
 part needs to be trustworthy on TruePad 3.0. It exists because the Android client
@@ -134,9 +158,9 @@ audit and document it and to add an Android-specific hostile-mutation matrix.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Sealed Pad Transfer (SPT / PQC, `.tps2`) | **Deliberately NOT on Android** | Physical courier-file handoff only. Do **not** bolt on a Kotlin PQC stack. A `sealed` handoff marker written by another edition is still parsed and **refused** (`Meta.kt` `parseHandoffMarker`; `Verbs.kt` `exportPair` → `pad-already-sealed`), never ignored or mistaken for absence. The evaluator would classify an SPT-delivered pad NOT ELIGIBLE regardless. |
-| Native Android TPR2 QR transfer | **Deferred, honestly** | Not implemented; ANDROID-SECURITY §9 records it as not-claimed. Implement-or-defer-honestly; no half-built QR path ships. |
-| Native iOS | **Separate later task** | Whitepaper §19: mobile iOS unbuilt; no mobile secure element is assumed equivalent to the TPM monotonic authority. |
+| Sealed Pad Transfer (SPT / PQC, `.tps2`) | **Deliberately NOT on Android** *(at the time of this audit — SPT SHIPS NOW; see the supersession note at the top)* | Physical courier-file handoff only. Do **not** bolt on a Kotlin PQC stack. A `sealed` handoff marker written by another edition is still parsed and **refused** (`Meta.kt` `parseHandoffMarker`; `Verbs.kt` `exportPair` → `pad-already-sealed`), never ignored or mistaken for absence. The evaluator would classify an SPT-delivered pad NOT ELIGIBLE regardless. |
+| Native Android TPR2 QR transfer | **Deferred, honestly** *(at the time of this audit — QR SHIPS NOW)* | Not implemented; ANDROID-SECURITY §9 records it as not-claimed. Implement-or-defer-honestly; no half-built QR path ships. |
+| Native iOS | **Separate later task** *(since completed — the iOS Edition ships)* | Whitepaper §19: mobile iOS unbuilt; no mobile secure element is assumed equivalent to the TPM monotonic authority. |
 
 ---
 
@@ -151,7 +175,9 @@ manufactured in software** (ANDROID-SECURITY §10, whitepaper §20):
 - **Human TalkBack pass** — `AccessibilityTest`/`LargeFontTest` are a baseline, not
   a verdict. Not yet performed.
 
-And **SPT and native iOS are deferred by design**, not merely unfinished. No line
+And **SPT and native iOS were deferred by design at the time of this audit**, not
+merely unfinished — both have since been built and shipped; see the supersession
+note at the top. No line
 of this audit asserts a physical premise: an Android pad's strongest possible
 verdict is INSUFFICIENT EVIDENCE, and that ceiling is derived from the platform,
 never hard-coded as "insecure".

@@ -23,11 +23,16 @@ v2 with byte-identical `head.json`, `F_FULLFSYNC` durability, the rollback
 witness), and Sealed Pad Transfer — all held to the frozen vectors and
 cross-checked against the Browser and Android Editions in both directions.
 
-**Not built:** the OTP verbs over the store, the SPT durable state machine, the
-deployment evaluator, and the SwiftUI application.
+**Built since this line last said otherwise:** the OTP verbs over the store, the
+SPT durable state machine, the deployment evaluator and the SwiftUI application
+all exist and ship. This paragraph used to list them as "Not built", which stopped
+being true some time ago.
 
-**Not claimed:** nothing has run on a physical iPhone; human VoiceOver validation
-has not happened; there is no App Store build and no 3.0 tag.
+**Not claimed:** human VoiceOver validation has not happened, and there is no App
+Store build. The app HAS been built, signed, installed and launched on a physical
+iPhone 12 (iOS 18.6.2), where the on-device suite passes, and it has completed a
+two-device ceremony against a physical Android handset. What remains unclaimed is
+human accessibility validation and any distribution channel.
 
 ## The X-Wing gate
 
@@ -67,8 +72,16 @@ The script also states plainly what it does **not** prove; see its output and
 ## Vendored dependency
 
 `ios/vendor/swift-crypto` is apple/swift-crypto 4.5.2 at commit `da9d28d6`,
-Apache-2.0. Its entire TruePad delta is 30 lines in one manifest, recorded in
-`ios/vendor/EXPECTED-PATCH.diff` and enforced by:
+Apache-2.0. Its entire TruePad delta is **65 lines across two files** — three
+changes: two in `swift-crypto/Package.swift`, and one HARDENING PATCH to
+`Sources/Crypto/KEM/BoringSSL/XWing_boring.swift` that adds the entropy-length
+guard upstream's CVE-2026-28815 fix omitted on the encapsulation side.
+
+The earlier wording here — "30 lines in one manifest" — was retracted once and
+came back. It matters because it hides the only part of the delta that changes
+CRYPTOGRAPHIC BEHAVIOUR: a reader who believes the delta is manifest-only has no
+reason to review the patch that is not. Recorded in
+`ios/vendor/EXPECTED-PATCH.diff` and enforced byte-for-byte by:
 
     ios/vendor/verify-vendor.sh
 

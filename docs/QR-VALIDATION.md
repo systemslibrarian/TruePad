@@ -1,6 +1,9 @@
 # Handheld QR camera validation procedure
 
-> **STATUS: TEST PROCEDURE PREPARED — NOT EXECUTED. Real handheld QR: OUTSTANDING.**
+> **STATUS: EXECUTED. Real handheld QR: DONE, both directions.** An iPhone 12
+> and a Samsung SM-A176U each read the other phone's on-screen receive code with
+> its own camera, and the sealed-pad ceremony completed in both directions. This
+> banner previously read "NOT EXECUTED" and was left standing after the run.
 > This requires real phone cameras. Playwright, headless decoding, and image-file
 > decoding are **not** substitutes for a handheld camera and do not satisfy this
 > gate.
