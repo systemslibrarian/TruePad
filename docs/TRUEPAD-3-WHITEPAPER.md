@@ -179,11 +179,11 @@ shown beside these.
 
 ## 18. Testing / falsification evidence
 
-Reproduced at the reviewed 3.0.0 candidate `a05ea9b`: 1703 unit tests across 81 files
-in the Browser/CLI edition (`npm test`), plus 301 distinct Android JVM tests
+Reproduced on the released 3.0.0 tree: 1720 unit tests across 82 files in the
+Browser/CLI edition (`npm test`), plus 301 distinct Android JVM tests
 (`./gradlew test` reports 392 executions because the app module runs under both
 the debug and release variants), 55 Android on-device instrumentation tests, and
-471 iOS tests (`swift test --package-path ios/TruePadKit`); 36 Playwright browser
+472 iOS tests (`swift test --package-path ios/TruePadKit`); 36 Playwright browser
 tests; a
 mutation-style falsification matrix (single-line mutations of security predicates
 must be caught by a targeted test) totalling 43 mutations with 0 real escapes;

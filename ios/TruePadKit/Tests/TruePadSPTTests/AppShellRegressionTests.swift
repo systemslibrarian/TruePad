@@ -107,35 +107,145 @@ final class AppShellRegressionTests: XCTestCase {
             .appendingPathComponent("truepad-backup-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
 
-        // READ THROUGH A FRESH URL EVERY TIME. `URL` CACHES resource values, so a
-        // URL that has already been asked once answers from that cache and not
-        // from the filesystem. Reading the same `root` value after clearing the
-        // flag through a copy returned the STALE `true` and failed the
-        // precondition — the test was reporting on its own cache rather than on
-        // the directory.
-        func excluded() throws -> Bool? {
-            try URL(fileURLWithPath: root.path)
-                .resourceValues(forKeys: [.isExcludedFromBackupKey])
-                .isExcludedFromBackup
+        // ---- 1. an EXISTING store that is not excluded ------------------------
+        //
+        // Built with FileManager, not with the product: the directory therefore
+        // already exists when the store opens, which is the whole point. It is
+        // also the only way to reach the unexcluded state without a race — see
+        // the note on the helpers below for what the alternative cost.
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        guard try !backupExcludeAttributeIsPresent(root) else {
+            return XCTFail("TEST SETUP FAILED — a directory this test just created is "
+                            + "already marked excluded from backup, so there is no negative "
+                            + "state to observe. This is a failure of the test's setup, NOT "
+                            + "of the product.")
         }
+        XCTAssertEqual(try foundationSaysExcluded(root), false,
+                       "TEST SETUP: a plain directory must not be excluded, or the "
+                        + "assertion below proves nothing")
 
+        // ---- 2. opening it must assert the exclusion --------------------------
+        //
+        // THE PROPERTY. `makeDirectory` returns early for a directory that
+        // already exists, so an implementation that excludes only on creation
+        // leaves this store unexcluded forever — which is exactly the defect this
+        // test was written for. The exclusion has to be re-applied by `init`, on
+        // every open, and this is the open where that is the only thing that can
+        // do it.
         let first = try DarwinFs(root: root)
         XCTAssertFalse(first.backupExclusionUnavailable,
                        "the platform should honour the exclusion in a temp directory")
-        XCTAssertEqual(try excluded(), true)
+        XCTAssertTrue(try backupExcludeAttributeIsPresent(root),
+                      "opening an existing, unexcluded store must assert the backup exclusion")
+        XCTAssertEqual(try foundationSaysExcluded(root), true,
+                       "the exclusion must also be visible through the documented "
+                        + "Foundation API, not only through the attribute")
 
-        // CLEAR IT, then reopen: the second open must reassert it. This is the
-        // case the old code missed entirely, because the directory already
-        // existed and `makeDirectory` returned early.
-        var mutable = URL(fileURLWithPath: root.path)
-        var clear = URLResourceValues()
-        clear.isExcludedFromBackup = false
-        try mutable.setResourceValues(clear)
-        XCTAssertEqual(try excluded(), false, "precondition: the flag is cleared")
+        // THE AUTHORITY CHECK, and it is what keeps the low-level observation
+        // honest. `isExcludedFromBackup = true` is implemented on Darwin by
+        // writing `com.apple.metadata:com_apple_backup_excludeItem`. Both readings
+        // above must therefore agree, and they are asserted separately so that if
+        // Foundation ever changes representation the two diverge HERE, loudly,
+        // instead of this test quietly measuring something that is no longer the
+        // flag it is named after.
+
+        // ---- 3. and again on the next open ------------------------------------
+        let second = try DarwinFs(root: root)
+        XCTAssertFalse(second.backupExclusionUnavailable)
+        XCTAssertTrue(try backupExcludeAttributeIsPresent(root),
+                      "re-opening the store must leave the backup exclusion asserted")
+    }
+
+    /// NON-VACUITY CONTROL for the test above.
+    ///
+    /// Every assertion up there is worthless if `backupExcludeAttributeIsPresent`
+    /// simply always answered `true`. This shows it distinguishes the two states:
+    /// a plain directory reads false, the same directory after the product has
+    /// opened a store on it reads true, and the documented Foundation API agrees
+    /// with both readings.
+    func testTheBackupExclusionObservationTellsTheTwoStatesApart() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("truepad-backup-control-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        XCTAssertFalse(try backupExcludeAttributeIsPresent(root))
+        XCTAssertEqual(try foundationSaysExcluded(root), false)
 
         _ = try DarwinFs(root: root)
-        XCTAssertEqual(try excluded(), true,
-                       "re-opening the store must reassert the backup exclusion")
+        XCTAssertTrue(try backupExcludeAttributeIsPresent(root))
+        XCTAssertEqual(try foundationSaysExcluded(root), true)
+    }
+
+    // ---- observing backup exclusion, synchronously -------------------------
+
+    /// The attribute Darwin stores `isExcludedFromBackup` in. Measured, not
+    /// assumed: setting the flag writes this attribute holding a plist whose value
+    /// is `com.apple.backupd`, and clearing the flag removes it, so PRESENCE is
+    /// the discriminator rather than any particular content.
+    ///
+    /// NEVER TRUSTED ALONE. Every test here asserts the documented Foundation API
+    /// alongside it, in BOTH states — false on a plain directory, true once a store
+    /// has been opened on it. If Foundation ever moved the flag somewhere else, the
+    /// two readings would disagree and the tests would go red here rather than
+    /// quietly measuring an attribute that no longer means anything.
+    private var backupExcludeAttribute: String { "com.apple.metadata:com_apple_backup_excludeItem" }
+
+    /// `getxattr` is a syscall against the file: no Foundation cache in front of
+    /// it. It says nothing about a Foundation write still in flight BEHIND it —
+    /// that is a real hazard, measured below, and it is why the tests above never
+    /// ask this question about a directory the product has just written to and
+    /// then changed. `XATTR_NOFOLLOW` applies to the final path component, which
+    /// here is always a directory the test itself created.
+    private func backupExcludeAttributeIsPresent(_ url: URL) throws -> Bool {
+        let size = getxattr(url.path, backupExcludeAttribute, nil, 0, 0, XATTR_NOFOLLOW)
+        if size >= 0 { return true }
+        if errno == ENOATTR { return false }
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno),
+                      userInfo: [NSLocalizedDescriptionKey:
+                        "getxattr(\(backupExcludeAttribute)) failed: \(String(cString: strerror(errno)))"])
+    }
+
+    // WHY THERE IS NO "CLEAR THE FLAG" HELPER HERE, and why the tests above build
+    // their negative state with FileManager instead.
+    //
+    // The obvious shape is: let the product exclude the store, clear the flag,
+    // reopen, watch it come back. That shape is not fixable, and it took two
+    // different failures to establish why. ONE CAUSE, TWO SYMPTOMS — a Foundation
+    // resource-value write does not finish when it returns. WHERE EACH WAS SEEN is
+    // stated, because one of these ran on CI and the other never did:
+    //
+    //   · Clearing with `setResourceValues(isExcludedFromBackup: false)` and
+    //     reading back. The CLEAR was the write in flight, so the read returned the
+    //     old `true`. THIS IS THE VERSION THAT WAS COMMITTED, and it failed the iOS
+    //     workflow on two release commits. Reproduced locally too: over 300
+    //     iterations the raw attribute and the `URL` view disagreed 228 times and
+    //     the read was stale 3 times. A freshly constructed `URL` does not help and
+    //     `removeAllCachedResourceValues()` makes it worse, because the problem was
+    //     never in the read.
+    //
+    //   · Clearing with `removexattr`, which IS synchronous. Now the SET was the
+    //     write in flight: the attribute reappeared after a successful removal, a
+    //     median of 150µs later, landing on top of the clear — 400 out of 400
+    //     iterations. Same cause, failing one line further down.
+    //     THIS VERSION WAS NEVER COMMITTED AND NEVER RAN ON CI. It was written and
+    //     measured locally, failed locally at roughly 1 run in 30 under
+    //     AddressSanitizer, and was replaced before it reached a commit. An earlier
+    //     draft of this comment said it "failed on CI", which was not true and is
+    //     corrected here.
+    //
+    // Clearing reliably would mean waiting for the write to settle and trying
+    // again, which turns the precondition into a retry loop and the gate into a
+    // measurement of timing. So the negative state is CONSTRUCTED rather than
+    // reached: a directory that has never been excluded needs no clearing and has
+    // nothing in flight against it, and opening a store on it exercises the same
+    // already-exists path the property is about.
+
+    /// The documented API, read through a URL that has never been asked before.
+    private func foundationSaysExcluded(_ url: URL) throws -> Bool? {
+        try URL(fileURLWithPath: url.path)
+            .resourceValues(forKeys: [.isExcludedFromBackupKey])
+            .isExcludedFromBackup
     }
 
     /// A weaker guarantee than the documentation states must be REPORTABLE.

@@ -72,7 +72,7 @@ npm run test:tpm-interop    # OPTIONAL, needs Linux + swtpm + tpm2-tools (emulat
 ```
 
 The falsification/mutation approach and the guard tests are described in the
-review brief. Reproduced counts at this SHA: **1703 unit tests / 81 files**
+review brief. Reproduced counts at this SHA: **1720 unit tests / 82 files**
 (`npm test`) and **36 Playwright tests / 6 files** (`npm run test:e2e`). Re-run
 them rather than citing these; they move whenever a test is added. The falsification matrix is described in the
 review brief; its count is not restated here, because a number quoted without
@@ -83,7 +83,7 @@ The mobile editions carry their own suites: **Android 301 JVM/unit tests**
 and run for both the debug and release variants, so 301 is the distinct count)
 plus **55 on-device instrumentation tests**
 (`connectedDebugAndroidTest`, verified by `android/tools/verify-instrumentation.sh`
-against a per-class expectation), and **iOS 471 tests**
+against a per-class expectation), and **iOS 472 tests**
 (`swift test --package-path ios/TruePadKit`), plus
 the iOS supply-chain and isolation gates in `ios/scripts/` and `ios/vendor/`. The
 iOS suite also runs under AddressSanitizer and ThreadSanitizer on every push, and

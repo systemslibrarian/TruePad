@@ -85,7 +85,7 @@ re-run" below.
 | Android JVM (`./gradlew check`) | **301 distinct tests**, **392 executions** |
 | Android instrumentation (suite size) | **55 tests**, 10 classes |
 | Android instrumentation on physical Samsung SM-A176U | **55 / 55**, 10 classes, **0 failures, 0 errors, 0 skipped** |
-| iOS `swift test` | **471 / 471** |
+| iOS `swift test` | **471 / 471** (the reviewed candidate; the release tree adds one negative-control test — see below) |
 | iOS on-device `TruePadAppUITests`, physical iPhone 12 | 16 tests, **3 skipped** (the two two-device classes), 0 failures |
 
 ### Release-tree re-run (the versioned 3.0.0 tree)
@@ -96,30 +96,84 @@ went in. The Browser/CLI count moves because `tests/release-state.test.ts` is ne
 every other figure is unchanged, which is the point — release mechanics changed no
 behaviour.
 
-**The first release commit did not tag.** Its exact-SHA CI came back with five
-workflows green and the iOS one red at `Test under AddressSanitizer`: 471 tests,
-1 failure. It was not caused by the release commit — nothing that commit changes
-under `ios/` is compiled or read by `swift test`, the same job's plain `swift
-test` was green at 471/471, the reviewed candidate had passed the identical
-workflow minutes earlier, and five full local ASan runs on the same code were
-clean, as were fifteen targeted ASan runs of `ConcurrencyTests` — the only suite
-whose outcome depends on real thread scheduling. **Re-running the same job on the
-same SHA passed**, including both sanitizer steps. So: one occurrence, never
-reproduced, on a gate that is genuinely nondeterministic where it exercises
-concurrency. It is recorded here as a flake rather than explained away, because
-the failing test was never identified and therefore cannot be said to have been
-understood.
+**TWO RELEASE COMMITS DID NOT TAG, AND A THIRD CARRIES THE REPAIRS.** The release
+was blocked twice at the exact-SHA CI gate. Neither failure was a product defect,
+and neither was caused by a release commit. What they exposed was that two test
+harnesses and one CI script were unreliable, and that a red run could not say why.
 
-What the red run could NOT do was say which test failed: the step piped `swift
-test` through `tail -20`, so the only complete output lived in `/tmp` on a runner
-that is then destroyed. A gate that can go red without being actionable is not a
-gate. The sanitizer steps now print the failing cases and keep all three logs as
-an artifact, and **no test and no assertion was weakened to get past it** — in
-particular `ConcurrencyTests`' two contention assertions are untouched, so the
-same failure can still happen. It will just be legible when it does.
+**CORRECTION, RECORDED DELIBERATELY.** The commit message of
+`059c985fc27af4312cf020b5941830eb90f7918c` describes the AddressSanitizer failure
+as a one-off flake that "never reproduced". **That is false, and this supersedes
+it.** It reproduced on the very next release commit. That commit is not rewritten
+and its history is not force-pushed; the mistaken characterisation stands where it
+was written, and this is the correction.
 
-The release moved to a second commit carrying that fix, and the `v3.0.0` tag
-points at that commit rather than at the first one.
+### What actually failed
+
+| | |
+| --- | --- |
+| iOS | `AppShellRegressionTests.testTheStoreIsMarkedExcludedFromBackupOnEveryOpen` |
+| Android | `FixedRecordSmokeTest.aFixedRecordPadGivesEveryMessageTheSameCiphertextLength` |
+
+Both failed in their **setup**, not on the property they exist to check.
+
+**iOS.** The test excluded a store from backup through the product, cleared the
+flag with `setResourceValues(isExcludedFromBackup: false)`, then read it back and
+required `false`. It got a stale `true`. The read was never the problem: measured
+over 300 iterations, the raw `getxattr` view and the `URL` view disagreed 228
+times, and a freshly constructed `URL` — the workaround already in the test —
+returned the stale value 3 times. `removeAllCachedResourceValues()` makes it
+worse. **The Foundation WRITE is not synchronously visible.** A `removexattr`
+version of the repair failed too, at a different line: over 400 iterations the
+attribute REAPPEARED after a successful removal **every single time**, a median of
+150µs later, because the product's own exclusion write was still in flight and
+landed on top of the clear. Clearing that directory is not fixable without waiting
+and retrying, which would make the precondition a measurement of timing.
+So the negative state is now **constructed instead of reached**: the directory is
+created with `FileManager`, has never been excluded, and therefore has nothing in
+flight against it. Opening a store on it exercises the identical path —
+`makeDirectory` returns early for a directory that already exists, so `init`'s
+reassertion is the only thing that can set the flag, which is exactly the defect
+the test was written for. **100 consecutive runs, 0 failures** (60 under
+AddressSanitizer, 40 plain).
+
+**Android.** The test clicked Copy and read the clipboard **once, immediately**.
+`performClick` returns when the click is dispatched, not when the handler's write
+has landed, and on the CI emulator the read came back EMPTY — the assertion
+printed "Copy handed over something that is not the compact transport form:" with
+nothing after the colon. The repair seeds a UUID sentinel, clicks the real Copy
+control, waits for idle, then polls **with a 15-second deadline** until the
+clipboard has actually CHANGED from its pre-click value, is not the sentinel, and
+carries the compact prefix. Comparing against the pre-click value rather than only
+the sentinel is what makes it honest: this test calls Copy twice, and had the
+platform ever refused the seed, a sentinel-only guard would have accepted the
+FIRST message's transport on the second call — non-empty, correctly prefixed and
+completely wrong. On timeout it reports the SHAPE of what it saw and never the
+content, because a harness that prints clipboards into a CI log is one product
+defect away from printing a plaintext into one.
+
+**Neither repair weakens anything.** No assertion was deleted, loosened, skipped
+or made conditional, and `ConcurrencyTests`' two contention assertions were never
+touched. Both repairs were mutation-proved against the product rather than merely
+re-run: removing the store's reassertion on open makes the iOS test red; making
+Copy hand over the canonical form instead of the compact one makes the Android
+test red; making Copy do nothing makes it red with "clipboard unchanged since
+before the click=true"; and pointing the iOS observation at the wrong attribute,
+or making it always answer "excluded", makes it red too.
+
+### The CI script could not report its own failure
+
+The step piped `swift test` through `tail -20`, so the only complete output lived
+in `/tmp` on a runner that is destroyed with the job. Worse, `shell: bash -e` plus
+`set -o pipefail` ended the step AT the failing pipeline, so the diagnostics
+written below it never ran at all — which is why the first red run named nothing.
+The runs now capture the test command's status, print the failing cases, keep all
+three logs as an artifact, and exit with the status the run earned. Verified by
+simulation rather than assumed: with a deliberately failing test present, the
+plain and AddressSanitizer steps both go **red and name it**, and with the suite
+healthy both are green. Against the previous version of the step the same
+deliberate failure produced red with **no test named and no diagnostic at all**.
+
 
 | Gate | Result on the release tree |
 | --- | --- |
@@ -134,9 +188,9 @@ points at that commit rather than at the first one.
 | Android vectors vs released v2.0.0 (`regenerate-vectors.sh --check`) | byte-identical |
 | Android vectors vs this tree (`verify-vectors-current.sh`) | byte-identical, evaluator corpus included |
 | Android instrumentation on the physical **Samsung SM-A176U** | **55 / 55**, 10 classes, **0 failures, 0 errors, 0 skipped** |
-| iOS `swift test` | **471 / 471** |
-| iOS `swift test --sanitize=address` | **471 / 471**, no AddressSanitizer finding |
-| iOS `swift test --sanitize=thread` | **471 / 471**, no ThreadSanitizer finding |
+| iOS `swift test` | **472 / 472** |
+| iOS `swift test --sanitize=address` | **472 / 472**, no AddressSanitizer finding |
+| iOS `swift test --sanitize=thread` | **472 / 472**, no ThreadSanitizer finding |
 | iOS `swift build` / `swift build -c release` | PASS / PASS |
 | `check-release-isolation.sh` · `verify-vendor.sh` · `check-notices.sh` · `check-app-project.sh` · `gen-sbom.sh --check` | PASS · PASS · PASS · PASS · PASS |
 

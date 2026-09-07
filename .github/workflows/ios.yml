@@ -98,24 +98,27 @@ jobs:
         working-directory: ios/TruePadKit
         run: |
           set -o pipefail
-          swift test 2>&1 | tee /tmp/ios-tests.log | tail -40
-          python3 - <<'PY'
+          # CAPTURE, DO NOT DIE — see the sanitizer steps below for what this cost.
+          status=0
+          swift test 2>&1 | tee /tmp/ios-tests.log | tail -40 || status=$?
+          python3 - "$status" <<'PY'
           import re, sys
           FLOOR = 260
+          status = int(sys.argv[1])
           text = open('/tmp/ios-tests.log').read()
           runs = re.findall(r'Executed (\d+) tests?, with (\d+) failures?', text)
           if not runs:
               sys.exit("no 'Executed N tests' summary found — the suite did not run")
           total, failures = max(int(t) for t, _ in runs), max(int(f) for _, f in runs)
           print(f"executed {total} tests, {failures} failures (floor {FLOOR})")
-          if failures:
+          if failures or status:
               # NAME THEM. A summary line saying "1 failure" and nothing else is
               # a red gate nobody can act on; see the ASan step below for the run
               # where that actually happened.
               for line in text.splitlines():
                   if "' failed (" in line or "error:" in line:
                       print(line)
-              sys.exit(f"{failures} test failures")
+              sys.exit(f"{failures} test failures (swift test exited {status})")
           if total < FLOOR:
               sys.exit(f"only {total} tests ran, below the floor of {FLOOR} — "
                        "a suite is missing, not passing")
@@ -139,37 +142,66 @@ jobs:
         working-directory: ios/TruePadKit
         run: |
           set -o pipefail
-          swift test --sanitize=address 2>&1 | tee /tmp/ios-asan.log | tail -20
+          # CAPTURE, DO NOT DIE. `shell: bash -e` plus `pipefail` means a failing
+          # `swift test` ends the step AT THIS LINE, and every diagnostic written
+          # below it never runs. That is exactly how a red run came back saying
+          # only "Executed 471 tests, with 1 failure" and naming nothing.
+          status=0
+          swift test --sanitize=address 2>&1 | tee /tmp/ios-asan.log | tail -20 || status=$?
           if grep -qE 'ERROR: AddressSanitizer|runtime error:' /tmp/ios-asan.log; then
             echo "::error::AddressSanitizer reported a finding"
-            grep -nE 'ERROR: AddressSanitizer|runtime error:' -A 25 /tmp/ios-asan.log | head -80
-            exit 1
-          fi
-          if ! grep -qE 'Executed [0-9]+ tests, with 0 failures' /tmp/ios-asan.log; then
+            grep -nE 'ERROR: AddressSanitizer|runtime error:' -A 25 /tmp/ios-asan.log | head -80 || true
+            [ "$status" -ne 0 ] || status=1
+          elif [ "$status" -ne 0 ] || ! grep -qE 'Executed [0-9]+ tests, with 0 failures' /tmp/ios-asan.log; then
             echo "::error::the AddressSanitizer run had test failures — the failing cases follow"
-            grep -nE "' failed \(|error:|Test Suite '[A-Za-z]+' failed" /tmp/ios-asan.log | head -60
-            exit 1
+            grep -nE "' failed \\(|error:|Test Suite '[A-Za-z]+' failed" /tmp/ios-asan.log | head -60 || true
+            [ "$status" -ne 0 ] || status=1
+          else
+            # A FLOOR, for the same reason the plain run has one: "0 failures" is
+            # satisfied by a log in which a single test ran, and a sanitizer build
+            # that silently stopped compiling the suite in would read as a pass.
+            # Set below the current count so ordinary additions do not touch CI.
+            ran="$(sed -nE 's/.*Executed ([0-9]+) tests, with 0 failures.*/\1/p' /tmp/ios-asan.log | sort -rn | head -1)"
+            if [ -z "$ran" ] || [ "$ran" -lt 260 ]; then
+              echo "::error::only ${ran:-0} tests ran under AddressSanitizer, below the floor of 260 — a suite is missing, not passing"
+              status=1
+            fi
           fi
+          # The ORIGINAL status, so a red run stays red with the code it earned.
+          exit "$status"
 
       - name: Test under ThreadSanitizer
         working-directory: ios/TruePadKit
         run: |
           set -o pipefail
-          swift test --sanitize=thread 2>&1 | tee /tmp/ios-tsan.log | tail -20
+          # CAPTURE, DO NOT DIE. `shell: bash -e` plus `pipefail` means a failing
+          # `swift test` ends the step AT THIS LINE, and every diagnostic written
+          # below it never runs. That is exactly how a red run came back saying
+          # only "Executed 471 tests, with 1 failure" and naming nothing.
+          status=0
+          swift test --sanitize=thread 2>&1 | tee /tmp/ios-tsan.log | tail -20 || status=$?
           if grep -qE 'WARNING: ThreadSanitizer|data race' /tmp/ios-tsan.log; then
             echo "::error::ThreadSanitizer reported a finding"
-            grep -nE 'WARNING: ThreadSanitizer|data race' -A 25 /tmp/ios-tsan.log | head -80
-            exit 1
-          fi
-          if ! grep -qE 'Executed [0-9]+ tests, with 0 failures' /tmp/ios-tsan.log; then
+            grep -nE 'WARNING: ThreadSanitizer|data race' -A 25 /tmp/ios-tsan.log | head -80 || true
+            [ "$status" -ne 0 ] || status=1
+          elif [ "$status" -ne 0 ] || ! grep -qE 'Executed [0-9]+ tests, with 0 failures' /tmp/ios-tsan.log; then
             echo "::error::the ThreadSanitizer run had test failures — the failing cases follow"
-            grep -nE "' failed \(|error:|Test Suite '[A-Za-z]+' failed" /tmp/ios-tsan.log | head -60
-            exit 1
+            grep -nE "' failed \\(|error:|Test Suite '[A-Za-z]+' failed" /tmp/ios-tsan.log | head -60 || true
+            [ "$status" -ne 0 ] || status=1
+          else
+            # A FLOOR, for the same reason the plain run has one: "0 failures" is
+            # satisfied by a log in which a single test ran, and a sanitizer build
+            # that silently stopped compiling the suite in would read as a pass.
+            # Set below the current count so ordinary additions do not touch CI.
+            ran="$(sed -nE 's/.*Executed ([0-9]+) tests, with 0 failures.*/\1/p' /tmp/ios-tsan.log | sort -rn | head -1)"
+            if [ -z "$ran" ] || [ "$ran" -lt 260 ]; then
+              echo "::error::only ${ran:-0} tests ran under ThreadSanitizer, below the floor of 260 — a suite is missing, not passing"
+              status=1
+            fi
           fi
+          # The ORIGINAL status, so a red run stays red with the code it earned.
+          exit "$status"
 
-      # The logs the three steps above wrote, kept only when something went wrong.
-      # This is the artefact that makes a red run diagnosable after the runner is
-      # gone; without it the evidence is destroyed with the machine.
       - name: Keep the test logs when a run is red
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -202,7 +234,12 @@ jobs:
 
       - name: Release-configuration build
         working-directory: ios/TruePadKit
-        run: swift build -c release 2>&1 | tail -5
+        # `| tail -5` discards the build's exit status without pipefail, so a
+        # BROKEN RELEASE BUILD would have read as a pass. Same defect the test
+        # steps above had, in a step nobody had looked at.
+        run: |
+          set -o pipefail
+          swift build -c release 2>&1 | tail -5
 
       # A host build proves nothing about the device. These steps are what would
       # catch an availability-floor regression - for instance a change that

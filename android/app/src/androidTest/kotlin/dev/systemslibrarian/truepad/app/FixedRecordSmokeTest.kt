@@ -1,7 +1,9 @@
 package dev.systemslibrarian.truepad.app
 
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.SystemClock
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -19,12 +21,14 @@ import dev.systemslibrarian.truepad.core.decodeEnvelopeTransport2
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.ExternalResource
 import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.UUID
 
 /**
  * THE FIXED-RECORD PROPERTY, OBSERVED ON A HANDSET.
@@ -70,14 +74,109 @@ class FixedRecordSmokeTest {
         compose.waitUntil(timeoutMs) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }
     }
 
-    /** What the Copy button actually put on the clipboard. */
-    private fun clipboard(): String {
-        var text = ""
+    /**
+     * What is on the clipboard right now. `null` means the clipboard could not be
+     * READ — no primary clip, or no item in it — which is a different thing from
+     * an empty string, and on Android a very different thing: an app without
+     * window focus is refused the read rather than given nothing. The timeout
+     * message below says which of the two happened, because they have different
+     * causes and only one of them is about TruePad.
+     */
+    private fun readClipboard(): String? {
+        var text: String? = null
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            text = cm.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
+            text = cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
         }
         return text
+    }
+
+    /**
+     * Put a known value on the clipboard, so the wait below can tell "Copy
+     * delivered this" apart from "this was already here".
+     *
+     * BEST EFFORT, DELIBERATELY. An instrumentation environment that refuses the
+     * write is reported rather than fatal — the wait then falls back to its other
+     * conditions, and the diagnostics say the seed did not take.
+     */
+    private fun seedClipboard(sentinel: String): Boolean =
+        try {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("truepad-test-sentinel", sentinel))
+            }
+            readClipboard() == sentinel
+        } catch (t: Throwable) {
+            false
+        }
+
+    /**
+     * Click the real Copy control and wait, WITH A DEADLINE, for the clipboard to
+     * change into something that carries the compact transport.
+     *
+     * WHY THIS IS NOT ONE IMMEDIATE READ, which is what it was. `performClick`
+     * returns when the click is DISPATCHED, not when the handler's clipboard write
+     * has landed. On the CI emulator that read came back EMPTY, and the assertion
+     * printed "Copy handed over something that is not the compact transport form:"
+     * with nothing after the colon. An empty clipboard is what a read that arrives
+     * before the write looks like; what the product actually put there in that run
+     * was never observed, because the harness recorded nothing but the emptiness.
+     * The same test passes on the physical handset and passed on this emulator
+     * before and after, and the wait below now distinguishes the two cases rather
+     * than leaving them to be inferred.
+     *
+     * AND WHY IT IS NOT AN UNBOUNDED WAIT, AND NOT "anything non-empty". A wait
+     * with no deadline turns a genuinely broken Copy into a hung suite instead of
+     * a red one. Accepting whatever happens to be on the clipboard would accept a
+     * value a previous step left there — which is the very thing this test exists
+     * to check. So the wait ends only on a value that is not the sentinel, is not
+     * empty, and carries the compact prefix, and every assertion the test makes is
+     * then made against THAT value.
+     */
+    private fun copyAndAwaitTransport(timeoutMs: Long = 15_000): String {
+        val sentinel = "truepad-clipboard-sentinel-" + UUID.randomUUID()
+        val seeded = seedClipboard(sentinel)
+
+        // WHAT WAS THERE BEFORE THE CLICK — and the wait below requires the
+        // clipboard to become something DIFFERENT from it.
+        //
+        // THIS, NOT THE SENTINEL, IS WHAT MAKES THE WAIT HONEST. This test calls
+        // Copy TWICE, once per message. If the seed were the only guard and
+        // seeding were refused by the platform, the second wait would find the
+        // FIRST message still on the clipboard — non-empty, correctly prefixed,
+        // and completely wrong — and return it as if Copy had delivered it. The
+        // seed makes the "before" value predictable; comparing against the
+        // "before" value is what makes a missing Copy detectable either way.
+        val before = readClipboard()
+
+        compose.onNodeWithTag("btn-copy-envelope").performClick()
+        compose.waitForIdle()
+
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var last = before
+        while (SystemClock.uptimeMillis() < deadline) {
+            last = readClipboard()
+            val value = last
+            val changed = value != null && value.isNotEmpty() && value != before && value != sentinel
+            if (changed && value.startsWith(COMPACT_PREFIX)) return value
+            SystemClock.sleep(50)
+        }
+
+        // NEVER THE CONTENT. What sits on the clipboard here should be public
+        // transport, but a harness that prints clipboards into a CI log is one
+        // product defect away from printing a plaintext into a CI log. Report the
+        // SHAPE of what was seen, which is what tells the failure modes apart.
+        fail(
+            "Copy did not deliver the compact transport within ${timeoutMs}ms. " +
+                "sentinel seeded=$seeded, " +
+                "clipboard unreadable=${last == null}, " +
+                "clipboard unchanged since before the click=${last == before}, " +
+                "clipboard still the sentinel=${last == sentinel}, " +
+                "clipboard empty=${last?.isEmpty()}, " +
+                "length=${last?.length}, " +
+                "carries $COMPACT_PREFIX=${last?.startsWith(COMPACT_PREFIX)}",
+        )
+        error("unreachable")
     }
 
     private fun sendAndCopy(message: String): String {
@@ -93,8 +192,7 @@ class FixedRecordSmokeTest {
         compose.onNodeWithTag("btn-copy-envelope").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("btn-share-envelope").assertIsDisplayed()
 
-        compose.onNodeWithTag("btn-copy-envelope").performClick()
-        val copied = clipboard()
+        val copied = copyAndAwaitTransport()
         compose.onNodeWithTag("btn-back-to-pad").performScrollTo().performClick()
         return copied
     }
@@ -141,6 +239,12 @@ class FixedRecordSmokeTest {
         val secondCopied = sendAndCopy(long)
 
         // ---- what the operator was handed is the compact form ----
+        //
+        // REDUNDANT BY CONSTRUCTION, AND KEPT ANYWAY. `copyAndAwaitTransport` only
+        // returns on a value carrying this prefix, so today this cannot fail. It
+        // is the assertion that starts biting again the moment somebody loosens
+        // the wait's exit condition — which is exactly the edit that would make
+        // this test accept the wrong string.
         for (copied in listOf(firstCopied, secondCopied)) {
             assertTrue(
                 "Copy handed over something that is not the compact transport form: " +
