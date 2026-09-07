@@ -213,6 +213,12 @@ jobs:
             /tmp/ios-tsan.log
           if-no-files-found: ignore
 
+      # The symbol-table gate polices the release binary; this polices the gate.
+      # It runs on fixtures, needs no iOS build, and is here because the probe it
+      # tests was silently false-negative on a real release and nothing noticed.
+      - name: The symbol-table probe is not vacuous
+        run: ios/scripts/selftest-symtab.sh
+
       - name: KAT-support isolation is structural
         run: ios/scripts/check-release-isolation.sh
 
@@ -317,8 +323,23 @@ jobs:
           fi
           echo "--- platform and deployment target ---"
           otool -l "$OBJ" | grep -A4 LC_BUILD_VERSION | head -8
+          # CAPTURE FIRST, DECIDE SECOND. This step is not under `pipefail`
+          # today, so `nm | grep -q` does not lie here — but it is the same
+          # construct that made the release-binary gate report a present
+          # CCryptoBoringSSL_XWING_decap as missing, and it is one `set -o
+          # pipefail` away from doing so. Deciding from a file has no producer
+          # to kill, and nm's own exit status is the one that counts.
+          SYMS="$RUNNER_TEMP/xwing-symbols.txt"
+          nm "$OBJ" > "$SYMS" || {
+            echo "nm could not read $OBJ — the probe failed; this says nothing about the binary"
+            exit 1
+          }
           echo "--- X-Wing symbols ---"
-          nm "$OBJ" | grep -E 'XWING_(encap|decap|generate_key)' | head -10
-          nm "$OBJ" | grep -q 'CCryptoBoringSSL_XWING_encap' \
-            || { echo "the vendored BoringSSL X-Wing is NOT linked for iOS"; exit 1; }
-          echo "OK: the iOS build links the vendored BoringSSL X-Wing"
+          grep -E 'XWING_(encap|decap|generate_key)' "$SYMS" | head -10 || true
+          for sym in CCryptoBoringSSL_XWING_encap CCryptoBoringSSL_XWING_decap; do
+            grep -qF "$sym" "$SYMS" || {
+              echo "the vendored BoringSSL X-Wing is NOT linked for iOS: $sym absent"
+              exit 1
+            }
+          done
+          echo "OK: the iOS build links the vendored BoringSSL X-Wing (encap and decap)"

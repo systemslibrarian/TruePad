@@ -161,6 +161,77 @@ test red; making Copy do nothing makes it red with "clipboard unchanged since
 before the click=true"; and pointing the iOS observation at the wrong attribute,
 or making it always answer "excluded", makes it red too.
 
+### A third gate: the release-binary inspector was reporting a symbol that was there as missing
+
+The repaired commit then failed the iOS workflow at
+`Inspect what the release binary actually contains`, §4:
+
+    PASS  the vendored BoringSSL provides CCryptoBoringSSL_XWING_encap
+    FAIL  CCryptoBoringSSL_XWING_decap is missing — the X-Wing path is not the vendored one
+
+**The symbol was present.** This is a false negative in the gate, and it was
+demonstrated rather than argued:
+
+> The old §4 presence probe was empirically false-negative. Against a local
+> object where both X-Wing symbols were independently verified present — both
+> defined text symbols in a single 2.6 MB `CCryptoBoringSSL.o`, from the same
+> `xwing.cc` — the exact `nm -g "$BORING" | grep -qF "$symbol"` pipeline reported
+> `encap` missing **9 times in 200** and `decap` missing **25 times in 200**. The
+> `nm` stream was **177,247 bytes**, exceeding the 64 KiB pipe buffer; under
+> `pipefail`, `grep -q` terminates at its first match, closes the pipe, and `nm`
+> exits via SIGPIPE, so the pipeline reports failure for a symbol that is there.
+> `decap` sorts one line earlier than `encap`, so `grep` exits marginally sooner
+> and leaves marginally more of `nm`'s output unwritten — which is the whole
+> difference between the symbol that failed a release and the one that did not.
+
+**The script had already documented this exact trap, in its own header, and §4
+reintroduced it anyway.** The note above §1 reads: "`set -o pipefail` plus
+`grep -q` on a LARGE stream is a trap... Every check in the first version of this
+script was vacuous for exactly that reason." Sections 1–3 avoid it by capturing
+`nm` output to a file first. Section 4 did not.
+
+Corroborating evidence, none of it about the product: the only change to any
+iOS-linked path since the previous green iOS run was the `project.pbxproj`
+version bump — eight lines of `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`;
+`ios/vendor` and `ios/TruePadKit/Sources` were byte-identical; and the same script
+passed locally on a byte-identical toolchain (Xcode 26.6 / 17F113, Swift 6.3.3).
+
+**The repair, which does not weaken the requirement.** Both symbols are still
+required, from the vendored BoringSSL, in a device Release build. What changed is
+how the question is asked: `nm` is captured once to a file and **its own exit
+status is checked**, so a probe that fails is reported as a failed probe rather
+than as a missing symbol; the file is then searched, which has no producer to
+kill. Candidate objects are enumerated `LC_ALL=C` sorted instead of
+`find … | head -1`, and **every** candidate must provide both symbols — strictly
+stronger than inspecting whichever copy the filesystem yielded first. On failure
+the gate now prints which object it read, its size, and the X-Wing symbols
+actually present, so a red result is actionable. The same construct in the
+workflow's separate link-proof step was repaired the same way; it was not under
+`pipefail` and so was not lying, but it was one setting away from it.
+
+**The candidate set was recorded from a real build, not assumed.** One device
+Release build of all five shipping schemes produces exactly **one**
+`CCryptoBoringSSL.o` under `Release-iphoneos` — 2,631,212 bytes, `nm` exit 0,
+3,128 global symbols — and it is the complete vendored object rather than a
+fragment: all seven X-Wing entry points are defined text symbols in it, alongside
+`EVP_AEAD_CTX_seal`, `SHA256_Init`, `CRYPTO_memcmp`, `X25519` and 51 ML-KEM
+symbols. The five schemes share one DerivedData tree and one products directory,
+so BoringSSL is compiled once and shared, which is why there is one. With that
+architecture confirmed, requiring EVERY candidate to provide BOTH symbols is
+equivalent to the single-object case today and degrades safely if the layout ever
+yields more; it is not loosened to "one of them somewhere".
+
+**And the gate is now policed by a gate.** `ios/scripts/selftest-symtab.sh` runs
+on fixtures, needs no iOS build, and proves: a present symbol is found in 200/200
+trials on a table larger than a pipe buffer; a removed symbol is reported absent;
+removing one does not hide the other; a probe that cannot run fails loudly instead
+of reporting "absent"; an empty products directory yields no candidates; candidate
+order is sorted regardless of creation order; and the banned `nm | grep -q`
+construct cannot return. That last check needed fixing itself — its first version
+fired on `symtab.sh`'s own comment describing the construct, so it now scans code
+rather than prose, and asserts both that it fires on the real construct and that
+it ignores a comment mentioning it.
+
 ### The CI script could not report its own failure
 
 The step piped `swift test` through `tail -20`, so the only complete output lived

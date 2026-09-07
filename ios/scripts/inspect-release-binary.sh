@@ -32,6 +32,12 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KIT="$HERE/../TruePadKit"
 
+# The symbol-table probe, shared with the self-test that proves it is not vacuous.
+# It exists as a file rather than a pipeline for the reason documented in it, and
+# in the note above §1 — a reason section 4 of THIS script forgot once already.
+# shellcheck source=lib/symtab.sh
+. "$HERE/lib/symtab.sh"
+
 FAIL=0
 pass() { printf '  PASS  %s\n' "$*"; }
 fail() { printf '  FAIL  %s\n' "$*"; FAIL=1; }
@@ -147,17 +153,52 @@ done
 
 echo
 echo "== 4. The X-Wing implementation that is supposed to be there =="
-BORING="$(find "$PRODUCTS" -name 'CCryptoBoringSSL.o' | head -1)"
-if [ -z "$BORING" ]; then
+#
+# EVERY CANDIDATE, IN SORTED ORDER — not `find | head -1`.
+#
+# The five shipping schemes share one DerivedData tree and one Release-iphoneos
+# products directory, so the vendored BoringSSL is built once and there is
+# normally exactly one object here. "Normally" is not a gate, and filesystem
+# traversal order is not a decision procedure: whichever copies exist are
+# enumerated deterministically and EVERY one of them must provide both symbols.
+# That is strictly stronger than inspecting whichever copy `find` happened to
+# yield first, and its result cannot change between two runs over the same tree.
+CANDIDATES="$(symtab_candidates "$PRODUCTS" 'CCryptoBoringSSL.o')"
+CANDIDATE_COUNT="$(printf '%s' "$CANDIDATES" | grep -c . || true)"
+if [ "${CANDIDATE_COUNT:-0}" -eq 0 ]; then
     fail "CCryptoBoringSSL.o is not in the Release products"
+    note "objects that ARE present:"
+    printf '%s\n' "$OBJECTS" | sed "s|^$PRODUCTS/|    |" | head -20
 else
-    for symbol in CCryptoBoringSSL_XWING_encap CCryptoBoringSSL_XWING_decap; do
-        if nm -g "$BORING" 2>/dev/null | grep -qF "$symbol"; then
-            pass "the vendored BoringSSL provides $symbol"
-        else
-            fail "$symbol is missing — the X-Wing path is not the vendored one"
+    note "$CANDIDATE_COUNT BoringSSL object(s) to inspect"
+    XWING_OK=1
+    while IFS= read -r boring; do
+        [ -n "$boring" ] || continue
+        rel="${boring#"$PRODUCTS"/}"
+        size="$(wc -c < "$boring" | tr -d ' ')"
+        symfile="$DERIVED/boringssl-$(printf '%s' "$rel" | tr '/' '_').txt"
+        # CAPTURED FIRST, and nm's own status is the one that counts.
+        if ! symtab_capture "$boring" "$symfile"; then
+            fail "nm could not read $rel — this says nothing about the binary, only that the probe failed"
+            XWING_OK=0
+            continue
         fi
-    done
+        for symbol in CCryptoBoringSSL_XWING_encap CCryptoBoringSSL_XWING_decap; do
+            if symtab_has "$symfile" "$symbol"; then
+                pass "$rel provides $symbol"
+            else
+                fail "$symbol is missing from $rel ($size bytes) — the X-Wing path is not the vendored one"
+                XWING_OK=0
+            fi
+        done
+        # Only on failure, and only the X-Wing lines, from the CAPTURED table.
+        if [ "$XWING_OK" -eq 0 ]; then
+            note "X-Wing symbols actually present in $rel:"
+            symtab_matches "$symfile" 'XWING' | sed 's/^/    /' | head -20
+        fi
+    done <<EOF
+$CANDIDATES
+EOF
 fi
 
 echo
