@@ -1687,12 +1687,41 @@ describe("the online-transfer UI keeps its promises", () => {
     // The collapsed technical panel is the ONE place any of this may appear,
     // and it lives in spt-shared.ts. Everything a person meets on the way
     // through must be ordinary English.
+    //
+    // SCREAMING_SNAKE IDENTIFIERS ARE CODE, NOT COPY, and are removed before the
+    // scan — but ONLY those with an underscore in them.
+    //
+    // Stripping every all-caps run also erased `X25519`, `HKDF`, `AEAD`, `ML-KEM`
+    // and `AES-GCM` wherever prose spells them in capitals, which is five of the
+    // nine terms this guard exists to find. The widening that let one legitimate
+    // constant through would have blinded it to most of its own list. An
+    // underscore is what distinguishes `MAX_CIPHERTEXT_BYTES` from a word an
+    // operator can read. `codeOf` strips comments but keeps identifiers, which was fine while
+    // none of these terms appeared as one — an assumption this file used to state
+    // outright. It stopped being true when the create screen started enforcing
+    // the engine's own ceiling and imported `MAX_CIPHERTEXT_BYTES` to do it: the
+    // guard then reported "ciphertext" on Level 1 for a constant no operator can
+    // ever see, and the honest fix for that reading is not to delete the import
+    // that made the screen correct. An all-capitals token is never operator
+    // prose, so removing those keeps every real sentence in scope. The positive
+    // control below proves the scan still bites.
     const level1 = ["receive-online.ts", "send-online.ts", "create-pair.ts", "dashboard.ts", "home.ts"]
       .map(copyOf)
       .join("\n")
+      .replace(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g, " ")
       .toLowerCase();
-    for (const jargon of ["ml-kem", "x25519", "x-wing", "decapsulat", "post-quantum", "aes-gcm", "hkdf", "aead", "ciphertext"]) {
-      expect(level1, `"${jargon}" must stay under Details`).not.toContain(jargon);
+    const jargon = ["ml-kem", "x25519", "x-wing", "decapsulat", "post-quantum", "aes-gcm", "hkdf", "aead", "ciphertext"];
+    for (const term of jargon) {
+      expect(level1, `"${term}" must stay under Details`).not.toContain(term);
+    }
+    // POSITIVE CONTROL. A guard whose input was accidentally emptied — by the
+    // replace above, by a bad path, by a stripper that ate everything — passes
+    // every assertion in the loop by finding nothing.
+    expect(level1.length).toBeGreaterThan(20_000);
+    expect(level1).toContain("receive code");
+    for (const term of jargon) {
+      expect(`this sentence mentions ${term} in ordinary prose`.replace(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g, " "))
+        .toContain(term);
     }
   });
 

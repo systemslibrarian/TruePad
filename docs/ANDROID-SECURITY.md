@@ -53,8 +53,8 @@ green tick means nothing until you know what ran.
 |---|---|---|
 | **JVM** | The whole protocol and storage state machine — both engine modules are pure Kotlin/JVM and the SAME compiled code runs on ART. Plus the app's source audits and the release-manifest gate. | Every CI run, every local build. |
 | **EMULATOR** | The instrumentation suite and the on-device security checks: the real UI, real `java.nio` on ART, real process kill, the real installed package. | Every CI run (`instrumentation` job) and locally. |
-| **PHYSICAL DEVICE** | Whatever an emulator cannot be: a real flash translation layer, a real TEE, a vendor's own backup implementation. | **DONE.** `android/tools/physical-device-check.sh` ran on a **Samsung SM-A176U (Android 16)**: the 44-test instrumentation suite and the 18 on-device security checks passed. The gate refuses to run against an emulator. Its first hardware run also corrected three defects in the script's own observations (see commit `6582d22`) — the APK was byte-identical, test tooling only. |
-| **HUMAN** | Using the app with TalkBack. | **NOT YET PERFORMED.** The automated baseline in `AccessibilityTest` is not a substitute and does not claim to be. |
+| **PHYSICAL DEVICE** | Whatever an emulator cannot be: a real flash translation layer, a real TEE, a vendor's own backup implementation. | **DONE.** `android/tools/physical-device-check.sh` ran on a **Samsung SM-A176U (Android 16)**: the instrumentation suite as it stood at that commit — 44 tests, verifiable with `git show 6582d22` — and the on-device security gate both passed. The gate refuses to run against an emulator. (**CORRECTED.** This used to add that "the full suite as it stands today — 52 tests across 9 classes — has since been run on that same handset and passed". It is removed rather than renumbered, for two reasons. There has never been a 52-test, 9-class suite: the tree holds 55 tests across 10 classes and did when that sentence was written, so the figure describes no run that could have happened. And every other document in this repository says the opposite — `docs/REMAINING-PHYSICAL-GATES.md` and `docs/MOBILE-3.0-HANDOFF.md` both state that only the 44-test suite of `6582d22` ran on that handset and that the classes added since have NOT run there. One document claiming a stronger physical result than the other two, with a number matching neither, is exactly the drift §1 exists to prevent. What is claimed here is what is verifiable with `git show 6582d22`: six classes — `AccessibilityTest`, `DeviceEngineTest`, `HostileUriTest`, `LargeFontTest`, `ManifestHardeningTest`, `UiJourneyTest` — totalling 44 tests. The suite is ten classes and 55 tests today, so FOUR classes have never run on that handset at all: `ScannerOfflineTest`, `SptDeviceTest`, `NavigationSmokeTest` and `FixedRecordSmokeTest`. Naming them is the point; a test-count difference understates it, because the classes added since are the camera, the sealed-transfer device path, the tab shell and fixed records — the parts an emulator is least like a handset about. `physical-device-check.sh` has not been re-run there either.) Its first hardware run also corrected three defects in the script's own observations (see commit `6582d22`) — the APK was byte-identical, test tooling only. |
+| **HUMAN** | Using the app with TalkBack. | **NOT TESTED — NON-BLOCKING** by project-owner decision. Zero steps observed; no partial pass inferred. The automated baseline in `AccessibilityTest` is not a substitute and does not claim to be. |
 
 So: everything below is JVM- and EMULATOR-validated unless it says otherwise.
 Nothing in this document is physical-device evidence, and nothing in it is a
@@ -745,10 +745,24 @@ removal line and the matrix reports an escape.
 Two items, and neither is a code feature. Both are kinds of evidence that cannot
 be manufactured, listed with what would close them.
 
-- **PHYSICAL-DEVICE VALIDATION — DONE** on a Samsung SM-A176U (Android 16):
-  51 instrumentation tests and 15 on-device security checks passed. What remains
-  on Android is **human TalkBack** and the **Android↔iPhone two-device
-  ceremony**, neither of which an automated run can supply. To repeat it,
+- **PHYSICAL-DEVICE VALIDATION — DONE** on a Samsung SM-A176U (Android 16): the
+  44-test instrumentation suite of that commit, and the on-device security gate,
+  both passed.
+
+  Two numbers that used to appear here have been removed rather than corrected,
+  because they could not be made true. This section once said "51 instrumentation
+  tests", which silently promoted TODAY's count into a run made before two of the
+  classes existed; §1's table said "18 on-device security checks" where this said
+  15. The check count is not a fixed number to begin with — `device-security-check.sh`
+  skips checks that do not apply to a given device, so what it prints depends on
+  the handset. What the run establishes is that the gate PASSED, and the gate
+  fails closed below its own floor (`MIN_CHECKS`) precisely so that a run which
+  asserted almost nothing cannot read as a pass. What remains
+  on Android is **human TalkBack**, and it is **non-blocking** by project-owner
+  decision. The **Android↔iPhone two-device ceremony is DONE** — this line listed
+  it as remaining after it had run; see `docs/REMAINING-PHYSICAL-GATES.md` §A–§B
+  for what it established and the two qualifications that travel with it. To
+  repeat the handset gate,
   connect one authorised handset
   and run:
 
@@ -823,10 +837,23 @@ the reuse is ACROSS copies, not within a store.
 
 The role is now derived per pad from `PairMeta.origin` by
 `PartyRole.derive` — `GENERATED_HERE` → A, `IMPORTED` → B — and an `UNKNOWN`
-origin returns null so the operator is asked rather than guessed at. Sending and
-opening both fail closed on a null role. Refusing is LOSS, which this project
-accepts; guessing is REUSE, which it does not. The same defect existed in the iOS
-and Browser editions and is closed the same way. No wire changed.
+origin returns null. Sending and opening both fail closed on a null role.
+
+**The radio is gone, and this section used to say the operator "is asked" instead
+of guessed at.** Narrowing the control to unknown-origin pads left the worse half
+of the defect: that is precisely the case where a pick IS a guess, and precisely
+the case where a guess spends the material the other person is spending. It also
+stood one line under this edition's own refusal, which says a picked role "would
+be a guess wearing a different name". An unknown origin REFUSES; it does not
+delegate. The Browser edition declined to add such a control and recorded why —
+"adding a picker would create a second role authority beside the origin, which is
+the architecture the cross-copy reuse fix exists to prevent" (`src/browser/ui/role.ts`)
+— and all three editions now agree. The recovery is to acquire the pad again by a
+route that records which half is yours, which the refusal names.
+
+Refusing is LOSS, which this project accepts; guessing is REUSE, which it does
+not. The same defect existed in the iOS and Browser editions and is closed the
+same way. No wire changed.
 
 ---
 

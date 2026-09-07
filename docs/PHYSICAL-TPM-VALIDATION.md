@@ -1,9 +1,12 @@
 # Physical TPM validation procedure
 
-> **STATUS: TEST PROCEDURE PREPARED — NOT EXECUTED. Physical TPM: OUTSTANDING.**
-> This is a checklist to run on a genuine TPM 2.0 host. It has not been run on
-> real hardware. swtpm/emulator results (the `test:tpm-interop` CI) are
-> interoperability evidence only and do **not** satisfy this gate.
+> **STATUS: TEST PROCEDURE PREPARED — NOT EXECUTED. Physical TPM: NOT VALIDATED,
+> and NON-BLOCKING** by project-owner decision
+> ([`RELEASE-CHECKLIST-3.0.md`](RELEASE-CHECKLIST-3.0.md), the canonical
+> authority). This is a checklist to run on a genuine TPM 2.0 host. It has not
+> been run on real hardware. swtpm/emulator results (the `test:tpm-interop` CI)
+> are interoperability evidence only and do **not** satisfy this gate, and are
+> never to be promoted past emulator interoperability.
 
 ## Prerequisites
 
@@ -16,6 +19,13 @@
 
 Run each step; record the actual output. A step that does not match the expected
 result is a **release-blocking** failure — report it, do not proceed.
+
+**That is not in tension with the gate being non-blocking, and the difference
+matters.** RUNNING this procedure is optional: 3.0 may ship without it, and no
+document may claim it was performed. But a step that FAILS while someone is
+running it is a defect discovered in TruePad, and a discovered defect blocks a
+release like any other. Optional to attempt; not optional to ignore once
+attempted.
 
 ## Step 0 — PIN THE TCTI. Do this before anything else.
 

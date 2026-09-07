@@ -67,11 +67,42 @@ export function resolveRole(pairId: string, origin: PairOrigin): "A" | "B" | nul
   return roleFromOrigin(origin) ?? readStoredRole(pairId);
 }
 
+// WHAT THE OPERATOR CAN ACTUALLY DO, which is what this used to get wrong.
+//
+// It said "Set it on the pad screen using the role you were given" — and there is
+// no such control. `writeRole` is called at ACQUISITION only: creating a pad
+// records A, importing or receiving one records B. Nothing offers to set it
+// afterwards, so an operator following that sentence went looking for a screen
+// that does not exist and had no way forward.
+//
+// The honest recovery is to acquire the pad again by a route that records which
+// half is yours. Deliberately NOT offering a free choice here: a pad whose origin
+// cannot say is exactly the case where a guess spends the other person's
+// material, and adding a picker would create a second role authority beside the
+// origin — which is the architecture the cross-copy reuse fix exists to prevent.
+/**
+ * WHAT TO SAY WHEN THE ROLE CANNOT BE DERIVED.
+ *
+ * EVERY ROUTE NAMED HERE IS A REAL, VISIBLE CONTROL, spelled exactly as the
+ * operator sees it. An earlier version pointed at a control on the pad screen
+ * that does not exist; the version after that named "Create", "Add a shared pad"
+ * and "Receive", of which only the middle one was verbatim. Directions to a
+ * button nobody can find are worse than no directions — the operator concludes
+ * the app is broken, and the one action TruePad is trying to prevent starts to
+ * look like the only way forward.
+ *
+ * `role-derivation.test.ts` holds each quoted label against the UI source.
+ */
 export const UNKNOWN_ORIGIN_PROMPT =
-  "TruePad cannot tell which half of this pair is yours, so it will not guess. " +
-  "Set it on the pad screen using the role you were given when this pad was " +
-  "created. Choosing wrong does not corrupt the pad, but it spends material the " +
-  "other person is also spending.";
+  "TruePad cannot tell which half of this pair is yours, so it will not guess, and " +
+  "it will not send or open with this pad until it can. TruePad records which half " +
+  "is yours when a pad is created here, or when it arrives here through one of the " +
+  "receive routes; a pad that got here some other way carries no such record. " +
+  "Acquire it again from the home screen — \u201CCreate a pad\u201D, or " +
+  "\u201CAdd a shared pad\u201D and then either \u201CI have a pad file\u201D or " +
+  "\u201CReceive securely online\u201D — and the record is written. Guessing does " +
+  "not corrupt the pad, but it spends material the other person is spending too, " +
+  "which is the one thing TruePad will not do on your behalf.";
 
 export function writeRole(pairId: string, role: "A" | "B"): void {
   try {

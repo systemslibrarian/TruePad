@@ -27,9 +27,12 @@ inherit — still stands and is still the governing text.
   local Apple ID for development signing, not on code.
 - **Neither is released.** No App Store build, no Play production build, no 3.0
   tag.
-- **Still outstanding on both, and not substitutable by any automated evidence:**
-  the two-device Android↔iPhone optical ceremony, human TalkBack, human
-  VoiceOver, and physical-iPhone validation.
+- **DONE since this line was written:** the two-device Android↔iPhone optical
+  ceremony — with the standing qualification that the word comparisons were
+  AUTOMATED rather than spoken between two people, and that the message carriers
+  were host/test carriers rather than optical — and physical-iPhone validation.
+- **Still NOT TESTED, and NON-BLOCKING by project-owner decision:** human TalkBack
+  and human VoiceOver. Zero steps observed; no partial pass inferred.
 
 Because the original block pinned specific SHAs that have long since advanced, it
 is deliberately not replaced with new ones here — a SHA written into prose goes
@@ -99,7 +102,11 @@ Verified by reading `origin/android-phase-2` (no checkout/merge performed):
    and add the `DeploymentView`/status shape to the Kotlin protocol.
 5. **Physical-device gate:** run `android/tools/physical-device-check.sh` on a real
    handset (it refuses emulators by design). **Status: DONE** — Samsung
-   SM-A176U (Android 16), 51 instrumentation tests + 18 security checks passed.
+   SM-A176U (Android 16): the 44-test instrumentation suite of that commit and
+   the on-device security gate both passed. (The suite is 55 today; the two
+   classes added since have not run on that handset. The gate's check count
+   varies by device, so no fixed number is quoted — see docs/ANDROID-SECURITY.md
+   §10.)
 6. **Human TalkBack pass:** a human end-to-end run. Automated `AccessibilityTest`/
    `LargeFontTest` are baselines only. **Status: NOT TESTED — NON-BLOCKING** by
    project-owner decision.

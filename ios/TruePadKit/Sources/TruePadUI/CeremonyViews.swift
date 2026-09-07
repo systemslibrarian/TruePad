@@ -18,6 +18,13 @@ import TruePadStorage
  *   - The CEREMONY says what comparing the words does and does not establish. The
  *     app records only that the operator said they matched. It cannot check that
  *     they did, and it does not imply otherwise.
+ *
+ * APPEARANCE COMES FROM Theme.swift AND NOWHERE ELSE. These screens were rebuilt
+ * out of the shared vocabulary — ChoiceRow, Slab, Details, Callout, Rule — and no
+ * colour or font size is named here. NOTHING THEY SAY CHANGED: every string, every
+ * accessibility label and every verbatim claim is the one that was here before,
+ * including the ones that are deliberately long. Wording is never shortened to fit
+ * a layout; the layout wraps instead.
  * ========================================================================= */
 
 // MARK: - creating a pad
@@ -34,9 +41,11 @@ public struct CreatePadView: View {
 
     public var body: some View {
         NavigationStack {
-            Form {
-                Section("Name") {
+            VStack(alignment: .leading, spacing: TruePadMetrics.blockSpacing) {
+                VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                    SectionTitle("Name")
                     TextField("What is this pad for?", text: $model.label)
+                        .truePadField()
                         .accessibilityLabel("A name for this pad. It stays on this device.")
                 }
 
@@ -44,36 +53,27 @@ public struct CreatePadView: View {
                 // byte and record counts still exist and still reach the engine
                 // unchanged — they are two fields further down, under Advanced,
                 // instead of the first thing on the screen.
-                Section {
+                //
+                // A RADIO, WHICH IS WHAT IT ALWAYS WAS. It was a row that showed a
+                // tick in the system accent once chosen, so the unchosen rows gave
+                // no sign they were choices at all. `ChoiceRow` shows all three
+                // states at once, the way the Android screen does. The spoken
+                // label and the `.isSelected` trait are unchanged.
+                VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                    SectionTitle("Size")
                     ForEach(PadSize.allCases, id: \.self) { size in
-                        Button { model.select(size) } label: {
-                            HStack(alignment: .firstTextBaseline) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(size.title)
-                                        .font(.body.weight(.medium))
-                                        .foregroundStyle(.primary)
-                                    Text(size.blurb)
-                                        .font(.footnote).foregroundStyle(.secondary)
-                                    Text(size.capacityLine)
-                                        .font(.footnote).foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 12)
-                                if model.selectedSize == size {
-                                    Image(systemName: "checkmark")
-                                        .foregroundStyle(.tint)
-                                        .accessibilityHidden(true)
-                                }
-                            }
-                        }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityLabel("\(size.title). \(size.blurb) \(size.capacityLine)")
-                        .accessibilityAddTraits(model.selectedSize == size ? [.isButton, .isSelected] : .isButton)
+                        ChoiceRow(title: size.title,
+                                  selected: model.selectedSize == size,
+                                  spoken: "\(size.title). \(size.blurb) \(size.capacityLine)",
+                                  detail: {
+                                      VStack(alignment: .leading, spacing: 2) {
+                                          FaintText(size.blurb)
+                                          FaintText(size.capacityLine)
+                                      }
+                                  }) { model.select(size) }
                     }
-                } header: {
-                    Text("Size")
-                } footer: {
                     if model.selectedSize == nil {
-                        Text("Custom size, set under Advanced.")
+                        FaintText("Custom size, set under Advanced.")
                     }
                 }
 
@@ -81,25 +81,49 @@ public struct CreatePadView: View {
                 // disclosure away — present, unsoftened, and no longer the first
                 // thing a new operator reads.
                 if model.source == .device {
-                    Section {
-                        Label(SourceClaimText.deviceHeadline, systemImage: "lock.shield")
-                            .accessibilityLabel(SourceClaimText.deviceHeadline)
-                        Text(SourceClaimText.deviceSupporting)
-                            .font(.footnote).foregroundStyle(.secondary)
+                    Rule()
+                    VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                        BodyText(SourceClaimText.deviceHeadline)
+                        FaintText(SourceClaimText.deviceSupporting)
                         securityDetails
                     }
                 }
 
-                Section {
-                    Button("Create pad") { model.create() }
+                Rule()
+
+                VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                    PrimaryButton("Create pad") { model.create() }
                         .disabled(!model.canCreate)
-                        .accessibilityHint("Creates the pad on this device.")
-                } footer: {
-                    Text(VerbatimText.sourceVerdict)
+                        .accessibilityHint(model.blockingReason
+                            ?? "Creates the pad on this device.")
+                    // WHY THE BUTTON IS DEAD, WHERE THE BUTTON IS.
+                    //
+                    // Both readiness sentences were rendered where the field that
+                    // caused them lives — inside `Details("Advanced")`, which opens
+                    // CLOSED and is BELOW this button. So: open Advanced, tick
+                    // "Hide exact message lengths", type 20480 (valid for Medium),
+                    // collapse Advanced, then tap "Small" in the always-visible Size
+                    // list. The ceiling drops to 16,384, `canCreate` goes false, and
+                    // "Create pad" is permanently dead with nothing on the visible
+                    // screen saying why — the toggle, the field and the explanation
+                    // are all behind the collapsed disclosure. A VoiceOver user got
+                    // a disabled button whose only hint described what it would do.
+                    //
+                    // Android renders the same sentence outside its own Advanced
+                    // section, immediately under Create, for exactly this reason.
+                    // The sentences are unchanged and still appear beside their
+                    // fields as well; this adds the one that is currently blocking.
+                    if let why = model.blockingReason {
+                        Callout(tone: .warn, title: "Create is not available yet") {
+                            BodyText(why)
+                        }
+                    }
+                    FaintText(VerbatimText.sourceVerdict)
                 }
 
                 advanced
             }
+            .truePadScreen()
             // ON THE VIEW ROOT, not on the Button — the same lesson the Open
             // screen already learned. Attached inside a Form Section it simply
             // never presents.
@@ -149,17 +173,17 @@ public struct CreatePadView: View {
     /// about it — the same claims the Browser Edition makes, in the same words,
     /// one tap down instead of shouted before the operator has chosen anything.
     @ViewBuilder private var securityDetails: some View {
-        DisclosureGroup("Security details") {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(SourceClaimText.deviceDetail)
-                Text(SourceClaimText.notEligibleMeaning)
-                    .font(.footnote.weight(.medium))
-                Text(SourceClaimText.notEligibleReason)
-                Text(SourceClaimText.notEligibleDoesNotMean)
-            }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .padding(.vertical, 2)
+        Details("Security details") {
+            FaintText(SourceClaimText.deviceDetail)
+            // The one line here that is a CLASSIFICATION rather than a
+            // description keeps its extra weight.
+            Text(SourceClaimText.notEligibleMeaning)
+                .font(TruePadFont.faint.weight(.medium))
+                .foregroundStyle(TruePadPalette.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            FaintText(SourceClaimText.notEligibleReason)
+            FaintText(SourceClaimText.notEligibleDoesNotMean)
         }
         .accessibilityHint("Explains how this pad's randomness is classified.")
     }
@@ -168,30 +192,82 @@ public struct CreatePadView: View {
     /// Nothing here is new and nothing here is weakened — it is the same ceremony
     /// with the same refusals, moved out of the normal path's way.
     @ViewBuilder private var advanced: some View {
-        Section {
-            DisclosureGroup("Advanced") {
-                Picker("Randomness", selection: $model.source) {
-                    Text("Generate for me").tag(CreatePadModel.Source.device)
-                    Text("Use external random material").tag(CreatePadModel.Source.file)
-                }
-                .pickerStyle(.inline)
+        Details("Advanced") {
+            SectionTitle("Randomness")
+            // TWO RADIOS RATHER THAN AN INLINE `Picker`. The spoken labels are the
+            // Picker's own strings, unchanged — the physical suite reaches this by
+            // `app.buttons["Use external random material"]`, and more to the point
+            // they are the words the operator was already reading.
+            ChoiceBinding(title: "Generate for me",
+                          selection: $model.source,
+                          tag: CreatePadModel.Source.device,
+                          spoken: "Generate for me")
+            ChoiceBinding(title: "Use external random material",
+                          selection: $model.source,
+                          tag: CreatePadModel.Source.file,
+                          spoken: "Use external random material")
 
-                if model.source == .file {
-                    Text(SourceClaimText.externalShort)
-                        .font(.footnote).foregroundStyle(.secondary)
-                    Button(model.chosenFileName ?? "Choose a file…") { model.choosingFile = true }
-                    Text(Self.fileSourceNote)
-                        .font(.footnote).foregroundStyle(.secondary)
+            if model.source == .file {
+                FaintText(SourceClaimText.externalShort)
+                SecondaryButton(model.chosenFileName ?? "Choose a file…") { model.choosingFile = true }
+                if let picked = model.chosenFileBytes {
+                    KeyValueRow("This file", value: "\(picked.count) bytes")
                 }
+                // THE OPERATOR'S DECLARATION, asked for rather than assumed.
+                TextField("Where did these bytes come from?", text: $model.declaredOrigin)
+                    .truePadField()
+                    .accessibilityLabel("Where these bytes came from. Your own note.")
+                // SAY WHY CREATE IS DISABLED, in the same words the model uses
+                // to decide it.
+                if let why = model.readiness.explanation {
+                    FaintText(why)
+                }
+                FaintText(Self.fileSourceNote)
+            }
 
-                Stepper("Message bytes: \(model.encryptionBytes)",
-                        value: $model.encryptionBytes, in: 256...4_194_304, step: 256)
-                    .accessibilityLabel("Total bytes of message material: \(model.encryptionBytes).")
-                Stepper("Messages: \(model.authRecords)",
-                        value: $model.authRecords, in: 4...4096, step: 4)
-                    .accessibilityLabel("Number of messages this pad can carry: \(model.authRecords).")
-                LabeledContent("Material needed", value: "\(model.requiredSourceBytes) bytes")
-                    .accessibilityLabel("Each source must supply \(model.requiredSourceBytes) bytes.")
+            // THE STEPPERS STAY SYSTEM CONTROLS. There is no product equivalent of
+            // a stepper, and rebuilding one would cost the accessibility behaviour
+            // Apple already ships — increment/decrement actions VoiceOver knows how
+            // to drive. They take the brass tint from the root like every other
+            // system control.
+            Stepper("Message bytes: \(model.encryptionBytes)",
+                    value: $model.encryptionBytes, in: 256...4_194_304, step: 256)
+                .foregroundStyle(TruePadPalette.ink)
+                .accessibilityLabel("Total bytes of message material: \(model.encryptionBytes).")
+            Stepper("Messages: \(model.authRecords)",
+                    value: $model.authRecords, in: 4...4096, step: 4)
+                .foregroundStyle(TruePadPalette.ink)
+                .accessibilityLabel("Number of messages this pad can carry: \(model.authRecords).")
+            KeyValueRow("Material needed",
+                        value: "\(model.requiredSourceBytes) bytes",
+                        spoken: "Each source must supply \(model.requiredSourceBytes) bytes.")
+
+            Rule()
+
+            // LENGTH PRIVACY. Off by default, and under Advanced for the same
+            // reason the raw capacity fields are: the daily flow does not need it,
+            // and it costs pad. The Android edition carries the identical control
+            // and the identical sentence about what it does and does not hide.
+            SectionTitle("Message packaging")
+            Toggle("Hide exact message lengths", isOn: $model.fixedLength)
+                .font(TruePadFont.body)
+                .foregroundStyle(TruePadPalette.ink)
+                .accessibilityHint("Pads every message to the same size, so its exact length is "
+                                   + "not visible.")
+            FaintText(FixedRecordIntake.costAndLimit)
+
+            if model.fixedLength {
+                TextField("Message size (bytes)", text: $model.fixedSizeText)
+                    .keyboardType(.numberPad)
+                    .truePadField()
+                    .accessibilityLabel("Message size in bytes. Every message will use exactly "
+                                        + "this much of the pad.")
+                // SAY WHY CREATE IS DISABLED, in the same words the model used to
+                // decide it — the rule this screen already follows for the
+                // external-source path.
+                if let why = model.recordReadiness.explanation {
+                    FaintText(why)
+                }
             }
         }
     }
@@ -202,32 +278,50 @@ public struct CreatePadView: View {
 /// The RECIPIENT's side: publish a one-time request, then wait.
 public struct ReceiveRequestView: View {
     @ObservedObject public var model: ReceiveRequestModel
+    @State private var sharing = false
 
     public init(model: ReceiveRequestModel) { self.model = model }
 
     public var body: some View {
-        Form {
+        VStack(alignment: .leading, spacing: TruePadMetrics.blockSpacing) {
+            ScreenTitle("Receive a pad")
+
             if let request = model.request {
-                Section("Show this to the sender") {
-                    if let qr = model.qr { QrCodeView(payload: qr) }
-                    Text(request.tpr2Text)
-                        .font(.footnote.monospaced())
-                        .textSelection(.enabled)
-                        .accessibilityLabel("Your receive code, as text you can copy.")
+                SectionTitle("Show this to the sender")
+                if let qr = model.qr { QrCodeView(payload: qr) }
+                Text(request.tpr2Text)
+                    .font(TruePadFont.machine)
+                    .foregroundStyle(TruePadPalette.ink)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel("Your receive code, as text you can copy.")
+
+                // EXPLICIT CONTROLS FOR PUBLIC MATERIAL. The receive code is a
+                // one-time public request; handing it to the sender is the whole
+                // point of this screen, and leaving that to text selection made
+                // the ordinary path harder without making anything safer.
+                if let material = model.code {
+                    VStack(alignment: .leading, spacing: TruePadMetrics.buttonGroupSpacing) {
+                        PrimaryButton("Copy code") { PublicTransportPasteboard.copy(material) }
+                        SecondaryButton("Share code") { sharing = true }
+                    }
+                    FaintText(VerbatimText.qrCarriesOnlyPublicData)
                 }
-                Section("Compare these 12 words") {
-                    WordGrid(model.requestWords, expecting: CeremonyPhrase.requestWordCount)
-                    Text(VerbatimText.wordComparisonIsADeclaration)
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                Section {
-                    Text("This code expires \(request.expiresAt).")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    Button("Cancel this code", role: .destructive) { model.cancel() }
-                } footer: {
-                    Text("The key behind this request works exactly once. Cancelling it is "
-                         + "permanent, and so is using it.")
-                }
+
+                Rule()
+
+                SectionTitle("Compare these 12 words")
+                WordGrid(model.requestWords, expecting: CeremonyPhrase.requestWordCount)
+                FaintText(VerbatimText.wordComparisonIsADeclaration)
+
+                Rule()
+
+                FaintText("This code expires \(request.expiresAt).")
+                // CANCELLING IS IRREVERSIBLE, so it wears the quiet danger
+                // treatment rather than iOS's `.destructive` red.
+                QuietDangerButton("Cancel this code") { model.cancel() }
+                FaintText("The key behind this request works exactly once. Cancelling it is "
+                          + "permanent, and so is using it.")
             } else {
                 // WHAT BECAME OF THE LAST ONE. Every state here is terminal, and
                 // none of them offers a way back — the only recovery is a new
@@ -236,20 +330,22 @@ public struct ReceiveRequestView: View {
                 // deliberately and should see acknowledged.
                 if let outcome = model.outcome,
                    let headline = ReceiveRequestOutcomeText.headline(outcome) {
-                    Section {
-                        Text(headline).font(.headline)
+                    // A CALLOUT, because that is what this is: something happened,
+                    // it is terminal, and the operator has to see it before they
+                    // start again. The word "Note:" carries the tone without
+                    // relying on colour.
+                    Callout(tone: .neutral, title: headline) {
                         if let detail = ReceiveRequestOutcomeText.detail(outcome) {
-                            Text(detail).font(.footnote).foregroundStyle(.secondary)
+                            FaintText(detail)
                         }
-                        Button("Dismiss") { model.acknowledgeOutcome() }
+                        QuietButton("Dismiss") { model.acknowledgeOutcome() }
                     }
                     .accessibilityElement(children: .contain)
                 }
-                Section {
-                    Button("Create a receive code") { model.create() }
-                } footer: {
-                    Text("This makes a one-time key on this device and shows the sender a public "
-                         + "request. The key never leaves.")
+                VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                    PrimaryButton("Create a receive code") { model.create() }
+                    FaintText("This makes a one-time key on this device and shows the sender a "
+                              + "public request. The key never leaves.")
                 }
             }
 
@@ -257,18 +353,38 @@ public struct ReceiveRequestView: View {
             // tested, and nothing in the app ever presented it — so a pad sealed to
             // this device's own request could not be opened. Found by the
             // two-device physical run.
-            Section {
-                NavigationLink("Open a sealed pad") {
+            Rule()
+
+            VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                SectionTitle("When the sealed file arrives")
+                NavigationLink {
                     OpenSealedView(model: OpenSealedModel(engine: model.engine))
+                } label: {
+                    Slab("Open a sealed pad", .secondary)
                 }
-            } header: {
-                Text("When the sealed file arrives")
-            } footer: {
-                Text("Choose the file the sender gave you. Nothing is saved until you have "
-                     + "compared the eight words with them.")
+                FaintText("Choose the file the sender gave you. Nothing is saved until you have "
+                          + "compared the eight words with them.")
             }
         }
-        .navigationTitle("Receive a pad")
+        .truePadScreen()
+        .sheet(isPresented: $sharing) {
+            if let text = model.code?.text { ShareSheet(items: [text]) }
+        }
+        // NO NAVIGATION-BAR TITLE ON A ROOT TAB.
+        //
+        // Two reasons, and the second is the one that forced it. The Android
+        // screens carry their title in the CONTENT, under the back link, and a
+        // large iOS title is the closest native equivalent — so a content
+        // `ScreenTitle` is the parity-correct place for it either way.
+        //
+        // And the large title did not render. On a themed bar it reserved its
+        // full height and drew no text at all, leaving roughly 285 points of
+        // empty band above every root screen. Rather than fight a bar whose
+        // behaviour differs between the iOS 18 handset and the iOS 26
+        // simulator, the title moved to where it was going anyway and the bar
+        // is hidden. Pushed screens keep their bars, their inline titles and
+        // their back buttons, so swipe-back is untouched.
+        .toolbar(.hidden, for: .navigationBar)
         // RE-READ ON EVERY APPEARANCE, including on the way back from opening a
         // sealed pad. Without this the screen kept advertising the request that
         // open had just consumed, with a Cancel button that could only throw.
@@ -306,10 +422,12 @@ struct WordGrid: View {
             // still offered "All twelve words matched". Confirming a comparison
             // that was never displayed is the worst outcome this screen can
             // produce, and it was reachable.
-            Label("These words cannot be displayed, so this transfer cannot be "
-                  + "confirmed on this device.", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
-                .font(.callout)
+            // "Problem:" is part of the rendered text. This replaced a warning
+            // drawn in the system orange with a glyph beside it — colour and an
+            // icon doing work that no word backed up.
+            Callout(tone: .danger,
+                    title: "These words cannot be displayed, so this transfer cannot be "
+                           + "confirmed on this device.")
                 .accessibilityLabel("The comparison words cannot be displayed. This transfer "
                                     + "cannot be confirmed on this device.")
         } else {
@@ -321,11 +439,28 @@ struct WordGrid: View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(rendered.enumerated()), id: \.offset) { position, word in
                 HStack(alignment: .firstTextBaseline) {
+                    // A MINIMUM WIDTH, NOT A FIXED ONE.
+                    //
+                    // This was `frame(width: 28)` — fine while the ordinals were
+                    // SF Pro with tabular figures, and not fine once they became a
+                    // full monospaced face, in which the period takes a whole cell
+                    // instead of a narrow one. "12." grew about 20%, and the column
+                    // began wrapping the period onto its own line one Dynamic Type
+                    // notch earlier than before — at a size reachable from Display
+                    // & Brightness without turning on accessibility sizes at all.
+                    //
+                    // The numbers are how an operator keeps their place while
+                    // reading twelve words aloud to the other party, so they may
+                    // not wrap. `fixedSize` lets the column take the width it needs
+                    // and `minWidth` keeps the words aligned when it does not.
                     Text("\(position + 1).")
-                        .font(.footnote.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 28, alignment: .trailing)
-                    Text(word).font(.body.monospaced())
+                        .font(TruePadFont.machine)
+                        .foregroundStyle(TruePadPalette.muted)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(minWidth: 28, alignment: .trailing)
+                    Text(word)
+                        .font(TruePadFont.machineWord)
+                        .foregroundStyle(TruePadPalette.ink)
                 }
                 // Numbered in the label too: "word four is anchor" is checkable
                 // aloud in a way that a bare list of twelve words is not.
@@ -344,67 +479,97 @@ public struct SealView: View {
     public init(model: SealModel) { self.model = model }
 
     public var body: some View {
-        Form {
+        VStack(alignment: .leading, spacing: TruePadMetrics.blockSpacing) {
             if model.review == nil {
-                Section("The recipient's request") {
+                VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                    SectionTitle("The recipient's request")
                     TextField("Paste it here", text: $model.pastedRequest, axis: .vertical)
                         .lineLimit(2...6)
-                        .font(.footnote.monospaced())
+                        .accessibilityIdentifier("request-input")
+                        .font(TruePadFont.machine)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    Button("Scan it instead…") { scanning = true }
-                    Button("Review this request") { model.review(model.pastedRequest) }
-                        .disabled(model.pastedRequest.isEmpty)
+                        .truePadField()
+                    VStack(alignment: .leading, spacing: TruePadMetrics.buttonGroupSpacing) {
+                        SecondaryButton("Scan it instead…") { scanning = true }
+                        PrimaryButton("Review this request") { model.review(model.pastedRequest) }
+                            .disabled(model.pastedRequest.isEmpty)
+                    }
                 }
             }
 
-            if let review = model.review {
-                Section("Compare these twelve words with the recipient") {
-                    WordGrid(model.requestWords, expecting: CeremonyPhrase.requestWordCount)
-                    Text(VerbatimText.wordComparisonIsADeclaration)
-                        .font(.footnote).foregroundStyle(.secondary)
+            if model.review != nil {
+                Rule()
+
+                // SAID BEFORE THE TWELVE WORDS, not after them.
+                //
+                // This lived inside `if model.confirmed`, so the operator learned
+                // the seal could not happen only after reading twelve words aloud
+                // to the other person and writing a durable confirmation record —
+                // the exact human cost the check exists to avoid. It needs only
+                // the reviewed request, which is what is on screen here.
+                if model.isSealedToAnotherRequest {
+                    Callout(tone: .warn, title: "This pad cannot be sealed to this code") {
+                        BodyText("This pad has already been sealed to a DIFFERENT receive code, "
+                                 + "so it cannot be sealed to this one — a pad can only leave "
+                                 + "once. Generate a new pad for this receive code.")
+                        FaintText("There is nothing to compare: TruePad will refuse before it "
+                                  + "seals, so do not read the words below to the other person.")
+                    }
                 }
-                Section {
-                    Button("All twelve words matched") { model.confirm() }
-                        .disabled(model.confirmed || !model.requestWordsComplete)
-                } footer: {
-                    Text("Say this only if you compared them over a channel you already trust — a "
-                         + "phone call you placed, or in person. TruePad records that you said so; "
-                         + "it cannot check it.")
+
+                SectionTitle("Compare these twelve words with the recipient")
+                WordGrid(model.requestWords, expecting: CeremonyPhrase.requestWordCount)
+                FaintText(VerbatimText.wordComparisonIsADeclaration)
+
+                VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                    PrimaryButton("All twelve words matched") { model.confirm() }
+                        .disabled(model.confirmed || !model.requestWordsComplete
+                                  || model.isSealedToAnotherRequest)
+                    FaintText("Say this only if you compared them over a channel you already "
+                              + "trust — a phone call you placed, or in person. TruePad records "
+                              + "that you said so; it cannot check it.")
                 }
                 if model.confirmed {
-                    Section {
-                        Button(model.isReshare ? "Get the sealed file again" : "Seal this pad and send it") {
+                    Rule()
+                    VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                        PrimaryButton(model.isReshare ? "Get the sealed file again"
+                                                      : "Seal this pad and send it") {
                             model.seal()
                         }
-                    } footer: {
+                        .disabled(model.isSealedToAnotherRequest)
                         if model.isReshare {
                             // NOTHING IS ENCAPSULATED HERE. The engine returns the
                             // bytes it already committed for this request. Saying
                             // "this pad can only leave once" at this point would
                             // imply a second send is about to happen — the one
                             // thing that cannot occur.
-                            Text("This pad was already sealed to this request. TruePad will hand "
-                                 + "back the SAME sealed file it made then — nothing is encrypted "
-                                 + "again and no second copy is created.")
+                            //
+                            // "THIS REQUEST" IS NOW A CHECKED CLAIM. `isReshare`
+                            // compares the durable marker's requestHash against the
+                            // request on screen, by the same comparison sptSeal
+                            // makes; it used to ask only whether the pad had ever
+                            // been sealed, to anything.
+                            FaintText("This pad was already sealed to this request. TruePad will "
+                                      + "hand back the SAME sealed file it made then — nothing is "
+                                      + "encrypted again and no second copy is created.")
                         } else {
-                            Text("A sealed transfer sends the WHOLE pad, and this pad can only leave "
-                                 + "once. Its delivery is protected by post-quantum cryptography, not "
-                                 + "by the one-time pad — so the pad will read NOT ELIGIBLE at both "
-                                 + "ends, permanently.")
+                            FaintText("A sealed transfer sends the WHOLE pad, and this pad can only "
+                                      + "leave once. Its delivery is protected by post-quantum "
+                                      + "cryptography, not by the one-time pad — so the pad will "
+                                      + "read NOT ELIGIBLE at both ends, permanently.")
                         }
                     }
                 }
             }
 
             if let sealed = model.sealed {
-                Section("Compare these 8 words") {
-                    WordGrid(model.confirmationWords, expecting: CeremonyPhrase.confirmationWordCount)
-                }
-                Section {
-                    Button(sealed.reshared ? "Hand over the same sealed file…"
-                                           : "Hand over the sealed file…") { model.share() }
-                } header: {
+                Rule()
+
+                SectionTitle("Compare these 8 words")
+                WordGrid(model.confirmationWords, expecting: CeremonyPhrase.confirmationWordCount)
+
+                VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
                     // ONE REQUEST, ONE PAD, ONE COMMITTED PACKAGE. Coming back to
                     // a pad that was already sealed returns the SAME bytes — the
                     // engine re-reads the committed package rather than sealing
@@ -412,20 +577,22 @@ public struct SealView: View {
                     // difference might reasonably think a second handoff was being
                     // created, which is exactly what must never happen.
                     if sealed.reshared {
-                        Text("Already sealed")
+                        SectionTitle("Already sealed")
                     }
-                } footer: {
+                    PrimaryButton(sealed.reshared ? "Hand over the same sealed file…"
+                                                  : "Hand over the sealed file…") { model.share() }
                     if sealed.reshared {
-                        Text("This is the same sealed file you made before, not a new one. "
-                             + "Sealing happened once, and the eight words above are the ones "
-                             + "from that transfer.\n\n"
-                             + VerbatimText.shareSheetIsACarrier)
+                        FaintText("This is the same sealed file you made before, not a new one. "
+                                  + "Sealing happened once, and the eight words above are the ones "
+                                  + "from that transfer.\n\n"
+                                  + VerbatimText.shareSheetIsACarrier)
                     } else {
-                        Text(VerbatimText.shareSheetIsACarrier)
+                        FaintText(VerbatimText.shareSheetIsACarrier)
                     }
                 }
             }
         }
+        .truePadScreen()
         .navigationTitle("Send a pad")
         .sheet(isPresented: $scanning) {
             ScannerView { scanned in
@@ -451,40 +618,51 @@ public struct OpenSealedView: View {
     public init(model: OpenSealedModel) { self.model = model }
 
     public var body: some View {
-        Form {
-            if model.session == nil {
-                Section {
-                    Button("Choose the sealed file…") { model.choosingFile = true }
-                } footer: {
-                    Text("Nothing is saved until you have compared the eight words. Opening the "
-                         + "file does not commit anything.")
+        VStack(alignment: .leading, spacing: TruePadMetrics.blockSpacing) {
+            // THE OUTCOME, STATED. `commit()` set `saved` and cleared `session`,
+            // and nothing read `saved` — so a successful import re-rendered the
+            // opening "Choose the sealed file…" prompt, which is exactly what a
+            // commit that never happened looks like. The operator had just
+            // accepted a whole pad and was shown no sign of it.
+            if model.saved {
+                Callout(tone: .good, title: "Pad saved") {
+                    BodyText("The pad is on this device and is ready to use. You will find it in "
+                             + "your list of pads.")
+                    FaintText("That receive code is finished. It cannot accept another pad.")
                 }
             }
 
-            if let session = model.session {
-                Section("Check these eight words against the sender") {
-                    WordGrid(model.confirmationWords, expecting: CeremonyPhrase.confirmationWordCount)
-                    Text(VerbatimText.wordComparisonIsADeclaration)
-                        .font(.footnote).foregroundStyle(.secondary)
+            if model.session == nil && !model.saved {
+                VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                    PrimaryButton("Choose the sealed file…") { model.choosingFile = true }
+                    FaintText("Nothing is saved until you have compared the eight words. Opening "
+                              + "the file does not commit anything.")
                 }
-                Section {
-                    Button("The eight words matched — save this pad") { model.commit() }
+            }
+
+            if model.session != nil {
+                SectionTitle("Check these eight words against the sender")
+                WordGrid(model.confirmationWords, expecting: CeremonyPhrase.confirmationWordCount)
+                FaintText(VerbatimText.wordComparisonIsADeclaration)
+
+                VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                    PrimaryButton("The eight words matched — save this pad") { model.commit() }
                         .disabled(!model.confirmationWordsComplete)
-                } footer: {
-                    Text("Saving uses up this receive request. If saving fails after that point "
-                         + "the transfer is lost and the request cannot be reused — ask for a new "
-                         + "pad rather than retrying. That is deliberate: a request that could be "
-                         + "reused is a key that could be used twice.")
+                    FaintText("Saving uses up this receive request. If saving fails after that "
+                              + "point the transfer is lost and the request cannot be reused — ask "
+                              + "for a new pad rather than retrying. That is deliberate: a request "
+                              + "that could be reused is a key that could be used twice.")
                 }
-                Section {
-                    Button("These words do NOT match — reject", role: .destructive) {
-                        model.reject()
-                    }
-                } footer: {
-                    Text("Rejecting cancels the request permanently. Nothing is saved.")
+
+                Rule()
+
+                VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                    QuietDangerButton("These words do NOT match — reject") { model.reject() }
+                    FaintText("Rejecting cancels the request permanently. Nothing is saved.")
                 }
             }
         }
+        .truePadScreen()
         // ON THE VIEW ROOT, not on the Button. Attached to a Button inside a
         // Form's Section it simply never presented — the screen stayed put and
         // the receiver could not choose a file at all.

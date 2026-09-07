@@ -1409,12 +1409,34 @@ BOTH namespaces" is implemented by §12.3 O5 as `nextSequence := N + 1` and
 
 `status` (Phase-2 verb) MUST show both meters — encryption bytes remaining
 of `capacity`, auth records remaining of `capacityRecords` — plus a
-`CHANNEL CAPACITY LIMITED BY:` line and the maximum remaining sends. The
-maximum remaining sends is `capacityRecords − nextSequence` (each send
-consumes exactly one auth record); the LIMITED BY line names
-`AUTHENTICATION` when remaining records ≤ ⌈remaining encryption bytes /
-maxCiphertextBytes⌉ — even maximum-size sends cannot exhaust the
-encryption budget before the records run out — and `ENCRYPTION` otherwise
+`CHANNEL CAPACITY LIMITED BY:` line and the maximum remaining sends.
+
+The maximum remaining sends depends on the record policy, because what a
+send COSTS depends on it.
+
+* On a **variable** store a send can be as short as the operator likes, so
+  the auth records are the only bound and the figure is
+  `capacityRecords − nextSequence`.
+* On a **fixed** store of record size F every send spends exactly F
+  encryption bytes and one auth record however short the message (§16.1:
+  `burn` transmits a whole F-byte frame, so C is always F). Both budgets
+  bind, and the figure is
+  `min(capacityRecords − nextSequence, ⌊(capacity − nextOffset) / F⌋)`.
+
+This paragraph previously gave `capacityRecords − nextSequence`
+unconditionally, which is the variable-store rule. On a fixed store it
+OVERSTATES, and by an order of magnitude at ordinary settings: a Small pad
+(E = 16,384 per direction, N = 64) fixed at F = 4096 can send four
+messages and reported sixty, with the encryption budget exhausted and the
+status word still reading as usable. Every engine implemented the spec as
+written and every engine was wrong about the same thing.
+
+The LIMITED BY line names `AUTHENTICATION` when remaining records ≤ the
+records the remaining encryption bytes can pay for, and `ENCRYPTION`
+otherwise. That bound is ⌈remaining encryption bytes / maxCiphertextBytes⌉
+on a variable store — even maximum-size sends cannot exhaust the
+encryption budget before the records run out — and ⌊remaining encryption
+bytes / F⌋ on a fixed one, the same quantity the send figure uses
 (PROPOSED display rule).
 
 ---

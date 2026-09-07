@@ -86,6 +86,12 @@ let package = Package(
                 // BoringSSL, and claiming otherwise would be false.
                 .product(name: "Crypto", package: "swift-crypto"),
             ],
+            // NAMED, so the build stops warning about the file it is deliberately
+            // not shipping. Every file under a target that is neither a source nor
+            // a declared resource raises "found N file(s) which are unhandled",
+            // and a build that prints warnings nobody acts on is a build whose
+            // real warnings are not read.
+            exclude: ["Resources/COMPARISON-WORDS-PROVENANCE.md"],
             // The comparison wordlist ONLY. `.process("Resources")` would copy the
             // whole directory, which shipped the provenance markdown inside the
             // app bundle -- harmless, but it is not the app's business to carry a
@@ -139,7 +145,13 @@ let package = Package(
                 "TruePadSPT",
                 "TruePadKATSupport",
                 .product(name: "Crypto", package: "swift-crypto"),
-            ]
+            ],
+            // THE CAPTURED PHYSICAL ARTIFACTS ARE READ FROM THE SOURCE TREE, not
+            // from a bundle: `CrossEditionBytesTest` resolves them relative to
+            // `#filePath`, so they are deliberately neither sources nor resources.
+            // Saying so stops the build warning about three unhandled files, which
+            // is how a real one goes unread.
+            exclude: ["CrossEditionCaptured"]
         ),
     ]
 )

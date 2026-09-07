@@ -299,4 +299,64 @@ class SptRoundTripTest {
         }
         assertEquals("spt-pad-ineligible", refused.reason)
     }
+    /**
+     * "ALREADY SEALED TO THIS CODE" IS A CLAIM ABOUT A CODE, AND IT IS CHECKED.
+     *
+     * The sealed-send screen used one set of words for both cases. An operator
+     * coming back for the file the engine had ALREADY committed — nothing
+     * encapsulated, no second copy, the pad already gone — was told "Sealing gives
+     * this pad away" and "this pad can be given only once", about an act that was
+     * not about to happen. `sptSealedToRequest` answers the question the screen
+     * asks, through the SAME comparison `sptSeal` is about to make, so what the
+     * screen predicts and what the engine does cannot disagree.
+     */
+    @Test
+    fun theScreensPredictionAndTheEnginesActNeverDisagree() {
+        val alice = sender()
+        val pairId = alice.freshPad("binding")
+
+        val first = receiver().sptCreateReceiveRequest()
+        val firstReview = alice.sptReviewRequest(first.tpr2Text)
+
+        // Before any seal, nothing is a re-share.
+        assertFalse("a pad with no marker cannot have been sealed to anything",
+                    alice.sptSealedToRequest(pairId, firstReview.requestHashHex))
+
+        alice.sptConfirmRequest(firstReview.canonicalBody)
+        val sealed = alice.sptSeal(firstReview.requestHashHex, pairId)
+        assertFalse(sealed.reshared)
+
+        // THE SAME CODE: predicted a re-share, and the engine performs one.
+        assertTrue(alice.sptSealedToRequest(pairId, firstReview.requestHashHex))
+        val again = alice.sptSeal(firstReview.requestHashHex, pairId)
+        assertTrue("the same code must hand back the committed package", again.reshared)
+        assertArrayEquals("a re-share must return the SAME bytes",
+                          sealed.packageBytes, again.packageBytes)
+
+        // A DIFFERENT CODE: predicted NOT a re-share, and the engine refuses.
+        val second = receiver().sptCreateReceiveRequest()
+        val secondReview = alice.sptReviewRequest(second.tpr2Text)
+        assertTrue("the two requests must actually differ for this to mean anything",
+                   secondReview.requestHashHex != firstReview.requestHashHex)
+        assertFalse(alice.sptSealedToRequest(pairId, secondReview.requestHashHex))
+        alice.sptConfirmRequest(secondReview.canonicalBody)
+        assertEquals(
+            "pad-already-sealed",
+            try {
+                alice.sptSeal(secondReview.requestHashHex, pairId); "no refusal"
+            } catch (e: dev.systemslibrarian.truepad.spt.SptRefused) { e.reason },
+        )
+    }
+
+    /** A malformed fingerprint is never a re-share. */
+    @Test
+    fun aMalformedFingerprintIsNeverAReshare() {
+        val alice = sender()
+        val pairId = alice.freshPad("binding-hostile")
+        for (bad in listOf("", "not-hex", "a".repeat(63), "A".repeat(64))) {
+            assertFalse("$bad was treated as a request fingerprint",
+                        alice.sptSealedToRequest(pairId, bad))
+        }
+        assertFalse(alice.sptSealedToRequest("not-a-pad-id", "a".repeat(64)))
+    }
 }

@@ -248,9 +248,14 @@ export async function renderDashboard(ctx: Ctx, root: HTMLElement, pairId: strin
   }
 
   const pair = reply.pair;
-  // null when the pad cannot say; the meters fall back to showing A->B, and the
-  // send screen is what actually refuses.
-  const role = resolveRole(pairId, pair.origin) ?? "A";
+  // NULL WHEN THE PAD CANNOT SAY, and that is rendered as unknown rather than
+  // guessed. It used to be `?? "A"`, which did two wrong things at once: it told
+  // the operator "You are: Alice" about a pad whose half TruePad refuses to
+  // determine, and it picked A->B as the direction whose remaining-sends figure
+  // to show — so the headline number was the wrong half's budget. The send screen
+  // refusing is the safety property and it still holds; showing a confident wrong
+  // number beside it is a separate defect.
+  const role = resolveRole(pairId, pair.origin);
   const unusable = pair.destroyed;
 
   const header = h(
@@ -278,12 +283,17 @@ export async function renderDashboard(ctx: Ctx, root: HTMLElement, pairId: strin
   );
 
   // Level 2: plain facts, no glossary required.
-  const sendable = pair.meters[sendDirection(role)].maxRemainingSends;
+  // With no resolved role there is no "your" direction, so there is no honest
+  // number to put here.
+  const sendable = role === null ? null : pair.meters[sendDirection(role)].maxRemainingSends;
   const details = panel(
     "Pad details",
     {},
     kv([
-      { term: "Messages you can still send", value: fmtInt(sendable) },
+      {
+        term: "Messages you can still send",
+        value: sendable === null ? "Unknown — TruePad cannot tell which half is yours" : fmtInt(sendable)
+      },
       { term: "Created", value: pair.createdAt ? new Date(pair.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }) : "—" }
     ]),
     deploymentBlock(reply.deployment),
@@ -294,28 +304,50 @@ export async function renderDashboard(ctx: Ctx, root: HTMLElement, pairId: strin
       "div",
       { class: "save-row" },
       h("h3", { class: "sub", text: "Share this pad" }),
-      h("p", { class: "save-note", text: "Choose one way to give the other person their copy." }),
-      h(
-        "div",
-        { class: "btn-row" },
-        h(
-          "button",
-          { class: "btn", type: "button", on: { click: () => ctx.navigate({ name: "send-online", pairId }) } },
-          h("span", { text: "Send securely online" })
-        ),
-        savePadFileButton(ctx, pairId, "Save pad file")
-      ),
-      // The engine decides eligibility — provenance, genesis, and which handoff
-      // this pad already committed. Reproducing those rules here would be a
-      // second, weaker copy that drifts.
-      h("p", { class: "save-note", text: "Keep the pad file secret — anyone who has it can read these messages." })
+      // WHAT THE ENGINE WILL ACTUALLY DO, said before it is asked.
+      //
+      // "The engine decides eligibility" is right for the two routes it refuses
+      // — sealed and unreadable-spent — and it decides NOTHING about a second
+      // physical save: `exportPair` lets a pad that already carries a physical
+      // marker through, deliberately, because the first save can be cancelled at
+      // the file dialog or land nowhere. So one control served two different acts
+      // under one sentence, and the sentence promised the stricter one. Two
+      // identical raw copies handed to two people both import as party B and both
+      // burn B->A at the same offsets: cross-copy reuse, on the ordinary path.
+      //
+      // The eligibility rules are still not reproduced here. The engine is asked
+      // — `PairSummary.handoff` — and the interface only says which case it is.
+      pair.handoff.kind === "absent"
+        ? h(
+            "div",
+            {},
+            h("p", { class: "save-note", text: "Choose one way to give the other person their copy." }),
+            h(
+              "div",
+              { class: "btn-row" },
+              h(
+                "button",
+                { class: "btn", type: "button", on: { click: () => ctx.navigate({ name: "send-online", pairId }) } },
+                h("span", { text: "Send securely online" })
+              ),
+              savePadFileButton(ctx, pairId, "Save pad file")
+            ),
+            h("p", { class: "save-note", text: "Keep the pad file secret — anyone who has it can read these messages." })
+          )
+        : handedOverBlock(ctx, pairId, pair.handoff)
     ),
     // Level 3 begins here and nowhere above it.
     panel(
       "Advanced",
       {},
       h("p", { class: "faint", text: "Implementation detail. You never need this to use TruePad." }),
-      kv([{ term: "You are", value: PARTY_NAME[role] }, { term: "The other person", value: PARTY_NAME[role === "A" ? "B" : "A"] }]),
+      kv(
+        role === null
+          ? [{ term: "You are", value: "Unknown — TruePad will not guess" },
+             { term: "The other person", value: "Unknown" }]
+          : [{ term: "You are", value: PARTY_NAME[role] },
+             { term: "The other person", value: PARTY_NAME[role === "A" ? "B" : "A"] }]
+      ),
       h("div", { class: "card-grid" }, directionCard(pair.meters["A->B"]), directionCard(pair.meters["B->A"])),
       panel("Skip messages (rarely needed)", {}, retirePanel(ctx, pairId))
     )
@@ -348,4 +380,67 @@ export async function renderDashboard(ctx: Ctx, root: HTMLElement, pairId: strin
       secondary
     )
   );
+}
+
+/**
+ * WHAT IS LEFT TO OFFER once a pad has already been handed over.
+ *
+ * Sealed and unreadable-spent are refused by the engine, so nothing is offered —
+ * only the reason. A PHYSICAL marker is the one case the engine deliberately lets
+ * through, and this is the one place that says so: the same pad, already given
+ * away, written again because the first copy never arrived. It is not a second
+ * handoff and is not offered as one.
+ */
+function handedOverBlock(
+  ctx: Ctx,
+  pairId: string,
+  handoff: PairSummary["handoff"]
+): HTMLElement {
+  if (handoff.kind === "physical") {
+    return h(
+      "div",
+      {},
+      h("p", {
+        class: "save-note",
+        text: `This pad was already handed over as a file${handoff.at ? ` on ${handoff.at.slice(0, 10)}` : ""}, so it cannot also be sent securely online — a pad is given once.`
+      }),
+      h("div", { class: "btn-row" }, savePadFileButton(ctx, pairId, "Save the same pad file again")),
+      h("p", {
+        class: "save-note",
+        text: "That is not a second handoff: it writes the same pad you already gave away, for a copy that never arrived. Anyone holding either file can read these messages."
+      })
+    );
+  }
+  if (handoff.kind === "sealed") {
+    // THE COMMITTED PACKAGE STAYS REACHABLE. Sealing writes the package to disk
+    // and the engine returns those exact bytes for the SAME receive code — and
+    // refuses a different one. Withholding this route is what strands a pad whose
+    // operator lost the download; the RAW pad stays blocked either way, which is
+    // the part that matters for reuse.
+    return h(
+      "div",
+      {},
+      h("p", {
+        class: "save-note",
+        text: `This pad was already sent by sealed transfer${handoff.at ? ` on ${handoff.at.slice(0, 10)}` : ""}, so it will not also be saved as a file. Create a new pad to share with someone else.`
+      }),
+      h(
+        "div",
+        { class: "btn-row" },
+        h(
+          "button",
+          { class: "btn", type: "button", on: { click: () => ctx.navigate({ name: "send-online", pairId }) } },
+          h("span", { text: "Send securely online" })
+        )
+      ),
+      h("p", {
+        class: "save-note",
+        text: "Paste the SAME receive code to get the same sealed file again — nothing is encrypted a second time. A different code is refused."
+      })
+    );
+  }
+  return h("p", {
+    class: "save-note",
+    text: "TruePad cannot safely determine this pad's handoff state, so it refuses to create another copy. Generate a new pad for any further transfer."
+  });
 }

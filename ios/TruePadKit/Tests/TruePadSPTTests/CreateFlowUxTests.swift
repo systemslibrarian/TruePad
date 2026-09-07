@@ -168,7 +168,11 @@ final class CreateFlowUxTests: XCTestCase {
                        "the alarming standalone label is back in the create flow")
         XCTAssertFalse(views.contains("foregroundStyle(.orange)"),
                        "the create flow is styling an ordinary source choice as a warning")
-        XCTAssertTrue(views.contains("DisclosureGroup(\"Security details\")"),
+        // `Details` rather than `DisclosureGroup` since the visual parity pass:
+        // the system disclosure draws a system-accent chevron that cannot be
+        // retinted, so the product supplies its own. What this guard asserts is
+        // unchanged — the explanation is still one tap down, and still present.
+        XCTAssertTrue(views.contains("Details(\"Security details\")"),
                       "the explanation must still be reachable")
 
         // POSITIVE CONTROL: this really is the create screen and the slice really
@@ -186,7 +190,7 @@ final class CreateFlowUxTests: XCTestCase {
     /// The expert ceremony is MOVED, not deleted, and its refusals are intact.
     func testTheExternalCeremonyRemainsReachableAndUnsoftened() throws {
         let views = try source("CeremonyViews.swift")
-        XCTAssertTrue(views.contains("DisclosureGroup(\"Advanced\")"))
+        XCTAssertTrue(views.contains("Details(\"Advanced\")"))
         XCTAssertTrue(views.contains("Use external random material"))
         XCTAssertTrue(views.contains("Self.fileSourceNote"))
         XCTAssertTrue(views.contains("CreatePadModel.Source.file"),
@@ -204,7 +208,7 @@ final class CreateFlowUxTests: XCTestCase {
             XCTAssertTrue(views.contains(control), "\(control) was deleted rather than moved")
         }
         // Each raw control must appear AFTER the Advanced disclosure opens.
-        guard let advanced = views.range(of: "DisclosureGroup(\"Advanced\")") else {
+        guard let advanced = views.range(of: "Details(\"Advanced\")") else {
             return XCTFail("no Advanced disclosure")
         }
         for control in ["Message bytes:", "Messages:", "Material needed"] {

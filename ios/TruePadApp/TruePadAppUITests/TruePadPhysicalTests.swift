@@ -105,7 +105,7 @@ final class TruePadPhysicalTests: XCTestCase {
     func assertRootRendered(_ app: XCUIApplication, _ note: String = "") {
         XCTAssertTrue(app.tabBars.buttons["Pads"].waitForExistence(timeout: 25),
                       "the Pads tab must render. \(note)")
-        XCTAssertTrue(app.tabBars.buttons["Receive"].exists, "the Receive tab must render")
+        XCTAssertTrue(app.tabBars.buttons["Inbox"].exists, "the Inbox tab must render")
         XCTAssertTrue(app.tabBars.buttons["About"].exists, "the About tab must render")
     }
 
@@ -439,7 +439,7 @@ final class TruePadPhysicalTests: XCTestCase {
 
     func test06_AReceiveRequestSurvivesAQuitAndACancellationIsPermanent() {
         let app = launchFresh()
-        app.tabBars.buttons["Receive"].tap()
+        app.tabBars.buttons["Inbox"].tap()
 
         // A REQUEST MAY ALREADY BE HERE, restored from an earlier run of this
         // bundle. That is the restore path working — a published request is
@@ -448,7 +448,7 @@ final class TruePadPhysicalTests: XCTestCase {
         drainPendingRequests(app)
 
         let create = app.buttons["Create a receive code"]
-        XCTAssertTrue(reveal(create, in: app), "the Receive tab must offer a request")
+        XCTAssertTrue(reveal(create, in: app), "the Inbox tab must offer a request")
         create.tap()
 
         // THE TWELVE WORDS MUST ACTUALLY RENDER. If the wordlist failed to load,
@@ -467,7 +467,7 @@ final class TruePadPhysicalTests: XCTestCase {
         app.terminate()
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 30))
         app.launch()
-        app.tabBars.buttons["Receive"].tap()
+        app.tabBars.buttons["Inbox"].tap()
         let cancel = app.buttons["Cancel this code"]
         XCTAssertTrue(reveal(cancel, in: app), "a published request must survive a force-quit")
         cancel.tap()
@@ -480,7 +480,7 @@ final class TruePadPhysicalTests: XCTestCase {
         app.terminate()
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 30))
         app.launch()
-        app.tabBars.buttons["Receive"].tap()
+        app.tabBars.buttons["Inbox"].tap()
         XCTAssertTrue(reveal(app.buttons["Create a receive code"], in: app),
                       "a cancelled request must not return as pending after a relaunch")
     }
@@ -494,10 +494,10 @@ final class TruePadPhysicalTests: XCTestCase {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
 
         assertRootRendered(app)
-        app.tabBars.buttons["Receive"].tap()
+        app.tabBars.buttons["Inbox"].tap()
         XCTAssertTrue(reveal(app.buttons["Create a receive code"], in: app)
                         || reveal(app.buttons["Cancel this code"], in: app),
-                      "the Receive tab must have finished rendering before this is asserted")
+                      "the Inbox tab must have finished rendering before this is asserted")
         app.tabBars.buttons["About"].tap()
         XCTAssertTrue(app.staticTexts["The one-time pad encrypts messages."]
                         .waitForExistence(timeout: 20),

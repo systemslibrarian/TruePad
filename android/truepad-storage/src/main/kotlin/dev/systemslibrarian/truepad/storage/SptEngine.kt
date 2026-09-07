@@ -11,6 +11,7 @@ import dev.systemslibrarian.truepad.spt.ReceiverState as SptReceiverState
 import dev.systemslibrarian.truepad.spt.RequestDecode
 import dev.systemslibrarian.truepad.spt.SealedHandoffInput
 import dev.systemslibrarian.truepad.spt.SptRefused
+import dev.systemslibrarian.truepad.spt.REFUSE_RECEIVE_STATE
 import dev.systemslibrarian.truepad.spt.SptTime
 import dev.systemslibrarian.truepad.spt.XWing
 import dev.systemslibrarian.truepad.spt.cancelPendingReceiveRequest
@@ -184,14 +185,40 @@ fun Engine.sptCreateReceiveRequest(): SptCreateResult {
  */
 fun Engine.sptRestorePendingReceiveRequest(): SptCreateResult? {
     val vfs = sptVfs()
-    val ids = runCatching { vfs.list("spt/receive") }.getOrElse { return null }
+    // NULL MEANS "NOTHING PENDING", AND ONLY THAT.
+    //
+    // This read `.getOrElse { return null }`, so an I/O failure listing the
+    // directory was indistinguishable from an empty one. The interface above then
+    // offered "Create a receive code" to a device that may have had a LIVE
+    // one-time key on disk — unreachable, so uncancellable, unrejectable after a
+    // failed word comparison, and unable to open the sealed file that came back
+    // for it. That is the exact stranding this function exists to close, and the
+    // caller could not tell. It refuses instead: the operator is told TruePad does
+    // not know, which is the one answer that lets them act.
+    val ids = runCatching { vfs.list("spt/receive") }.getOrElse { e ->
+        throw SptRefused(
+            REFUSE_RECEIVE_STATE,
+            "TruePad could not read this device's receive requests (${e.message}), so it cannot " +
+                "tell whether one is already waiting. Do not accept a pad until it can.",
+        )
+    }
     val now = clock()
     var newest: Pair<String, SptCreateResult>? = null
     for (idHex in ids) {
         // The listing is untrusted input like any other: a name that is not a
         // request identifier is skipped rather than parsed.
         if (idHex.length != 32 || !idHex.all { it.isDigit() || it in 'a'..'f' }) continue
-        val state = sptReadReceiverState(vfs, idHex, now) as? SptReceiverState.Pending ?: continue
+        val read = sptReadReceiverState(vfs, idHex, now)
+        // A request that CANNOT BE READ is not a request that is not there.
+        // Cancelled, Consumed, Absent and ExpiredPending are ordinary outcomes and
+        // are skipped; these two mean the state on disk could not be determined,
+        // and skipping them is how a live key stayed invisible.
+        when (read) {
+            is SptReceiverState.Unusable -> throw SptRefused(REFUSE_RECEIVE_STATE, read.message)
+            is SptReceiverState.TerminalUnreadable -> throw SptRefused(REFUSE_RECEIVE_STATE, read.message)
+            else -> Unit
+        }
+        val state = read as? SptReceiverState.Pending ?: continue
         // Rebuilt from the STORED body, not re-derived from anything the UI holds:
         // the text the sender scanned is a function of the bytes on disk.
         val result = SptCreateResult(
@@ -280,6 +307,38 @@ private fun Engine.requirePadSealable(pairId: String) {
     }
 }
 
+/**
+ * THE ONE PLACE THE COMPARISON IS WRITTEN: whether an already-committed sealed
+ * handoff names THIS receive request.
+ *
+ * [Engine.sptSeal] decides between handing the committed package back and
+ * refusing by exactly this, and [Engine.sptSealedToRequest] lets the interface
+ * ask the same question before it words a screen — so what the screen predicts
+ * and what the engine then does cannot disagree.
+ *
+ * `requestHashHex` is the 64-hex fingerprint of the PUBLIC receive request.
+ * Nothing secret is read, compared or returned.
+ */
+private fun sealedMarkerNames(handoff: SptHandoffState.Sealed, requestHashHex: String): Boolean =
+    handoff.marker.requestHash == toBase64Url(hexToBytes(requestHashHex)!!)
+
+/**
+ * Whether the package already committed for this pad was sealed to THIS receive
+ * request.
+ *
+ * ADVISORY, AND DELIBERATELY SO: it takes no lock and decides nothing. The
+ * authoritative check is the identical comparison inside [Engine.sptSeal], made
+ * under the pair lock. This exists so the sealed-send screen can stop describing
+ * a re-share — handing back bytes it already committed — in the words of a fresh
+ * sealing ("Sealing gives this pad away", "this pad can be given only once"),
+ * which is a claim about an act that is not about to happen.
+ */
+fun Engine.sptSealedToRequest(pairId: String, requestHashHex: String): Boolean {
+    if (!HEX_64_ID.matches(requestHashHex) || !HEX_32_ID.matches(pairId)) return false
+    val handoff = sptReadHandoffState(sptVfs(), pairId)
+    return handoff is SptHandoffState.Sealed && sealedMarkerNames(handoff, requestHashHex)
+}
+
 /** SENDER — seal a live, generated-here, genesis pad to a confirmed request, or
  *  return the exact already-committed package (re-share). Pad lock outermost. */
 fun Engine.sptSeal(requestHashHex: String, pairId: String): SptSealResult {
@@ -293,7 +352,7 @@ fun Engine.sptSeal(requestHashHex: String, pairId: String): SptSealResult {
             is SptHandoffState.Physical -> throw SptRefused("pad-already-handed-off", "This pad has already been handed off as a file, so it cannot also be sent by sealed transfer. Generate a new pad for that.")
             is SptHandoffState.Sealed -> {
                 // EXACT RE-SHARE. No new cryptography, no fresh confirmation.
-                if (handoff.marker.requestHash != toBase64Url(hexToBytes(requestHashHex)!!)) {
+                if (!sealedMarkerNames(handoff, requestHashHex)) {
                     throw SptRefused("pad-already-sealed", "This pad was already sealed to a different receive request. Generate a new pad for this one.")
                 }
                 val committed = loadCommittedSealedHandoff(vfs, pairId)

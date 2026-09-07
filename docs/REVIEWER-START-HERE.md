@@ -67,13 +67,19 @@ npm run test:tpm-interop    # OPTIONAL, needs Linux + swtpm + tpm2-tools (emulat
 ```
 
 The falsification/mutation approach and the guard tests are described in the
-review brief. Reproduced counts at this SHA: **1585 unit tests / 72 files** and
-**36 Playwright tests / 6 files**. The falsification matrix is described in the
+review brief. Reproduced counts at this SHA: **1678 unit tests / 80 files**
+(`npm test`) and **36 Playwright tests / 6 files** (`npm run test:e2e`). Re-run
+them rather than citing these; they move whenever a test is added. The falsification matrix is described in the
 review brief; its count is not restated here, because a number quoted without
 being re-run is exactly the kind of stale claim this page exists to avoid.
 
-The mobile editions carry their own suites: **Android 246 JVM/unit tests** plus
-**51 on-device instrumentation tests**, and **iOS 386 tests** (`swift test --package-path ios/TruePadKit`), plus
+The mobile editions carry their own suites: **Android 299 JVM/unit tests**
+(`./gradlew test` reports 388 executions, but the app module's 89 tests are built
+and run for both the debug and release variants, so 299 is the distinct count)
+plus **55 on-device instrumentation tests**
+(`connectedDebugAndroidTest`, verified by `android/tools/verify-instrumentation.sh`
+against a per-class expectation), and **iOS 471 tests**
+(`swift test --package-path ios/TruePadKit`), plus
 the iOS supply-chain and isolation gates in `ios/scripts/` and `ios/vendor/`. The
 iOS suite also runs under AddressSanitizer and ThreadSanitizer on every push, and
 CI checks the generated SBOM against the tree and inspects what a device Release
@@ -86,7 +92,8 @@ build actually contains.
   (`docs/RELEASE-CHECKLIST-3.0.md`, `docs/PHYSICAL-TPM-VALIDATION.md`).
 - **Mobile is partly built, and the two platforms are at different stages.** The
   **Android 3.0-dev app exists on master** — engine, storage, SPT, QR and UI —
-  with emulator instrumentation and single-device physical validation done. The
+  with emulator instrumentation, single-device physical validation, and the
+  two-device ceremony below all done. The
   **iOS Edition now has the whole engine** (`ios/TruePadKit`: the OTP core, the
   durable store, the §12 verbs, the courier bundle, the Sealed Pad Transfer state
   machine and ceremony, the deployment evaluator, and a SwiftUI view layer) proven
@@ -115,25 +122,44 @@ build actually contains.
   the envelope is the system edit menu, and Copy/Paste did not land reliably
   under XCUITest — the round trip is covered by the host suite, and what a
   handset uniquely adds (durable consumption on APFS) is covered by the
-  force-quit test. And nothing here is a transfer between two parties: the
-  Android↔iPhone ceremony remains outstanding, as do human VoiceOver and
-  physical TPM.
-  Neither platform is released; there is no App Store build and no 3.0 tag.
-  **Physical mobile validation is outstanding on both** — the two-device
-  Android↔iPhone ceremony, human TalkBack and human VoiceOver have not been
-  performed. Secure Enclave is **not** assumed equivalent to a TPM monotonic
-  authority (`docs/IOS-SECURITY.md`, `docs/ANDROID-SECURITY.md`,
+  force-quit test. And nothing in that bundle is a transfer between two parties.
+
+  **The two-device work has since been done, on real hardware.** The
+  Android↔iPhone Sealed Pad Transfer ceremony ran across a Samsung SM-A176U and
+  an iPhone 12: optical QR in both directions read by each phone's own camera,
+  12- and 8-word comparisons matching, `.tps2` import both ways, messages opened
+  both ways, role and direction separation holding, and replay refused. **Two
+  qualifications travel with that result and must not be dropped:** the word
+  comparisons were performed by AUTOMATED comparison rather than spoken between
+  two people, and the message carriers were host/test carriers rather than
+  optical.
+
+  **What remains on mobile is human accessibility, and it is NOT release-blocking**
+  by the same standing decision: human TalkBack and human VoiceOver are **NOT
+  TESTED**, with no partial pass inferred. Neither platform is released; there is
+  no App Store build and no 3.0 tag. Secure Enclave is **not** assumed equivalent
+  to a TPM monotonic authority (`docs/IOS-SECURITY.md`, `docs/ANDROID-SECURITY.md`,
   `docs/MOBILE-3.0-HANDOFF.md`).
 - **Browser is never maximum-assurance** and a browser profile restore can rewind
   local state.
-- Real-handheld QR-camera validation and human accessibility (TalkBack/VoiceOver)
-  are **outstanding**.
+- Real-handheld QR-camera validation is **DONE** — both directions, each phone's
+  real camera reading the other's screen.
+- **Human accessibility (TalkBack/VoiceOver) is NOT TESTED**, and is
+  **non-blocking** by project-owner decision. Automated `AccessibilityTest` and
+  `LargeFontTest` are baselines, not a substitute for a person using the app.
 
 ## An explicit request
 
 Internal AI adversarial audits and the falsification matrix are useful
-*engineering* evidence — they are **not** an independent human security review.
-TruePad 3.0 asks for exactly that before any formal 3.0.0 release. If you find a
+*engineering* evidence — they are **not** an independent human security review,
+and nothing in this repository should be read as claiming one has happened.
+
+TruePad 3.0 **wants** that review and is asking for it here. It is **not a release
+blocker**, by a standing decision of the project owner recorded in
+[`docs/RELEASE-CHECKLIST-3.0.md`](RELEASE-CHECKLIST-3.0.md) §C, which is the
+canonical authority on what blocks a release. This page previously said the
+review was required "before any formal 3.0.0 release", which contradicted that
+decision. If you find a
 real defect, please report it (see `SECURITY.md` for the disclosure route) — the
 [`docs/INDEPENDENT-REVIEW-BRIEF.md`](INDEPENDENT-REVIEW-BRIEF.md) names the
 findings that would block 3.0.

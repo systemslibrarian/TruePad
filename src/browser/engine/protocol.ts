@@ -73,6 +73,26 @@ export type PairSummary = {
   // Carried here so the answer travels with the pad rather than with the browser
   // profile. See src/browser/ui/role.ts.
   origin: PairOrigin;
+  /**
+   * WHETHER THIS PAD HAS ALREADY LEFT, and by which route.
+   *
+   * Carried so the interface can stop OFFERING what the engine will refuse — and,
+   * for the one case the engine deliberately permits, so it can say what that
+   * case is. `exportPair` refuses a `sealed` or `unreadable-spent` pad and lets a
+   * `physical` one through: the first save can be cancelled at the file dialog or
+   * land nowhere, and the marker keeps the time of the FIRST handoff either way.
+   *
+   * With no way to ask, the Browser rendered one control for both, under a
+   * sentence promising the engine "records it and refuses the other afterwards" —
+   * which is true of the other ROUTE and not of a second save by the same route.
+   * Two identical raw copies of one pad, handed to two people, both import as
+   * party B and both burn B->A at the same offsets. That is cross-copy reuse on
+   * the ordinary no-error path, and it is the whole thing this product exists to
+   * prevent.
+   *
+   * A NON-SECRET FACT: the mode and the timestamp, never the marker's hashes.
+   */
+  handoff: { kind: "absent" | "physical" | "sealed" | "unreadable-spent"; at: string | null };
   meters: { "A->B": DirectionMeters; "B->A": DirectionMeters };
 };
 

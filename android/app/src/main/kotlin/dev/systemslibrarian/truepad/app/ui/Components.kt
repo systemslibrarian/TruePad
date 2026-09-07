@@ -1,6 +1,7 @@
 package dev.systemslibrarian.truepad.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -27,11 +29,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import dev.systemslibrarian.truepad.app.Tab
 
 /*
  * The shared pieces. Three accessibility rules are built in here rather than
@@ -216,6 +221,49 @@ fun Details(summary: String, content: @Composable () -> Unit) {
         if (open) {
             Column(Modifier.padding(start = 12.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 content()
+            }
+        }
+    }
+}
+
+/**
+ * THE THREE PERSISTENT DESTINATIONS.
+ *
+ * Hand-built rather than Material's `NavigationBar` for two reasons. It needs no
+ * icon dependency, and TruePad's vocabulary has no icons in it — every other
+ * affordance in this app is words, and a bar of glyphs would be the one place
+ * meaning was carried by a picture. The 48dp floor and `Role.Tab` semantics are
+ * the parts that matter for accessibility, and both are here.
+ */
+@Composable
+fun BottomNav(current: Tab, onSelect: (Tab) -> Unit) {
+    Column(Modifier.fillMaxWidth().testTag("bottom-nav")) {
+        Rule()
+        Row(Modifier.fillMaxWidth()) {
+            for (tab in Tab.entries) {
+                val selected = tab == current
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .heightIn(min = MinTouchTarget)
+                        .selectable(
+                            selected = selected,
+                            role = Role.Tab,
+                            onClick = { onSelect(tab) },
+                        )
+                        .testTag("tab-${tab.name}"),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        tab.label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
             }
         }
     }

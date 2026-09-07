@@ -52,6 +52,107 @@ public enum QrRefusal: String, Error, Sendable, Equatable {
     case tooLong
 }
 
+/// IS THIS CANONICAL PUBLIC TRANSPORT MATERIAL?
+///
+/// Extracted so that the two things TruePad does with public material — draw it
+/// as a QR and put it on the pasteboard — ask the SAME question. They differ only
+/// in that a QR additionally has a size ceiling; canonicality is not a property
+/// that may have two implementations, because the second one is the one that
+/// eventually says yes to something the first would refuse.
+enum PublicTransportCanon {
+    /// Decoded and re-encoded, and it must come back identical. A view cannot
+    /// hand this a string it assembled itself, or a truncated one.
+    static func isCanonicalReceiveRequest(_ text: String) -> Bool {
+        text.hasPrefix(SptConstantsBridge.tpr2Prefix)
+            && SptConstantsBridge.isCanonicalReceiveRequest(text)
+    }
+
+    static func isCanonicalEnvelope(_ text: String) -> Bool {
+        guard text.hasPrefix(CompactEnvelope.prefix),
+              case .ok(let decoded) = CompactEnvelope.decode(text),
+              (try? CompactEnvelope.encode(decoded)) == text else { return false }
+        return true
+    }
+
+    /// The §6.2 JSON spelling of the same envelope, decoded and re-emitted and
+    /// required to come back identical.
+    static func isCanonicalJson(_ text: String) -> Bool {
+        guard case .ok(let decoded) = EnvelopeCodec.decode(text),
+              (try? EnvelopeCodec.encode(decoded)) == text else { return false }
+        return true
+    }
+}
+
+/// THE ONLY THING THAT MAY BE COPIED.
+///
+/// A value of this type is public transport material that has been RE-VALIDATED:
+/// a canonical `TPR2:` receive request, a canonical `TP2:` compact envelope, or
+/// that same envelope in its canonical §6.2 JSON spelling — each decoded and
+/// re-encoded to itself. (The third was omitted here while `canonicalJson` and
+/// the Send screen's "Copy JSON" both existed, so the doc a reviewer reads to
+/// confirm what the clipboard boundary admits understated it by one kind.)
+/// It cannot be constructed from an arbitrary
+/// string, which is the whole point — the pasteboard boundary takes this type and
+/// not a `String`, so a view physically cannot hand it plaintext, pad material,
+/// a `.tps2` package, a key, or anything it assembled.
+///
+/// WHY THIS IS NOT `QrPayload`. A QR additionally has a size ceiling, and a long
+/// envelope that cannot be drawn as a code is still perfectly copyable. Gating
+/// copy on the QR type would refuse to copy exactly the messages most in need of
+/// copying.
+public struct PublicTransport: Sendable, Equatable {
+    public enum Kind: Sendable, Equatable {
+        case receiveRequest
+        case envelope
+        /// The SAME envelope, in its canonical §6.2 JSON spelling. Public for the
+        /// same reason the compact form is — it is an already-encrypted message —
+        /// and offered because the Browser edition has always let an operator take
+        /// the technical form when a channel mangles the compact one.
+        case canonicalJson
+    }
+
+    public let kind: Kind
+    public let text: String
+
+    private init(kind: Kind, text: String) {
+        self.kind = kind
+        self.text = text
+    }
+
+    public static func receiveRequest(_ text: String) -> Result<PublicTransport, QrRefusal> {
+        guard text.hasPrefix(SptConstantsBridge.tpr2Prefix) else { return .failure(.notAKnownPayload) }
+        guard PublicTransportCanon.isCanonicalReceiveRequest(text) else { return .failure(.notCanonical) }
+        return .success(PublicTransport(kind: .receiveRequest, text: text))
+    }
+
+    public static func envelope(_ text: String) -> Result<PublicTransport, QrRefusal> {
+        guard text.hasPrefix(CompactEnvelope.prefix) else { return .failure(.notAKnownPayload) }
+        guard PublicTransportCanon.isCanonicalEnvelope(text) else { return .failure(.notCanonical) }
+        return .success(PublicTransport(kind: .envelope, text: text))
+    }
+
+    /// The canonical JSON spelling. RE-VALIDATED the same way: decoded and
+    /// re-emitted, and required to be identical — so a view cannot hand this a
+    /// string it assembled, and nothing that is not an envelope gets through.
+    public static func canonicalJson(_ text: String) -> Result<PublicTransport, QrRefusal> {
+        guard text.hasPrefix("{") else { return .failure(.notAKnownPayload) }
+        guard PublicTransportCanon.isCanonicalJson(text) else { return .failure(.notCanonical) }
+        return .success(PublicTransport(kind: .canonicalJson, text: text))
+    }
+
+    /// The function a view calls when it holds a string it believes is public.
+    public static func from(_ text: String) -> Result<PublicTransport, QrRefusal> {
+        if text.hasPrefix(SptConstantsBridge.tpr2Prefix) { return receiveRequest(text) }
+        if text.hasPrefix(CompactEnvelope.prefix) { return envelope(text) }
+        if text.hasPrefix("{") { return canonicalJson(text) }
+        return .failure(.notAKnownPayload)
+    }
+
+    /// The egress class this material belongs to, so the policy that already
+    /// exists is the policy that governs it rather than a second opinion.
+    public var egress: Egress { .publicText }
+}
+
 public enum QrPayloadBuilder {
     /// The capacity ceiling of a version-40 QR at the error-correction level this
     /// app draws, which is a property of the FORMAT — not a measured claim about
@@ -72,7 +173,7 @@ public enum QrPayloadBuilder {
     public static func receiveRequest(_ text: String) -> Result<QrPayload, QrRefusal> {
         guard text.hasPrefix(SptConstantsBridge.tpr2Prefix) else { return .failure(.notAKnownPayload) }
         guard text.count <= maxQrCharacters else { return .failure(.tooLong) }
-        guard SptConstantsBridge.isCanonicalReceiveRequest(text) else { return .failure(.notCanonical) }
+        guard PublicTransportCanon.isCanonicalReceiveRequest(text) else { return .failure(.notCanonical) }
         return .success(.receiveRequest(text))
     }
 
@@ -80,10 +181,7 @@ public enum QrPayloadBuilder {
     public static func envelope(_ text: String) -> Result<QrPayload, QrRefusal> {
         guard text.hasPrefix(CompactEnvelope.prefix) else { return .failure(.notAKnownPayload) }
         guard text.count <= maxQrCharacters else { return .failure(.tooLong) }
-        guard case .ok(let decoded) = CompactEnvelope.decode(text),
-              (try? CompactEnvelope.encode(decoded)) == text else {
-            return .failure(.notCanonical)
-        }
+        guard PublicTransportCanon.isCanonicalEnvelope(text) else { return .failure(.notCanonical) }
         return .success(.envelope(text))
     }
 
@@ -264,6 +362,10 @@ public struct MeterRow: Sendable, Equatable {
     public let recordsCapacity: Int
     public let maxRemainingSends: Int
     public let limitedBy: String
+    /// HOW THIS DIRECTION PACKAGES A MESSAGE, already in the operator's words.
+    /// Shown beside the message count because the count DEPENDS on it — see
+    /// `FixedRecordIntake.recordModeLabel`.
+    public let recordMode: String
     public let frozen: Bool
     public let witness: String
     public let verdict: String
@@ -303,6 +405,7 @@ public struct MeterRow: Sendable, Equatable {
         recordsCapacity = m.capacityRecords
         maxRemainingSends = m.maxRemainingSends
         limitedBy = m.limitedBy
+        recordMode = FixedRecordIntake.recordModeLabel(m.record)
         frozen = m.frozen
         witness = m.witnessState.rawValue
         // DERIVED, every time this row is built. There is no cached verdict and
@@ -510,11 +613,22 @@ public enum ReceiveRequestOutcomeText {
 ///   - A file that reads is ACCEPTED AS SUPPLIED. TruePad does not inspect it,
 ///     score it, or form any view about whether it is random — it cannot, and
 ///     saying otherwise would be the one claim this project must never make.
-///   - Whether it is BIG ENOUGH is not decided here. That stays with
-///     `canCreate`, which already compares the supplied length against the
-///     partition's required source length, so a short file leaves creation
-///     disabled exactly as it did before.
+///   - Whether it is BIG ENOUGH is a SEPARATE question from whether the file
+///     read, and `decide` deliberately still does not answer it: a short file is
+///     accepted as a file and refused as a pad. Saying "could not be read" about
+///     a file that read fine would send the operator hunting a problem that does
+///     not exist.
 ///   - Cancelling is not a refusal and must never be presented as one.
+///
+/// WHERE THE LENGTH RULE LIVES, since it moved. It is now `readiness(have:need:
+/// declaration:)`, below, and `CreatePadModel.canCreate` defers to it rather than
+/// comparing lengths itself. This comment used to say the opposite — that length
+/// "stays with `canCreate`, which already compares the supplied length against
+/// the partition's required source length" — which was true when written and
+/// became false when the screen gained an explanation for WHY creation was
+/// blocked. Two places deciding one thing is how a disabled button ends up under
+/// text saying everything is ready, so there is now one decision and both the
+/// button and the explanation read it.
 ///
 /// There is NO fallback to the device generator. An operator who asked for their
 /// own material and whose file failed gets a refusal, not a quietly
@@ -541,6 +655,53 @@ public enum ExternalSourceIntake {
     public static let unreadableFile =
         "That file could not be read. Nothing was used and no pad was created — "
         + "choose the file again."
+
+    /// WHY CREATE IS NOT AVAILABLE YET, in the operator's terms.
+    ///
+    /// This exists because "the button is grey" is not a reason. A readable file
+    /// that is simply too short looked, from the operator's seat, exactly like a
+    /// broken picker: the file had been chosen, the name was on screen, and
+    /// nothing said what was wrong. The obvious repairs are all forbidden — a pad
+    /// may not be made by stretching, repeating, padding or deriving material —
+    /// so the only honest response is to SAY SO and let the operator choose a
+    /// bigger file or a smaller pad.
+    public enum Readiness: Equatable, Sendable {
+        case needsFile
+        case tooShort(have: Int, need: Int)
+        case needsDeclaration
+        case ready
+
+        /// Nil when ready; otherwise what to show under the picker.
+        public var explanation: String? {
+            switch self {
+            case .ready: return nil
+            case .needsFile:
+                return "Choose the file holding your random material."
+            case .needsDeclaration:
+                return "Say where these bytes came from. TruePad records your note with the "
+                    + "pad and cannot check it — it is your statement, not a measurement."
+            case .tooShort(let have, let need):
+                return "That file is \(have) bytes and this pad needs \(need). TruePad will "
+                    + "not stretch, repeat, pad or derive material to make a file fit, because "
+                    + "material invented to fill a gap is not random and the pad would not be "
+                    + "one-time. Choose a larger file, or a smaller pad size."
+            }
+        }
+    }
+
+    /// The single authority on whether an external-source pad may be created.
+    ///
+    /// `have` is nil when no file has been chosen. `declaration` is the operator's
+    /// own note, untrimmed — trimming happens here so the view and the model
+    /// cannot disagree about whether spaces count as an answer.
+    public static func readiness(have: Int?, need: Int, declaration: String) -> Readiness {
+        guard let have else { return .needsFile }
+        if have < need { return .tooShort(have: have, need: need) }
+        guard !declaration.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .needsDeclaration
+        }
+        return .ready
+    }
 }
 
 public enum VerbatimText {
@@ -714,7 +875,13 @@ public final class HandoffScratchFile {
 ///
 /// THE RULE. One role per pair, derived from how the pad was acquired — never a
 /// free-floating default, and never a different answer for sending than for
-/// opening. `unknown` returns nil: the operator is asked, exactly as the CLI asks.
+/// opening. `unknown` returns nil and the interface REFUSES; it does not delegate.
+/// (This once said "the operator is asked, exactly as the CLI asks", and both
+/// mobile editions did ask, with a picker. The CLI's `--as` is a different thing:
+/// it is stated per invocation by someone driving the engine directly, not a
+/// control offered beside a prompt that says a pick would be a guess. A picker in
+/// the interface is a SECOND role authority beside the origin — see
+/// `src/browser/ui/role.ts`, which declined to add one for exactly this reason.)
 /// Refusing to proceed is LOSS, which this project accepts; guessing is REUSE,
 /// which it does not.
 public enum PartyRole {
@@ -730,11 +897,37 @@ public enum PartyRole {
     }
 
     /// What to tell an operator whose pad cannot say which half is theirs.
+    /// WHAT TO SAY WHEN THE ROLE CANNOT BE DERIVED.
+    ///
+    /// TWO DEFECTS WERE FIXED HERE AT ONCE, and they compounded each other.
+    ///
+    /// It said "Choose the role you were given when this pad was created."
+    /// **There is no control on iOS that chooses a role** — the only `role:`
+    /// arguments in this module are SwiftUI `ButtonRole`s — so the instruction
+    /// named a screen that does not exist, exactly as the Browser's version of
+    /// this message once did.
+    ///
+    /// And it told the operator to CHOOSE, one sentence after telling them
+    /// TruePad will not guess. The role is derived from a recorded fact —
+    /// generated here means A, imported means B, anything else refuses — so
+    /// inviting a choice would have made the operator the guesser instead. The
+    /// standing rule is that an unknown origin REFUSES; it does not delegate.
+    ///
+    /// Every route named below is a real, visible affordance in this app, spelled
+    /// as the operator sees it, and `RolePromptTests` holds each against the UI
+    /// source.
     public static let unknownOriginPrompt =
         "TruePad cannot tell which half of this pair is yours, so it will not "
-        + "guess. Choose the role you were given when this pad was created. "
-        + "Choosing wrong does not corrupt the pad, but it spends material the "
-        + "other person is also spending."
+        + "guess, and it will not send or open with this pad until it can. "
+        + "TruePad records which half is yours when a pad is created here, or "
+        + "when it arrives here through a receive code; a pad that got here some "
+        + "other way carries no such record, and there is nothing for you to set "
+        + "by hand \u{2014} a role you picked would be a guess wearing a different "
+        + "name. Acquire the pad again: \u{201C}Create a pad\u{201D} on the Pads "
+        + "screen, or \u{201C}Create a receive code\u{201D} on the Inbox tab "
+        + "and have the other person send it to you. Guessing does not corrupt "
+        + "the pad, but it spends material the other person is spending too, "
+        + "which is the one thing TruePad will not do on your behalf."
 }
 
 /// WHICH QR ERROR-CORRECTION LEVEL A PAYLOAD SHOULD USE.
@@ -863,4 +1056,127 @@ public enum EgressPolicy {
     public static func fileName(for egress: Egress, sealed: Bool) -> String {
         sealed ? "transfer.tps2" : "pad.tpair"
     }
+}
+
+// MARK: - fixed-length records
+
+/// WHETHER A FIXED RECORD SIZE IS USABLE, and if not, why not in the operator's
+/// terms.
+///
+/// A fixed record pads every message to the same ciphertext length, so the exact
+/// length of what was written stops being visible on the wire (§16). The cost is
+/// real and is stated on screen rather than discovered later: a short message
+/// spends the whole record.
+///
+/// THE CEILING IS THE LOWER OF TWO LIMITS, and getting that wrong was not
+/// hypothetical. The Android edition validated against the pad's encryption
+/// capacity ALONE — `parsedF.toLong() <= size.encryptionBytes` — while its engine
+/// refuses anything above `MAX_CIPHERTEXT_BYTES`. On the Large preset those are
+/// 4,194,304 and 1,048,576, so the screen accepted a value the engine then
+/// rejected, and the message it printed to explain the range quoted the wrong
+/// number. Reported from a handset. Every edition now takes the MINIMUM of the
+/// two — Android in `FixedRecordIntake.ceiling`, the Browser in `create-pair.ts`,
+/// which had the same shape — and `tests/fixed-record-parity.test.ts` holds the
+/// three against each other. Written in the past tense deliberately: it was in
+/// the present while the defect was live, and leaving it there would have made
+/// this file describe a sibling edition as broken after it was fixed.
+///
+/// NOTHING IS ROUNDED. A value that is not a multiple of 16 is refused and named;
+/// it is not quietly nudged to one that works. An operator who typed 100 and got
+/// a 112-byte record would have been told something false about their own pad.
+public enum FixedRecordIntake {
+    /// The offered starting point. Large enough that ordinary messages fit
+    /// without spending absurd amounts of pad, and a multiple of 16.
+    public static let defaultBytes = 256
+    /// §16's floor. Below this a record cannot hold its own length prefix plus
+    /// anything worth sending.
+    public static let minimumBytes = 32
+    /// §16's granularity.
+    public static let multipleOf = 16
+
+    /// The largest fixed record this pad can actually use.
+    public static func ceiling(encryptionCapacity: Int,
+                               engineLimit: Int = WcOneTime.maxCiphertextBytes) -> Int {
+        min(encryptionCapacity, engineLimit)
+    }
+
+    public enum Readiness: Equatable, Sendable {
+        /// The operator has not asked for fixed lengths, so there is nothing to check.
+        case notFixed
+        case notANumber
+        case tooSmall(have: Int, need: Int)
+        case tooLarge(have: Int, limit: Int)
+        case notAMultiple(have: Int, of: Int)
+        case ready(bytes: Int)
+
+        /// The one place that decides whether creation may proceed.
+        public var isReady: Bool {
+            switch self {
+            case .notFixed, .ready: return true
+            default: return false
+            }
+        }
+
+        /// Nil when there is nothing to say. Never a bare "invalid".
+        public var explanation: String? {
+            switch self {
+            case .notFixed, .ready:
+                return nil
+            case .notANumber:
+                return "Type the message size in bytes."
+            case .tooSmall(let have, let need):
+                return "\(have) bytes is too small. The smallest message size is \(need) bytes."
+            case .tooLarge(let have, let limit):
+                return "\(have) bytes is larger than this pad can carry. The largest message size "
+                    + "for this pad is \(limit) bytes."
+            case .notAMultiple(let have, let of):
+                return "\(have) is not a multiple of \(of). Message sizes go up in steps of \(of) "
+                    + "bytes, and TruePad will not round your number for you."
+            }
+        }
+    }
+
+    /// ORDERED SO THE FIRST THING WRONG IS THE THING REPORTED. Reporting "not a
+    /// multiple of 16" about a number that is also far too large sends the
+    /// operator to fix the wrong half of it.
+    public static func readiness(fixed: Bool,
+                                 typed: String,
+                                 encryptionCapacity: Int,
+                                 engineLimit: Int = WcOneTime.maxCiphertextBytes) -> Readiness {
+        guard fixed else { return .notFixed }
+        let trimmed = typed.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, let value = Int(trimmed), value >= 0 else { return .notANumber }
+        if value < minimumBytes { return .tooSmall(have: value, need: minimumBytes) }
+        let limit = ceiling(encryptionCapacity: encryptionCapacity, engineLimit: engineLimit)
+        if value > limit { return .tooLarge(have: value, limit: limit) }
+        if value % multipleOf != 0 { return .notAMultiple(have: value, of: multipleOf) }
+        return .ready(bytes: value)
+    }
+
+    /// WHAT A FIXED RECORD DOES AND DOES NOT HIDE.
+    ///
+    /// Carried over from the Android edition WORD FOR WORD, because the claim is
+    /// the part that must not drift between editions. It names the property the
+    /// format actually provides — one length for every message — and then names
+    /// the two things still visible, rather than implying the carrier hides
+    /// everything about the traffic.
+    /// HOW A DIRECTION PACKAGES A MESSAGE, in the operator's terms.
+    ///
+    /// Shown beside the message count because the count DEPENDS on it: a fixed
+    /// store spends a whole record per send, so its "Messages you can still send"
+    /// is bounded by the encryption budget rather than by the record total, and
+    /// without this row the smaller number has no visible explanation. Same words
+    /// as the Browser's `recordModeLabel` (src/browser/ui/format.ts) and the
+    /// Android twin.
+    public static func recordModeLabel(_ record: RecordSpec) -> String {
+        switch record {
+        case .fixed(let bytes): return "Fixed · \(bytes) B per record"
+        case .variable: return "Variable length"
+        }
+    }
+
+    public static let costAndLimit =
+        "Every message uses the same size, so its exact length is hidden. The cost: each message "
+        + "spends the full size from the pad, even a short one. The number of messages and their "
+        + "timing are still visible."
 }

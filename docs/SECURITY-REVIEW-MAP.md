@@ -87,6 +87,14 @@ its own claims (source honesty, rollback exposure) but is **not** part of the
 maximum-assurance surface. Key files: `store.ts`, `verbs.ts`, `protocol.ts`,
 `opfs-vfs.ts`, `ui/security-status.ts`, `ui/source-claims.ts`.
 
+**One presentation file carries a decision and therefore belongs on this list
+explicitly**, because the caveat at the top of this map asks a reviewer to confirm
+that nothing outside the trusted surface influences one:
+
+| File | Purpose | Invariant | If it fails | Tests |
+| --- | --- | --- | --- | --- |
+| `src/browser/ui/role.ts` | Derives WHICH HALF OF A PAIR IS YOURS from the pair's recorded origin, for display | `generated-here → A`, `imported → B`, **anything else → refuse**. It reads an engine-recorded fact and never guesses; it is the only role authority in the Browser | A pad whose origin is unknown rendering as a definite role. The engine still owns direction, so this is a DISPLAY defect rather than a reuse defect — but it is one that tells an operator with confidence which way their material runs, and that is exactly the belief the send/receive meters are read under | `role-derivation.test.ts`, including source guards over `ui/dashboard.ts` and a positive control |
+
 ## H — QR presentation (transport only)
 
 `src/browser/ui/qr/*` (`encode.ts`, `decode.ts`, `scan.ts`, `show-qr.ts`,

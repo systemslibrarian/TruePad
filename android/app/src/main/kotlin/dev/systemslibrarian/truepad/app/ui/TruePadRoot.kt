@@ -29,6 +29,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import dev.systemslibrarian.truepad.app.Banner
 import dev.systemslibrarian.truepad.app.PadViewModel
 import dev.systemslibrarian.truepad.app.Screen
+import dev.systemslibrarian.truepad.app.Tab
 import dev.systemslibrarian.truepad.app.UiState
 
 /**
@@ -53,14 +54,39 @@ fun TruePadRoot(state: UiState, vm: PadViewModel) {
         lifecycleOwner.lifecycle.addObserver(observer)
     }
 
-    BackHandler(enabled = state.backStack.size > 1) { vm.back() }
+    // BACK LEAVES THE SCREEN FIRST, THEN THE TAB. Once a tab is at its root, a
+    // back press returns to Pads rather than closing the app — the ordinary
+    // Android expectation for a bottom-nav shell. From Pads' own root it is not
+    // handled here at all, so the system closes the app as before.
+    BackHandler(enabled = state.backStack.size > 1 || state.tab != Tab.Pads) {
+        if (!vm.back()) vm.selectTab(Tab.Pads)
+    }
+
+    // MODAL AND IRREVERSIBLE SCREENS HIDE THE BAR. A camera preview filling the
+    // screen, a sealing ceremony and a destruction confirmation are each a place
+    // where a stray tap on a tab would either abandon something the operator is
+    // halfway through or obscure what they are being asked to confirm.
+    val modal = state.screen in setOf(Screen.ScanQr, Screen.SendSealed, Screen.Remove)
+
+    // A SCREEN STARTS AT ITS OWN TOP.
+    //
+    // One scroll state is shared by every destination and is saved across an
+    // activity recreation, and nothing reset it on navigation — so arriving from
+    // a screen the operator had scrolled down left the NEW screen scrolled by the
+    // same amount, past its own title. It survived only because the screens
+    // happened to be similar heights; adding a paragraph to one of them moved a
+    // pad screen's heading off the top, which is how the instrumentation suite
+    // found it. Position within a screen is still preserved while you are on it.
+    val scroll = rememberScrollState()
+    LaunchedEffect(state.screen) { scroll.scrollTo(0) }
 
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize().testTag("truepad-root")) {
+        Column(Modifier.fillMaxSize().testTag("truepad-root")) {
             Column(
                 Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(scroll)
                     .padding(horizontal = 20.dp, vertical = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
@@ -77,9 +103,11 @@ fun TruePadRoot(state: UiState, vm: PadViewModel) {
                     Screen.GivePad -> GivePadScreen(state, vm)
                     Screen.SendSealed -> SendSealedScreen(state, vm)
                     Screen.ScanQr -> QrScanScreen(state, vm)
+                    Screen.About -> AboutScreen()
                 }
                 Spacer(Modifier.height(40.dp))
             }
+            if (!modal) BottomNav(state.tab) { vm.selectTab(it) }
         }
     }
 }
@@ -115,6 +143,35 @@ fun BannerArea(state: UiState, vm: PadViewModel) {
                 "One thing left: give the other person their copy. Until they have it, neither of you can read " +
                     "anything the other sends.",
             )
+            // THE NEXT STEP, NAMED AND OFFERED. This banner used to say what was
+            // left to do and then leave the operator to find it — which meant the
+            // normal way to share a pad was discovered by hunting, if at all.
+            Faint(
+                "To share it securely, ask the other person to open TruePad and create a receive " +
+                    "code. Have them send that code to you, then paste or scan it here.",
+            )
+            // OFFERED ONLY WHERE IT BELONGS, AND ONLY WHILE IT IS TRUE.
+            //
+            // A banner is global state and a tab switch deliberately preserves it
+            // — a refusal must survive a glance at About. That let the sender
+            // ceremony be launched from the INBOX, where it discarded the live
+            // receive session (`startSendSealed` resets `spt`) and pushed the
+            // sender flow onto the Inbox stack, whose back link then reads "Give".
+            // The request is recoverable, so this was loss rather than reuse; a
+            // prompt to hand a pad out still has no business on the destination
+            // that exists to take pads in.
+            //
+            // The eligibility half matters too: a banner outlives the act. Between
+            // creating a pad and reading this, the pad can have been handed over
+            // or destroyed, and `mayHandOff` is the engine's answer for whether it
+            // may still leave.
+            if (state.tab == Tab.Pads && state.mayHandOff) {
+                PrimaryButton("Share this pad", Modifier.testTag("btn-share-this-pad")) {
+                    vm.startSendSealed()
+                }
+            }
+            // CREATING A PAD MUST NOT FORCE AN IMMEDIATE HANDOFF.
+            SecondaryButton("Not now", Modifier.testTag("btn-share-not-now")) { vm.dismissBanner() }
         }
         Banner.Added -> Callout(Tone.Good, "Pad added", Modifier.testTag("banner-added")) {}
         Banner.Exported -> Callout(Tone.Good, "Pad file saved", Modifier.testTag("banner-exported")) {

@@ -166,6 +166,13 @@ audit and document it and to add an Android-specific hostile-mutation matrix.
 
 ## What is NOT done in software
 
+> **AS OF THIS AUDIT'S DATE — both items below have since changed. See the
+> supersession table at the top of this document.** Physical-device validation is
+> **DONE** (Samsung SM-A176U). The human TalkBack pass is **still NOT TESTED**,
+> and is **non-blocking** by project-owner decision. This section is left as it
+> was written rather than edited, because an audit rewritten to today's answers
+> stops being evidence of what was known when.
+
 The engine, storage, hardening, and the 3.0 evaluator are exercised by JVM and
 emulator suites. Two kinds of evidence remain outstanding and **cannot be
 manufactured in software** (ANDROID-SECURITY §10, whitepaper §20):

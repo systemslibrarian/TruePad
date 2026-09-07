@@ -147,17 +147,26 @@ struct StorageUnavailableView: View {
     let message: String
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "externaldrive.badge.xmark")
-                .font(.largeTitle)
-                .foregroundStyle(.secondary)
-            Text("TruePad cannot start").font(.headline)
-            Text(message)
-                .font(.footnote)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
+        ZStack {
+            // THE PRODUCT'S GROUND, EVEN HERE. This screen appears before anything
+            // else has drawn, so a system background would make the one screen that
+            // says TruePad failed the one screen that does not look like TruePad.
+            TruePadPalette.ground.ignoresSafeArea()
+            VStack(spacing: 16) {
+                Image(systemName: "externaldrive.badge.xmark")
+                    .font(.largeTitle)
+                    .foregroundStyle(TruePadPalette.muted)
+                Text("TruePad cannot start")
+                    .font(TruePadFont.sectionTitle)
+                    .foregroundStyle(TruePadPalette.ink)
+                Text(message)
+                    .font(TruePadFont.faint)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(TruePadPalette.muted)
+            }
+            .padding(32)
+            .accessibilityElement(children: .combine)
         }
-        .padding(32)
-        .accessibilityElement(children: .combine)
+        .preferredColorScheme(.dark)
     }
 }

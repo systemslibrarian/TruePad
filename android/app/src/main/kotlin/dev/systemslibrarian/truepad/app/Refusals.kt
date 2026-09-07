@@ -45,12 +45,21 @@ data class UserFacingRefusal(
             "pair-destroyed", "import-incomplete", "pair-exists", "malformed-bundle",
             "imported-pair-cannot-export", "source-too-short", "destroy-unconfirmed",
             "no-store", "half-pair", "v1-store",
+            // The app's OWN refusal, raised before the engine is called at all:
+            // a pad whose origin cannot say which half is ours. Nothing is
+            // consumed and nothing could be — without it the banner said "Part of
+            // this pad was used. That cannot be undone.", which is a false claim
+            // about consumption on the one path where consumption never began.
+            "role-unknown",
             // Sealed transfer: every refusal EXCEPT spt-receive-loss happens
             // before anything is consumed, so a retry costs nothing.
             "spt-request-unavailable", "spt-request-expired", "spt-request-cancelled",
             "spt-request-consumed", "spt-package-malformed", "spt-package-open-failed",
             "spt-package-not-importable", "spt-pad-ineligible", "pad-already-sealed",
             "pad-already-handed-off", "handoff-state-unreadable",
+            // Reading a receive request's durable state consumes nothing, whether
+            // it succeeds or not.
+            "receive-request-state",
         )
     }
 }

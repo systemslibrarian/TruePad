@@ -34,10 +34,18 @@ import java.security.SecureRandom
  * The JVM suite already proves the SPT state machine and that Bouncy Castle
  * reproduces the X-Wing draft-10 vectors and the cross-language interop corpus.
  * What this file adds is the one thing a JVM cannot answer: does BC's X-Wing
- * (ML-KEM-768 + X25519) actually run correctly on ART, through the release-shaped
- * classpath, on the device's own filesystem — a full seal on one store, opened
- * and imported on another, with the confirmation ceremony matching across the
- * gap and the durable sealed-ancestry verdict landing NOT ELIGIBLE.
+ * (ML-KEM-768 + X25519) actually run correctly on ART, on the device's own
+ * filesystem — a full seal on one store, opened and imported on another, with the
+ * confirmation ceremony matching across the gap and the durable sealed-ancestry
+ * verdict landing NOT ELIGIBLE.
+ *
+ * TWO LIMITS, STATED BECAUSE THE HEADER USED TO ELIDE THEM. This is a ROUND TRIP,
+ * so it is self-consistent by construction and is not a known-answer test; the
+ * KAT against draft-10 Appendix C lives in truepad-spt and runs on the JVM. And
+ * it runs against the DEBUG variant — instrumentation does not set testBuildType,
+ * and debug has isMinifyEnabled = false — so it is not the R8-shrunk classpath.
+ * The header previously said "through the release-shaped classpath", which it is
+ * not. See app/proguard-rules.pro, which depends on nobody believing otherwise.
  *
  * Two independent stores stand in for two devices; only the public TPR2 code and
  * the sealed .tps2 bytes cross between them.

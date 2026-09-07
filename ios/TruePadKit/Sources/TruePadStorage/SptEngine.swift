@@ -186,7 +186,8 @@ extension Engine {
     /// The receive request that survived a restart, if there is one.
     ///
     /// WHY THIS EXISTS. `request.json` and `dk.bin` are durable, and nothing ever
-    /// read them back. The Receive tab held the published request in memory only,
+    /// read them back. The receive destination (called the Receive tab then, the
+    /// Inbox now) held the published request in memory only,
     /// so a force-quit left a LIVE one-time key on disk that the interface could
     /// no longer reach: the operator could not cancel it, could not REJECT it
     /// after a failed word comparison, and could not re-display the twelve words
@@ -371,6 +372,60 @@ extension Engine {
         }
     }
 
+    /// The committed package's identity when the pad's sealed marker names THIS
+    /// receive request, and nil in every other case — no marker, a physical
+    /// marker, an unreadable one, or one naming a different request.
+    ///
+    /// THE ONE PLACE THE COMPARISON IS WRITTEN. `sptSeal` decides between handing
+    /// the committed package back and refusing by exactly this, and
+    /// `sptSealedToRequest` lets the interface ask the same question before it
+    /// words a button — so what the screen predicts and what the engine then does
+    /// cannot disagree.
+    ///
+    /// `requestHashHex` is the 64-hex fingerprint of the PUBLIC receive request.
+    /// Nothing secret is read, compared or returned.
+    private static func sealedMarkerIdentity(_ state: SptHandoffState,
+                                             requestHashHex: String) -> String? {
+        guard case .sealed(let marker, _, _) = state,
+              case .sealed(_, _, let markerRequestHash, let markerIdentity, _) = marker,
+              let wanted = Hex.decode(requestHashHex),
+              markerRequestHash == SptBytes.toBase64Url(wanted) else { return nil }
+        return markerIdentity
+    }
+
+    /// Whether the package already committed for this pad was sealed to THIS
+    /// receive request.
+    ///
+    /// ADVISORY, AND DELIBERATELY SO. It takes no lock and decides nothing: the
+    /// authoritative check is the identical comparison inside `sptSeal`, made
+    /// under the pair lock. This exists so the screen can stop claiming
+    /// "already sealed to this request" about a request the very next call is
+    /// going to refuse — it used to ask only whether the pad's marker was sealed
+    /// at all, which carries no request identity whatsoever.
+    public func sptSealedToRequest(pairId: String, requestHashHex: String) -> Bool {
+        guard isHex64(requestHashHex), isHex32(pairId) else { return false }
+        return Self.sealedMarkerIdentity(sptReadHandoffState(vfs: sptVfs, pairId: pairId),
+                                         requestHashHex: requestHashHex) != nil
+    }
+
+    /// Whether this pad carries a committed SEALED handoff at all, read through
+    /// the SAME parser as `sptSealedToRequest`.
+    ///
+    /// ONE PARSER FOR ONE FILE. The interface asked two different readers about
+    /// `handoff.json` — this question through `Engine.handoffState`, which is
+    /// TruePadStorage's reader, and the request comparison through the SPT one.
+    /// Two parsers of one file can disagree, and on a marker only one of them
+    /// accepts the screen would have asserted "already sealed to a DIFFERENT
+    /// receive code" — a fact neither reader had established. Both questions go
+    /// through the SPT reader now, because that is the one `sptSeal` obeys.
+    ///
+    /// Advisory, like its sibling: it takes no lock and decides nothing.
+    public func sptHasSealedHandoff(pairId: String) -> Bool {
+        guard isHex32(pairId) else { return false }
+        if case .sealed = sptReadHandoffState(vfs: sptVfs, pairId: pairId) { return true }
+        return false
+    }
+
     /// Seal a live, generated-here, genesis pad to a CONFIRMED request — or
     /// return the exact already-committed package.
     ///
@@ -392,7 +447,8 @@ extension Engine {
         let vfs = sptVfs
         return try fs.withLock(pairId) {
             try requireNotDestroyed(pairId)
-            switch sptReadHandoffState(vfs: vfs, pairId: pairId) {
+            let handoff = sptReadHandoffState(vfs: vfs, pairId: pairId)
+            switch handoff {
             case .unreadableSpent(let message):
                 throw SptRefused(reason: refuseHandoffUnreadable, message: message)
 
@@ -402,11 +458,10 @@ extension Engine {
                     message: "This pad has already been handed off as a file, so it cannot also be "
                         + "sent by sealed transfer. Generate a new pad for that.")
 
-            case .sealed(let marker, _, _):
+            case .sealed:
                 // EXACT RE-SHARE. No new cryptography, no fresh confirmation.
-                guard case .sealed(_, _, let markerRequestHash, let markerIdentity, _) = marker,
-                      let wanted = Hex.decode(requestHashHex),
-                      markerRequestHash == SptBytes.toBase64Url(wanted) else {
+                guard let markerIdentity = Self.sealedMarkerIdentity(handoff,
+                                                                    requestHashHex: requestHashHex) else {
                     throw SptRefused(
                         reason: refuseAlreadySealed,
                         message: "This pad was already sealed to a different receive request. "

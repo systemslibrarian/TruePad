@@ -1463,8 +1463,23 @@ function meters(store: LoadedStore2): Meters {
   }
   // §13 (PROPOSED display rule): AUTHENTICATION binds when even maximum-size
   // sends cannot spend the encryption budget before the records run out.
+  //
+  // §16 — WHAT A SEND ACTUALLY COSTS. On a FIXED store every send spends exactly
+  // F encryption bytes and one record however short the message (burn builds a
+  // full F-byte frame), so the bytes bound the MESSAGE COUNT exactly, at
+  // floor(remainingBytes / F). On a variable store a send can be as small as the
+  // operator likes, so records are the only bound — that branch is unchanged.
+  // Reporting remainingRecords on a fixed store overstated the budget: a store
+  // with E = 16,384 and F = 4096 can send four messages and then reported all of
+  // its remaining records.
+  const recordSpec = head.recordPolicy.record;
+  const sendsAffordableByBytes =
+    recordSpec.kind === "fixed" ? Math.floor(remainingBytes / recordSpec.bytes) : remainingRecords;
   const limitedBy =
-    remainingRecords <= Math.ceil(remainingBytes / head.authentication.maxCiphertextBytes)
+    remainingRecords <=
+    (recordSpec.kind === "fixed"
+      ? sendsAffordableByBytes
+      : Math.ceil(remainingBytes / head.authentication.maxCiphertextBytes))
       ? "AUTHENTICATION"
       : "ENCRYPTION";
   return {
@@ -1483,7 +1498,7 @@ function meters(store: LoadedStore2): Meters {
       clearedAtFailureCount: effective.clearedAtFailureCount,
       frozen: frozenHalf(store)
     },
-    maxRemainingSends: remainingRecords,
+    maxRemainingSends: Math.min(remainingRecords, sendsAffordableByBytes),
     limitedBy
   };
 }

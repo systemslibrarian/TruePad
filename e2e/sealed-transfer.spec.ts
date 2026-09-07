@@ -424,8 +424,16 @@ test.describe("sealed pad transfer, end to end", () => {
     await a.goto("/");
     await a.getByText(pairName).click();
     await a.getByText("Pad details").click();
-    await a.getByRole("button", { name: "Save pad file" }).click();
-    await expect(a.getByText(/already sent online|one delivery method/i)).toBeVisible();
+    // THE CONTROL IS WITHHELD, not offered and then refused. `PairSummary.handoff`
+    // now travels to the interface, so a pad that has already left says so
+    // instead of presenting a button whose only outcome is a refusal. The engine
+    // still refuses independently — tests/browser-handoff.test.ts drives that
+    // directly — and this asserts the stronger, earlier property.
+    await expect(a.getByRole("button", { name: "Save pad file" })).toHaveCount(0);
+    await expect(a.getByText(/already sent by sealed transfer/i)).toBeVisible();
+    // And the route that IS still legitimate remains: the same committed package,
+    // for the same receive code.
+    await expect(a.getByRole("button", { name: "Send securely online" })).toBeVisible();
     await alice.close();
     await bob.close();
   });

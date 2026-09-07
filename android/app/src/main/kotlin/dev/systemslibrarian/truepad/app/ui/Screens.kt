@@ -30,6 +30,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.systemslibrarian.truepad.app.Claims
+import dev.systemslibrarian.truepad.app.FixedRecordIntake
 import dev.systemslibrarian.truepad.core.ASSESSMENT_LABEL
 import dev.systemslibrarian.truepad.core.SOURCE_LABEL
 import dev.systemslibrarian.truepad.core.UNPROVEN_PREMISES
@@ -37,7 +38,9 @@ import dev.systemslibrarian.truepad.app.OpResult
 import dev.systemslibrarian.truepad.app.PadSize
 import dev.systemslibrarian.truepad.app.PadViewModel
 import dev.systemslibrarian.truepad.app.PickedSource
+import dev.systemslibrarian.truepad.app.PublicTransport
 import dev.systemslibrarian.truepad.app.Screen
+import dev.systemslibrarian.truepad.app.Tab
 import dev.systemslibrarian.truepad.app.UiState
 import dev.systemslibrarian.truepad.app.AndroidStorage
 import dev.systemslibrarian.truepad.app.copySensitiveText
@@ -72,7 +75,10 @@ fun HomeScreen(state: UiState, vm: PadViewModel) {
             vm.navigate(Screen.CreatePad)
         }
         SecondaryButton("Add a shared pad", Modifier.testTag("btn-add-pad")) { vm.navigate(Screen.AddPad) }
-        SecondaryButton("Receive a pad", Modifier.testTag("btn-receive-pad")) { vm.startReceive() }
+        // SELECTS THE TAB rather than pushing a second copy of the receive screen
+        // onto the Pads stack. Two routes into one state machine is how a live
+        // one-time request gets stranded behind the wrong back stack.
+        SecondaryButton("Receive a pad", Modifier.testTag("btn-receive-pad")) { vm.selectTab(Tab.Inbox) }
     }
 
     Details("How does this work?") {
@@ -92,7 +98,11 @@ fun HomeScreen(state: UiState, vm: PadViewModel) {
                     entry.destroyed -> "Disabled"
                     padSummary == null -> "Unavailable"
                     padSummary.meters.values.any { it.frozen } -> "Paused"
-                    padSummary.meters.values.all { it.remainingRecords == 0L } -> "Exhausted"
+                    // maxRemainingSends, NOT remainingRecords: on a fixed store the
+                    // encryption budget runs out first and the records left over
+                    // cannot be spent. A pad that could never send again used to
+                    // sit here saying "Ready".
+                    padSummary.meters.values.all { it.maxRemainingSends == 0L } -> "Exhausted"
                     else -> "Ready"
                 }
                 SecondaryButton(
@@ -113,14 +123,23 @@ fun HomeScreen(state: UiState, vm: PadViewModel) {
 
 @Composable
 fun CreatePadScreen(state: UiState, vm: PadViewModel) {
-    var label by remember { mutableStateOf("") }
-    var size by remember { mutableStateOf(PadSize.Medium) }
-    var external by remember { mutableStateOf(false) }
-    var declared by remember { mutableStateOf(false) }
-    var origin by remember { mutableStateOf("") }
-    var picked by remember { mutableStateOf(listOf<PickedSource>()) }
-    var fixedLength by remember { mutableStateOf(false) }
-    var fixedSize by remember { mutableStateOf("256") }
+    // THE FORM LIVES IN THE VIEW MODEL, not in `remember { }`.
+    //
+    // The tab shell parks BACK STACKS, not compositions. Leaving the Pads tab
+    // removes this screen from the tree and discards everything remembered in it;
+    // coming back restores a stack whose top still says `Screen.CreatePad`, so the
+    // operator returned to what looked like the screen they left with every field
+    // silently reset — including `external`, which decides where the pad's
+    // material comes from. See `UiState.create`.
+    val form = state.create
+    val label = form.label
+    val size = form.size
+    val external = form.external
+    val declared = form.declared
+    val origin = form.origin
+    val picked = form.picked
+    val fixedLength = form.fixedLength
+    val fixedSize = form.fixedSize
 
     val pickSources = rememberOpenDocuments { uris ->
         val existing = picked.map { it.uri.toString() }.toSet()
@@ -131,7 +150,7 @@ fun CreatePadScreen(state: UiState, vm: PadViewModel) {
                 declaredOrigin = origin.trim().ifBlank { "declared by operator at creation; not verified by this tool" },
             )
         }
-        picked = picked + added
+        vm.updateCreate { it.copy(picked = it.picked + added) }
     }
 
     BackLink("Home") { vm.back() }
@@ -141,7 +160,7 @@ fun CreatePadScreen(state: UiState, vm: PadViewModel) {
 
     OutlinedTextField(
         value = label,
-        onValueChange = { label = it.take(60) },
+        onValueChange = { new -> vm.updateCreate { it.copy(label = new.take(60)) } },
         label = { Text("Name this pad") },
         placeholder = { Text("e.g. Chat with Sam") },
         singleLine = true,
@@ -162,7 +181,7 @@ fun CreatePadScreen(state: UiState, vm: PadViewModel) {
                 .selectable(
                     selected = size == option,
                     role = Role.RadioButton,
-                    onClick = { size = option },
+                    onClick = { vm.updateCreate { it.copy(size = option) } },
                 )
                 .testTag("size-${option.name}"),
             verticalAlignment = Alignment.CenterVertically,
@@ -178,7 +197,8 @@ fun CreatePadScreen(state: UiState, vm: PadViewModel) {
     SectionTitle("Randomness")
     Row(
         Modifier.fillMaxWidth().heightIn(min = 48.dp)
-            .selectable(selected = !external, role = Role.RadioButton, onClick = { external = false })
+            .selectable(selected = !external, role = Role.RadioButton,
+                onClick = { vm.updateCreate { it.copy(external = false) } })
             .testTag("radio-device"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -187,7 +207,8 @@ fun CreatePadScreen(state: UiState, vm: PadViewModel) {
     }
     Row(
         Modifier.fillMaxWidth().heightIn(min = 48.dp)
-            .selectable(selected = external, role = Role.RadioButton, onClick = { external = true })
+            .selectable(selected = external, role = Role.RadioButton,
+                onClick = { vm.updateCreate { it.copy(external = true) } })
             .testTag("radio-external"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -212,7 +233,7 @@ fun CreatePadScreen(state: UiState, vm: PadViewModel) {
         }
         OutlinedTextField(
             value = origin,
-            onValueChange = { origin = it.take(200) },
+            onValueChange = { new -> vm.updateCreate { it.copy(origin = new.take(200)) } },
             label = { Text("Where did this material come from?") },
             modifier = Modifier.fillMaxWidth().testTag("field-origin"),
         )
@@ -220,12 +241,22 @@ fun CreatePadScreen(state: UiState, vm: PadViewModel) {
             pickSources.launch(arrayOf("*/*"))
         }
         for (p in picked) Faint("• ${p.name}")
+        // APPEND-ONLY WAS A TRAP. `pickSources` only ever adds, and the form now
+        // outlives the composition — so a file chosen by mistake could not be
+        // taken back, and was carried into whatever pad the operator made next.
+        // Removing a choice must be at least as easy as making one.
+        if (picked.isNotEmpty()) {
+            SecondaryButton("Clear chosen files", Modifier.testTag("btn-clear-sources")) {
+                vm.updateCreate { it.copy(picked = emptyList()) }
+            }
+        }
 
         Row(
             Modifier
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
-                .toggleable(value = declared, role = Role.Checkbox, onValueChange = { declared = it })
+                .toggleable(value = declared, role = Role.Checkbox,
+                    onValueChange = { on -> vm.updateCreate { it.copy(declared = on) } })
                 .testTag("checkbox-declaration"),
             verticalAlignment = Alignment.Top,
         ) {
@@ -243,7 +274,8 @@ fun CreatePadScreen(state: UiState, vm: PadViewModel) {
             Modifier
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
-                .toggleable(value = fixedLength, role = Role.Checkbox, onValueChange = { fixedLength = it })
+                .toggleable(value = fixedLength, role = Role.Checkbox,
+                    onValueChange = { on -> vm.updateCreate { it.copy(fixedLength = on) } })
                 .testTag("checkbox-fixed-length"),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -257,7 +289,9 @@ fun CreatePadScreen(state: UiState, vm: PadViewModel) {
         if (fixedLength) {
             OutlinedTextField(
                 value = fixedSize,
-                onValueChange = { new -> fixedSize = new.filter { it.isDigit() }.take(7) },
+                onValueChange = { new ->
+                    vm.updateCreate { it.copy(fixedSize = new.filter { c -> c.isDigit() }.take(7)) }
+                },
                 label = { Text("Message size (bytes)") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().testTag("field-fixed-size"),
@@ -265,10 +299,12 @@ fun CreatePadScreen(state: UiState, vm: PadViewModel) {
         }
     }
 
-    val parsedF = fixedSize.toIntOrNull()
-    val recordBytes: Int? = if (fixedLength) parsedF else null
-    val recordValid = !fixedLength ||
-        (parsedF != null && parsedF >= 32 && parsedF.toLong() <= size.encryptionBytes && parsedF % 16 == 0)
+    // THE CEILING IS THE LOWER OF THE PAD'S CAPACITY AND THE ENGINE'S LIMIT.
+    // This used to compare against `size.encryptionBytes` alone, which on the
+    // Large preset accepted values four times what the engine would carry. See
+    // FixedRecordIntake, where the rule now lives so it can be tested.
+    val recordBytes: Int? = FixedRecordIntake.recordBytes(fixedLength, fixedSize, size.encryptionBytes)
+    val recordValid = FixedRecordIntake.isUsable(fixedLength, fixedSize, size.encryptionBytes)
 
     Spacer(Modifier.height(4.dp))
     val ready = (if (external) declared && picked.isNotEmpty() else true) && recordValid
@@ -285,7 +321,7 @@ fun CreatePadScreen(state: UiState, vm: PadViewModel) {
         Faint("Choose at least one file and confirm the statement above.")
     }
     if (fixedLength && !recordValid) {
-        Faint("Message size must be a multiple of 16, at least 32, and no more than the capacity (${size.encryptionBytes} bytes).")
+        Faint(FixedRecordIntake.explanation(size.encryptionBytes))
     }
     Faint("Nothing leaves this device. Creating a pad makes no network connection.")
 }
@@ -341,8 +377,21 @@ fun PadScreen(state: UiState, vm: PadViewModel) {
         return
     }
 
-    val sending = summary.meters.getValue(state.sendDirection)
+    // NULL WHEN THE PAD CANNOT SAY which half is ours, and rendered as unknown
+    // rather than guessed. `sendDirection` used to resolve a null role to B->A,
+    // so the headline number was the wrong half's budget — stated confidently.
+    val sending = state.sendDirection?.let { summary.meters.getValue(it) }
     val frozen = summary.meters.values.any { it.frozen }
+
+    if (sending == null) {
+        // THE SEND VERB ALREADY REFUSES on a null role (`role-unknown`); this is
+        // the screen saying so before the operator writes a message, rather than
+        // after. The prompt names the two routes that DO record which half is
+        // yours, and there is deliberately no control here that sets one.
+        Callout(Tone.Warn, "TruePad cannot tell which half of this pad is yours") {
+            Body(PartyRole.UNKNOWN_ORIGIN_PROMPT)
+        }
+    }
 
     if (frozen) {
         Callout(Tone.Warn, "This pad is paused", Modifier.testTag("callout-paused")) {
@@ -354,21 +403,76 @@ fun PadScreen(state: UiState, vm: PadViewModel) {
         }
     }
 
+    // DISABLED WHEN THE PAD CANNOT SAY WHICH HALF IS OURS, as the iPhone edition
+    // already does. `send` and `open` both fail closed on a null role, but only
+    // after the operator has opened a screen and written a whole message — the
+    // refusal was correct and arrived at the worst possible moment.
+    val roleKnown = state.role != null
     FullWidth {
-        PrimaryButton("Send message", Modifier.testTag("btn-send"), enabled = !frozen) { vm.navigate(Screen.Send) }
-        SecondaryButton("Open message", Modifier.testTag("btn-open"), enabled = !frozen) { vm.navigate(Screen.Open) }
+        PrimaryButton("Send message", Modifier.testTag("btn-send"), enabled = !frozen && roleKnown) {
+            vm.navigate(Screen.Send)
+        }
+        SecondaryButton("Open message", Modifier.testTag("btn-open"), enabled = !frozen && roleKnown) {
+            vm.navigate(Screen.Open)
+        }
     }
 
     Rule()
     SectionTitle("Pad details")
-    KeyValue("Messages you can still send", sending.remainingRecords.toString())
+    // maxRemainingSends, NOT remainingRecords. On a fixed store every send spends
+    // a whole F-byte record, so the encryption budget bounds the count and the raw
+    // record total overstates it — see DirectionMeters in truepad-storage.
+    KeyValue(
+        "Messages you can still send",
+        sending?.maxRemainingSends?.toString()
+            ?: "Unknown — TruePad cannot tell which half is yours",
+    )
     KeyValue("Created", summary.createdAt.take(10).ifBlank { "—" })
 
     Rule()
     SectionTitle("Share this pad")
-    Muted("Give the other person their copy. Until they have it, neither of you can read anything the other sends.")
-    SecondaryButton("Give this pad to someone", Modifier.testTag("btn-give-pad")) { vm.startGive() }
-    Faint("You can hand it over as a file in person, or send it securely to a receive code.")
+    // GATED ON THE PAD'S DURABLE HANDOFF STATE, not rendered unconditionally.
+    //
+    // Both routes used to be offered to every pad. The sealed route is refused by
+    // the engine under the pair lock, so nothing was duplicated — but only after
+    // the other person had generated a receive code, sent it, and both had
+    // compared twelve words. The physical route is NOT backstopped: `exportPair`
+    // lets a pad that already carries a Physical marker through, so a second raw
+    // pad file really is produced, and the sentence under the button promising a
+    // pad "can be given only once, whichever way you choose" was not something
+    // the engine enforced. Withholding the offer is what makes it true.
+    if (state.mayHandOff) {
+        Muted("The other person needs a copy of this pad before you can message each other.")
+        // THE SECURE ROUTE IS THE OBVIOUS ONE. It used to take two taps and a screen
+        // that led with "Save as a file", so the ordinary way to give someone a pad
+        // was the one an operator found second.
+        PrimaryButton("Send securely to a receive code", Modifier.testTag("btn-share-sealed")) {
+            vm.startSendSealed()
+        }
+        Faint(
+            "Ask the other person to open TruePad and create a receive code. Have them send that code " +
+                "to you, then paste or scan it here.",
+        )
+        SecondaryButton("Give this pad to someone", Modifier.testTag("btn-give-pad")) { vm.startGive() }
+        Faint("You can also hand it over as a file in person. A pad can be given only once, whichever way you choose.")
+    } else {
+        Muted(
+            state.handOffRefusal
+                ?: "TruePad could not read this pad's handoff state, so it will not offer to hand " +
+                    "it over. Nothing about the pad has been changed.",
+            Modifier.testTag("handoff-refused"),
+        )
+        // THE COMMITTED PACKAGE STAYS REACHABLE. Sealing writes the package to
+        // disk and the engine hands back those exact bytes for the same receive
+        // request. Hiding this is what stranded a pad whose operator dismissed
+        // the sheet before saving the file; the RAW pad stays blocked either way,
+        // which is the part that matters for reuse.
+        if (state.mayReshareSealed) {
+            SecondaryButton("Hand over the same sealed file", Modifier.testTag("btn-reshare-sealed")) {
+                vm.startSendSealed()
+            }
+        }
+    }
 
     Rule()
     SecondaryButton("Security", Modifier.testTag("btn-security")) { vm.navigate(Screen.Details) }
@@ -397,9 +501,17 @@ fun SendScreen(state: UiState, vm: PadViewModel) {
                     "is lost — the pad cannot make it again.",
             )
         }
+        // THE COMPACT FORM IS WHAT A PERSON IS GIVEN. The engine still emits
+        // canonical JSON and that is still what is authenticated; this decides
+        // which spelling a human is handed, and keeps the other one one tap away.
+        // Null only if the compact form does not round-trip, in which case the
+        // canonical envelope is shown and works exactly as before.
+        val shown = remember(result.envelope) {
+            PublicTransport.envelope(result.envelope)?.text ?: result.envelope
+        }
         SelectionContainer {
             Text(
-                result.envelope,
+                shown,
                 style = EnvelopeStyle,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
@@ -413,13 +525,33 @@ fun SendScreen(state: UiState, vm: PadViewModel) {
             )
         }
         FullWidth {
+            // EXACTLY THE DISPLAYED VALUE. Copy and Share both take `shown`, so
+            // the screen cannot hand over a different spelling from the one the
+            // operator is looking at.
             PrimaryButton("Copy", Modifier.testTag("btn-copy-envelope")) {
-                context.copySensitiveText("TruePad encrypted message", result.envelope)
+                context.copySensitiveText("TruePad encrypted message", shown)
             }
             SecondaryButton("Share", Modifier.testTag("btn-share-envelope")) {
-                context.shareEncryptedMessage(result.envelope)
+                context.shareEncryptedMessage(shown)
             }
-            SecondaryButton("Back to pad") { vm.clearResult(); vm.back() }
+            SecondaryButton("Back to pad", Modifier.testTag("btn-back-to-pad")) { vm.clearResult(); vm.back() }
+        }
+        if (shown != result.envelope) {
+            Details("Technical form") {
+                SelectionContainer {
+                    Text(
+                        result.envelope,
+                        style = EnvelopeStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("envelope-json")
+                            .clearAndSetSemantics {
+                                contentDescription = "The same message in its canonical JSON form."
+                            },
+                    )
+                }
+            }
         }
         Faint(Claims.CLIPBOARD_WARNING)
         return
@@ -531,34 +663,23 @@ fun DetailsScreen(state: UiState, vm: PadViewModel) {
                 "both devices would spend the same pad material."
         )
     } else {
-    Faint(PartyRole.UNKNOWN_ORIGIN_PROMPT)
-    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-        Row(
-            Modifier.weight(1f).heightIn(min = 48.dp)
-                .selectable(selected = state.role == Party2.A, role = Role.RadioButton) { vm.setRole(Party2.A) }
-                .testTag("role-a"),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            RadioButton(selected = state.role == Party2.A, onClick = null)
-            Text("Alice", Modifier.padding(start = 4.dp), style = MaterialTheme.typography.bodyLarge)
-        }
-        Row(
-            Modifier.weight(1f).heightIn(min = 48.dp)
-                .selectable(selected = state.role == Party2.B, role = Role.RadioButton) { vm.setRole(Party2.B) }
-                .testTag("role-b"),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            RadioButton(selected = state.role == Party2.B, onClick = null)
-            Text("Bob", Modifier.padding(start = 4.dp), style = MaterialTheme.typography.bodyLarge)
-        }
-    }
+        // NO PICKER. This screen used to offer Alice/Bob radios one line under a
+        // prompt that says "there is nothing for you to set by hand — a role you
+        // picked would be a guess wearing a different name". The prompt was right
+        // and the control was the defect: it is a SECOND role authority beside the
+        // pad's origin, which is the architecture the cross-copy reuse fix exists
+        // to prevent, and the Browser edition refused to add one for that reason
+        // (src/browser/ui/role.ts). Unknown refuses; it does not delegate.
+        Faint(PartyRole.UNKNOWN_ORIGIN_PROMPT)
     }
     Faint("The two halves of a pad are separate. You send on one and receive on the other; the other person is the mirror of this.")
 
     for ((direction, m) in summary.meters) {
         Rule()
         SectionTitle(direction.wire)
-        KeyValue("Messages left", m.remainingRecords.toString())
+        KeyValue("Message packaging", FixedRecordIntake.recordModeLabel(m.record))
+        KeyValue("Messages left", m.maxRemainingSends.toString())
+        KeyValue("Authentication records left", m.remainingRecords.toString())
         KeyValue("Bytes left", m.remainingBytes.toString())
         KeyValue("Limited by", m.limitedBy.lowercase())
         KeyValue("Failed verifications", m.failureCount.toString())

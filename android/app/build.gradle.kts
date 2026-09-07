@@ -41,6 +41,12 @@ android {
         versionName = "3.0.0-dev.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // THE TWO-DEVICE STEPS ARE NOT PART OF THE SUITE. They take runner
+        // arguments and are run one at a time, by name, against a second handset.
+        // Leaving them in the default run would fail it for want of an argument
+        // and make the suite size depend on how it was invoked.
+        testInstrumentationRunnerArguments["notAnnotation"] =
+            "dev.systemslibrarian.truepad.app.CrossEditionStep"
 
         // No split configs, no locale stripping: nothing here needs them, and each
         // is a knob that can go wrong quietly.

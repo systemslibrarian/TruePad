@@ -47,9 +47,9 @@ part of the point.
 | Native app target (`ios/TruePadApp`) | **BUILT** — Debug and Release for `generic/platform=iOS`, minimum OS 16.0 verified on the binary |
 | Installed/launched on a physical iPhone | **DONE** — installed and launched on an iPhone 12 running iOS 18.6.2; process stable across repeated cold starts, and app-private storage created under `Library/Application Support/TruePad` |
 | On-device state/lifecycle/camera pass | **RUNS** on an iPhone 12 / iOS 18.6.2 via `ios/TruePadApp/TruePadAppUITests`. Covers lifecycle, durable consumption across a force-quit, a refused forgery consuming no pad material, a refused destruction, receive-request durability and terminal cancellation, and no camera prompt from ordinary navigation. A COMPLETED destruction and a full on-device round trip are NOT covered — see `REVIEWER-START-HERE.md` |
-| Human VoiceOver validation | **OUTSTANDING** (human gate) |
-| Physical iPhone validation | **OUTSTANDING** (hardware gate) — installation and launch are NOT the same as validation; see §11 |
-| Android↔iPhone two-device ceremony | **OUTSTANDING** (human gate) |
+| Human VoiceOver validation | **NOT TESTED — NON-BLOCKING** by project-owner decision. Zero steps observed; no partial pass inferred. Automated checks are baselines, not a substitute |
+| Physical iPhone validation | **DONE** — the on-device pass above ran on an iPhone 12 / iOS 18.6.2. This row said OUTSTANDING while §11 of this same document said DONE; §11 was right |
+| Android↔iPhone two-device ceremony | **DONE** — optical QR both directions, `.tps2` import both ways, messages opened both ways, replay refused. **Qualified:** the word comparisons were AUTOMATED, not spoken between two people, and the message carriers were host/test carriers, not optical. See §11 |
 
 A claim in this document about an unbuilt component is a **specification**, not
 evidence. Do not cite it as evidence.
@@ -441,7 +441,9 @@ while the file on disk still holds the plaintext.
 **What this does NOT claim.** It does not remove snapshots iOS has already
 written, it does not stop a screenshot the operator takes deliberately, and the
 *contents* of a post-fix snapshot have not been decoded and inspected on the
-handset — that needs the on-device UI pass that is still outstanding. What was
+handset. That remains true, and it is a limit of what was INSPECTED rather than a
+missing gate: the on-device UI pass has since run, but decoding a `.ktx` snapshot
+off the handset and examining its pixels is not something it does. What was
 verified on hardware is that the snapshot files are written at all, and that the
 build carrying the cover installs, launches, backgrounds, and stays resident.
 

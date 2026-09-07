@@ -289,8 +289,31 @@ class Engine(
         for ((sequence, count) in e.attempts) {
             if (sequence >= e.nextSequence && count >= h.verifyAttemptLimit) contestedLive += 1
         }
+        // §16 — WHAT A SEND ACTUALLY COSTS. On a FIXED store every send spends
+        // exactly F encryption bytes and one authentication record however short
+        // the message: burn builds a full F-byte frame, so `c` is always F. The
+        // encryption budget therefore bounds the MESSAGE COUNT exactly, at
+        // remainingBytes / F. On a variable store a send can be as small as the
+        // operator likes, so records are the only bound and remainingRecords is a
+        // true maximum — that branch is unchanged.
+        //
+        // Reporting remainingRecords on a fixed store OVERSTATED the budget, often
+        // by an order of magnitude. A Small pad (E = 16,384 per direction, N = 64)
+        // fixed at F = 4096 can send four messages; after the fourth it reported
+        // sixty, and the pad list still said "Ready" for a pad that could never
+        // send again. The figure is presentational — burn's own
+        // `encryption-exhausted` refusal is what protects the pad — but an
+        // operator plans around this number.
+        val sendsAffordableByBytes = when (val r = h.record) {
+            is RecordSpec.Fixed -> remainingBytes / r.bytes.toLong()
+            is RecordSpec.Variable -> remainingRecords
+        }
         val ceilRecordsForBytes = (remainingBytes + MAX_CIPHERTEXT_BYTES - 1) / MAX_CIPHERTEXT_BYTES
-        val limitedBy = if (remainingRecords <= ceilRecordsForBytes) "AUTHENTICATION" else "ENCRYPTION"
+        val bindingByBytes = when (h.record) {
+            is RecordSpec.Fixed -> sendsAffordableByBytes
+            is RecordSpec.Variable -> ceilRecordsForBytes
+        }
+        val limitedBy = if (remainingRecords <= bindingByBytes) "AUTHENTICATION" else "ENCRYPTION"
         val state = witnessFor(witnessFs, kind).report(h.pairId, h.direction, highWaters(store))
         // Derive — never store — this direction's deployment classification from
         // the live facts assembled under this same lock (source declarations,
@@ -303,7 +326,7 @@ class Engine(
             capacityRecords = h.capacityRecords, nextSequence = e.nextSequence, remainingRecords = remainingRecords,
             contestedLive = contestedLive, record = h.record,
             failureCount = e.failureCount, frozen = frozenHalf(store),
-            maxRemainingSends = remainingRecords, limitedBy = limitedBy,
+            maxRemainingSends = minOf(remainingRecords, sendsAffordableByBytes), limitedBy = limitedBy,
             witnessKind = kind, witnessState = state,
             deployment = assessDeployment(facts), sourceClass = facts.source,
         )
@@ -443,6 +466,21 @@ class Engine(
     /* ---- status --------------------------------------------------------------- */
 
     fun status(pairId: String): PairSummary = fs.withLock(pairId) { buildSummary(pairId) }
+
+    /**
+     * This pad's handoff state, read without mutating anything.
+     *
+     * ADVISORY, and deliberately so. Every verb that must not create a second copy
+     * re-reads this under the pair lock and refuses there; this only spares the
+     * operator a button that could only refuse. The interface had no way to ask at
+     * all, so it offered "Send securely to a receive code" and "Give this pad to
+     * someone" for a pad that had already been handed over — and the refusal
+     * arrived only after the other person had generated a receive code, sent it,
+     * and both had compared twelve words.
+     *
+     * Same shape and same name as the iOS twin (`Engine.handoffState`).
+     */
+    fun handoffState(pairId: String): HandoffState = readHandoffState(fs, pairId)
 
     /**
      * The pad list, as the released engine's `list-pairs` op returns it.

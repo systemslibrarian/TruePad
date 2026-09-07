@@ -286,8 +286,12 @@ final class PadPresentationUxTests: XCTestCase {
     /// and assessment are organised behind a disclosure rather than deleted.
     func testThePadScreenLeadsWithActionsAndKeepsEveryNumber() throws {
         let pad = try source("ios/TruePadKit/Sources/TruePadUI/PadViews.swift")
-        guard let messages = pad.range(of: "Section(\"Messages\")"),
-              let details = pad.range(of: "DisclosureGroup(\"Security details\")") else {
+        // The anchors moved with the visual parity pass — the screen is a scroll
+        // of product components rather than a `List` of `Section`s, and the two
+        // actions wear slabs. The PROPERTY this guard asserts is untouched: what
+        // the operator came to do is above the technical disclosure, not below it.
+        guard let messages = pad.range(of: "Slab(\"Write a message\", .primary)"),
+              let details = pad.range(of: "Details(\"Security details\")") else {
             return XCTFail("the pad screen no longer has the shape this guard reads")
         }
         XCTAssertTrue(messages.lowerBound < details.lowerBound,

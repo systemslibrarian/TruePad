@@ -10,6 +10,9 @@ import dev.systemslibrarian.truepad.spt.SptRefused
 import dev.systemslibrarian.truepad.storage.PartyRole
 import dev.systemslibrarian.truepad.storage.EngineRefused
 import dev.systemslibrarian.truepad.storage.PairListEntry
+import dev.systemslibrarian.truepad.storage.HandoffState
+import dev.systemslibrarian.truepad.storage.UNREADABLE_ADVICE
+import dev.systemslibrarian.truepad.storage.PairOrigin
 import dev.systemslibrarian.truepad.storage.PairSummary
 import dev.systemslibrarian.truepad.storage.Party2
 import dev.systemslibrarian.truepad.storage.SourceInput
@@ -26,6 +29,7 @@ import dev.systemslibrarian.truepad.storage.sptRestorePendingReceiveRequest
 import dev.systemslibrarian.truepad.storage.sptOpen
 import dev.systemslibrarian.truepad.storage.sptReviewRequest
 import dev.systemslibrarian.truepad.storage.sptSeal
+import dev.systemslibrarian.truepad.storage.sptSealedToRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -88,6 +92,47 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
 
     /* ---- navigation -------------------------------------------------------- */
 
+    /**
+     * Switch persistent destination.
+     *
+     * DELIBERATELY NOT `navigate()` AND NOT `back()`. Both of those clear state
+     * that a tab switch has no business clearing — `back()` resets `spt`, which is
+     * the live sealed-transfer session, and both drop the banner. A tab switch
+     * moves the viewport; it is not a step in any flow, and it must not be able to
+     * cancel one. Nothing here touches `spt`, `lastResult`, `currentPairId`,
+     * `banner`, or anything the engine owns.
+     */
+    fun selectTab(tab: Tab) {
+        val s = _state.value
+        if (s.tab == tab) return
+        val parked = s.parked + (s.tab to s.backStack)
+        _state.value = s.copy(
+            tab = tab,
+            backStack = parked[tab] ?: listOf(tab.root),
+            parked = parked - tab,
+        )
+        // ARRIVING AT THE INBOX MUST SURFACE A PENDING REQUEST. See
+        // restorePendingReceiveRequest — this is the one thing a tab switch has to
+        // DO, as against all the things it must not.
+        if (tab == Tab.Inbox) restorePendingReceiveRequest()
+    }
+
+    /**
+     * A WHOLESALE STACK REPLACEMENT, WITH THE TAB IT BELONGS TO.
+     *
+     * `tab` used to be written in exactly one place — `selectTab` — while five
+     * verbs replaced `backStack` outright. That left the two able to disagree: a
+     * Pads-rooted stack could be showing while `tab` still said Inbox, and because
+     * `selectTab` early-returns when the tab already matches, tapping Inbox then
+     * did nothing at all and the receive destination became unreachable without a
+     * relaunch. Every wholesale replacement goes through here now, so the pair
+     * cannot drift.
+     */
+    private fun UiState.movedTo(tab: Tab, stack: List<Screen>): UiState {
+        val kept = if (this.tab == tab) parked else parked + (this.tab to backStack)
+        return copy(tab = tab, backStack = stack, parked = kept - tab)
+    }
+
     fun navigate(screen: Screen) {
         _state.value = _state.value.let { it.copy(backStack = it.backStack + screen, banner = null) }
     }
@@ -141,8 +186,10 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
             val outcome = withContext(Dispatchers.IO) {
                 runCatching { engine.sptEndReceiveRequest(requestId, reason) }
             }
-            _state.value = _state.value.copy(
-                backStack = listOf(Screen.Home),
+            // BACK TO THE INBOX'S OWN ROOT, not to the Pads home. Ending a receive
+            // request is an Inbox action; sending it to `Screen.Home` put the Pads
+            // home screen inside the Inbox tab and stranded the destination.
+            _state.value = _state.value.movedTo(Tab.Inbox, listOf(Tab.Inbox.root)).copy(
                 spt = SptUi(),
                 banner = outcome.fold(
                     onSuccess = { Banner.Info(done) },
@@ -161,11 +208,26 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun cancelSpt(to: Screen) {
-        _state.value = _state.value.copy(
-            backStack = if (to == Screen.Home) listOf(Screen.Home) else _state.value.backStack.dropLastWhile { it != to },
-            banner = null,
-            spt = SptUi(),
-        )
+        val s = _state.value
+        // FLOORED. `dropLastWhile` removes EVERY element when the target is not on
+        // the stack, and `UiState.screen` is `backStack.last()` — so an empty stack
+        // is a crash on the next recomposition, not a blank screen. That became
+        // reachable once each tab had its own stack: cancelling a sealed transfer
+        // with `Screen.Pad` from a stack that has no Pad screen is exactly that
+        // case. Falling back to the current tab's root is the safe answer.
+        // AND IT CARRIES ITS TAB. This was the one wholesale replacement that did
+        // not go through `movedTo`: the `Screen.Home` branch wrote a PADS-rooted
+        // stack while leaving `tab` alone, which is exactly the divergence
+        // `movedTo` exists to prevent — a Pads stack under the Inbox tab, after
+        // which `selectTab(Inbox)` early-returns and the destination is gone. Its
+        // only caller with `Screen.Home` is `endReceiveRequest`'s null-request
+        // path, unreachable today because `requestIdHex` is non-null; a latent
+        // bypass of a repair is still a bypass of it.
+        _state.value = if (to == Screen.Home) {
+            s.movedTo(Tab.Pads, listOf(Screen.Home))
+        } else {
+            s.copy(backStack = s.backStack.dropLastWhile { it != to }.ifEmpty { listOf(s.tab.root) })
+        }.copy(banner = null, spt = SptUi())
     }
 
     fun dismissBanner() {
@@ -200,10 +262,96 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
             // single global default of Party2.A shared by every pad, which is how
             // two devices holding one pair both burned A_TO_B.
             val derivedRole = current?.let { PartyRole.derive(it.origin) }
+            // WHETHER THIS PAD MAY STILL LEAVE — the ENGINE's answer, asked
+            // without mutating anything.
+            //
+            // The pad screen used to render "Share this pad" and both of its
+            // routes UNCONDITIONALLY. The sealed route is refused by the engine
+            // under the pair lock, so nothing was ever duplicated by it — but the
+            // refusal arrived only after the other person had generated a receive
+            // code, sent it, and both had compared twelve words. The physical
+            // route is not backstopped at all: `exportPair` refuses Sealed and
+            // UnreadableSpent and lets a Physical marker through, so a second raw
+            // pad file really is produced. The sentence under the button says "A
+            // pad can be given only once, whichever way you choose", and for that
+            // one case it was a promise the engine does not keep. Gating here is
+            // what makes it true again.
+            val handoff = current?.let {
+                withContext(Dispatchers.IO) { runCatching { engine.handoffState(open!!) }.getOrNull() }
+            }
+            // NOT `== IMPORTED`. An origin that cannot be read is not a pad that
+            // was made here: it is a pad TruePad cannot vouch for, and it already
+            // refuses to SEND or OPEN on one. Reading UNKNOWN as "not imported"
+            // made the same fact fail closed for the role and open for the
+            // handoff, ten lines apart — and exporting the raw pad is the one
+            // substantive thing an otherwise-unusable pad can still do.
+            val vouched = current?.origin == PairOrigin.GENERATED_HERE
+            val imported = !vouched
+            // FAIL CLOSED. A pad whose handoff state could not be read is not a
+            // pad that may be handed over; `handoff == null` falls to the else.
+            val mayHandOff = handoff is HandoffState.Absent &&
+                HandoffPolicy.mayExportRawPad(handedOver = false, imported = imported)
+            val mayReshareSealed = handoff is HandoffState.Sealed &&
+                HandoffPolicy.mayReshareSealedPackage(sealed = true, imported = imported)
+            // THE PHYSICAL EQUIVALENT, and it exists for the same reason the
+            // sealed one does. `exportPair` deliberately lets a re-export through
+            // under an existing Physical marker — the first save can be cancelled
+            // at the file picker, land on a full disk, or go to a drive that was
+            // pulled — and the marker keeps the time of the FIRST handoff either
+            // way. Gating the whole screen without this made a failed delivery
+            // permanent, which is loss the engine had deliberately not imposed.
+            // It is NOT a second handoff and the screen must not offer it as one.
+            val mayResavePhysical = handoff is HandoffState.Physical && !imported
+            val handOffRefusal: String? = when {
+                current == null -> null
+                handoff == null ->
+                    "TruePad could not read this pad's handoff state, so it will not offer to hand " +
+                        "it over. Nothing about the pad has been changed."
+                handoff is HandoffState.Physical ->
+                    "This pad was already handed over on ${handoff.at}."
+                handoff is HandoffState.Sealed ->
+                    "This pad was already sent by sealed transfer."
+                // THE ADVICE, NOT THE EXCEPTION. `UnreadableSpent.message` is
+                // UNREADABLE_ADVICE with a platform exception string appended, and
+                // a platform string can carry a path, and a path can carry a
+                // pairId. `operate`'s own catch refuses to show one for exactly
+                // that reason; this must not be the way around it.
+                handoff is HandoffState.UnreadableSpent -> UNREADABLE_ADVICE
+                imported ->
+                    "This pad arrived from someone else, so TruePad will not pass it on. Two " +
+                        "people holding the same pad would each use the same material."
+                else -> null
+            }
+            // LAST WRITER WINS, SO CHECK WHO WON. `refresh()` suspends across
+            // several IO hops; two overlapping reloads could land the older pad's
+            // `current`, `role` and handoff eligibility under the newer pad's id.
+            // The pad-scoped half is dropped if the selection moved while this one
+            // was reading.
+            if (_state.value.currentPairId != open) return@launch
             _state.value = _state.value.copy(
                 pads = visible, current = current, loaded = true,
-                role = derivedRole ?: _state.value.role.takeIf { current == null },
+                // DERIVED, OR NOTHING. There is no second source.
+                //
+                // This used to fall back to an answer the operator had given by
+                // hand, kept for as long as the same pad stayed selected. That
+                // fallback is gone, along with the control that fed it: a pad
+                // whose origin cannot say is exactly the case where a guess spends
+                // the other person's material, and an operator's pick is a guess
+                // wearing a different name — which is what this screen's own
+                // prompt already told them. Offering it created a SECOND role
+                // authority beside the origin, which is the architecture the
+                // cross-copy reuse fix exists to prevent; the Browser edition
+                // refused to add one for that reason and says so in role.ts.
+                //
+                // Unknown therefore REFUSES. `send` and `open` already fail closed
+                // on a null role with reason `role-unknown`; nothing here has to
+                // invent a half for them.
+                role = derivedRole,
                 roleWasDerived = derivedRole != null,
+                mayHandOff = mayHandOff,
+                mayReshareSealed = mayReshareSealed,
+                mayResavePhysical = mayResavePhysical,
+                handOffRefusal = handOffRefusal,
             )
         }
     }
@@ -272,6 +420,10 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             openPad(summary.pairId)
+            // THE FORM IS SPENT. It survives a tab switch on purpose; it must not
+            // survive the pad it made, or the next create starts pre-filled with
+            // the last one's name and the last one's source files.
+            resetCreateForm()
             _state.value = _state.value.copy(banner = Banner.Created(Claims.DEVICE_SOURCE_LABEL))
         }
     }
@@ -300,6 +452,10 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
             }
             require(required > 0)
             openPad(summary.pairId)
+            // Spent, for the same reason as the device path — and here it also
+            // drops the picked source URIs, which must not be carried into a pad
+            // the operator has not chosen them for.
+            resetCreateForm()
             _state.value = _state.value.copy(banner = Banner.Created(Claims.EXTERNAL_SOURCE_LABEL))
         }
     }
@@ -377,34 +533,72 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
                     container.fill(0)
                 }
             }
-            _state.value = _state.value.copy(banner = Banner.Exported)
+            // BACK TO THE PAD, because the handoff is over.
+            //
+            // This left the operator on the Give screen with its "Save as a file"
+            // control still live and its "a pad is given only once" callout still
+            // on screen. A second tap produced a second raw copy: the engine lets
+            // a re-export through under an existing Physical marker, by the same
+            // deliberate rule the Browser has. Leaving the screen is what makes
+            // the callout's promise true. `refresh()` in operate's finally
+            // recomputes `mayHandOff`, so the pad screen comes back gated.
+            _state.value = _state.value
+                .copy(backStack = _state.value.backStack.dropLastWhile { it != Screen.Pad }
+                    .ifEmpty { listOf(_state.value.tab.root) })
+                .copy(banner = Banner.Exported)
         }
     }
 
     /* ---- sealed transfer: RECEIVE a pad ------------------------------------- */
 
-    /** Begin the receive flow with a clean slate. The engine holds no state yet;
-     *  a receive request is only created when the operator asks for one. */
-    fun startReceive() {
-        _state.value = _state.value.copy(
-            backStack = _state.value.backStack + Screen.ReceivePad, banner = null, spt = SptUi(),
-        )
-        // PICK UP A REQUEST THAT SURVIVED. `SptUi()` above deliberately clears the
-        // transient session, and `request.json`/`dk.bin` are durable — so without
-        // this, leaving the screen or restarting the app stranded a LIVE one-time
-        // key: still pending on disk, unreachable from the interface. The operator
-        // could not cancel it, could not REJECT it after a failed word comparison,
-        // and could not open the sealed file that came back.
-        //
-        // Found by the two-device physical ceremony: the iPhone sealed a pad to
-        // this device's request and this device then had no way to open it. The
-        // iOS edition carried the identical defect.
+    // `startReceive()` USED TO LIVE HERE, and is deliberately gone.
+    //
+    // It had no caller left — the home screen's "Receive a pad" selects the Inbox
+    // tab instead — and it was not inert dead code: it appended `Screen.ReceivePad`,
+    // which is the Inbox tab's ROOT, onto whatever stack was showing. Rewiring it
+    // would have put a second copy of the receive destination on the Pads stack,
+    // which is how a live one-time request gets stranded behind the wrong back
+    // stack in the first place. What it did that was worth keeping —
+    // `restorePendingReceiveRequest()` — is called by `selectTab` below.
+
+    /**
+     * PICK UP A REQUEST THAT SURVIVED, from whichever way the operator arrived.
+     *
+     * Extracted because the Inbox tab reintroduced the exact defect the comment in
+     * [startReceive] describes. A tab switch must NOT reset the transient session —
+     * doing so would cancel a ceremony in progress — so it does not go through
+     * `startReceive`, and for one build that meant selecting Inbox showed the
+     * "create a receive code" screen while a live one-time key sat pending on
+     * disk: uncancellable, unrejectable, and unable to open the sealed file that
+     * came back for it. Found by the two-device run, which is where the same
+     * defect was found the first time.
+     *
+     * Safe to call on every arrival: it only ever fills an EMPTY slot, so it
+     * cannot displace a request the operator is looking at.
+     */
+    private fun restorePendingReceiveRequest() {
         viewModelScope.launch {
-            val restored = withContext(Dispatchers.IO) {
-                runCatching { engine.sptRestorePendingReceiveRequest() }.getOrNull()
+            // A FAILED RESTORE IS NOT "NOTHING PENDING". `.getOrNull()` made the
+            // two indistinguishable, which is the precise stranding this function
+            // exists to close: a live one-time key still on disk, an interface
+            // offering to create another, and no way to cancel or reject the
+            // request that is actually there. It is told now.
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching { engine.sptRestorePendingReceiveRequest() }
+            }
+            val restored = outcome.getOrElse { failure ->
+                // THE ENGINE'S OWN WORDS WHEN IT HAS THEM. `sptRestorePendingReceiveRequest`
+                // now REFUSES rather than returning null when it cannot determine
+                // whether a request is pending — a directory it could not list, or
+                // a request whose state on disk could not be read. Those used to
+                // come back as a successful null, which the interface rendered as
+                // "Create a receive code" over a possibly-live one-time key.
+                val text = (failure as? SptRefused)?.toUserFacing()?.detail
+                    ?: "TruePad could not check whether a receive code is already waiting on " +
+                        "this device (${failure.javaClass.simpleName})."
+                _state.value = _state.value.copy(banner = Banner.Problem(text))
+                return@launch
             } ?: return@launch
-            // Only fill an EMPTY slot, so a reload can never displace a request the
-            // operator is looking at.
             if (_state.value.spt.receiveRequest == null) {
                 _state.value = _state.value.copy(
                     spt = _state.value.spt.copy(receiveRequest = restored),
@@ -479,6 +673,20 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
 
     /** SENDER — decode the receiver's TPR2 code and return the twelve words to
      *  compare. The canonical body is held for the seal step, never re-derived. */
+    /**
+     * Whether the reviewed request is the one this pad was ALREADY sealed to.
+     *
+     * Advisory, and asked of the same comparison `sptSeal` is about to make. The
+     * sealed-send screen used one set of words for both cases, so an operator
+     * coming back for the file they had already committed was told "Sealing gives
+     * this pad away" and "this pad can be given only once" about an act that
+     * encapsulates nothing and creates no second copy.
+     */
+    fun sealIsReshare(pairId: String): Boolean {
+        val hash = _state.value.spt.sendReview?.requestHashHex ?: return false
+        return runCatching { engine.sptSealedToRequest(pairId, hash) }.getOrDefault(false)
+    }
+
     fun reviewSealRequest(tpr2Text: String) {
         operate {
             val review = withContext(Dispatchers.IO) { engine.sptReviewRequest(tpr2Text.trim()) }
@@ -545,8 +753,7 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
                 engine.destroy(pairId, confirmation, "removed on Android")
                 hidden.hide(pairId)
             }
-            _state.value = _state.value.copy(
-                backStack = listOf(Screen.Home),
+            _state.value = _state.value.movedTo(Tab.Pads, listOf(Screen.Home)).copy(
                 currentPairId = null,
                 current = null,
                 banner = Banner.Removed,
@@ -557,9 +764,28 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
     /* ---- selection --------------------------------------------------------- */
 
     fun openPad(pairId: String) {
-        _state.value = _state.value.copy(
+        // A PAD LIVES IN THE PADS TAB. `commitReceive` calls this from the Inbox,
+        // and without moving the tab the Pad screen was drawn under Inbox — after
+        // which the receive destination could not be reached again.
+        // THE ANSWER IS ABOUT A PAD, SO IT DOES NOT SURVIVE A CHANGE OF PAD.
+        //
+        // `current`, `mayHandOff`, `mayReshareSealed` and `handOffRefusal` are
+        // single global slots, and `refresh()` is asynchronous — it calls
+        // `status()` for every pad on disk before it writes the corrected values.
+        // Leaving them alone here meant Compose drew the NEW pad's screen with the
+        // OLD pad's label, meters and eligibility, so a pad that had already been
+        // handed over could show a live "Give this pad to someone" for as long as
+        // the reload took. Cleared to their fail-closed defaults first; `refresh`
+        // fills them in.
+        _state.value = _state.value.movedTo(Tab.Pads, listOf(Screen.Home, Screen.Pad)).copy(
             currentPairId = pairId,
-            backStack = listOf(Screen.Home, Screen.Pad),
+            current = null,
+            role = null,
+            roleWasDerived = false,
+            mayHandOff = false,
+            mayReshareSealed = false,
+            mayResavePhysical = false,
+            handOffRefusal = null,
             banner = null,
             lastResult = null,
             spt = SptUi(),
@@ -567,24 +793,68 @@ class PadViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
-    /**
-     * Override the role for the CURRENT pad. Only reachable when the pad's origin
-     * is unknown, so the operator is answering a question TruePad could not.
-     *
-     * The previous comment here said "Persisted per pad by the operator's choice";
-     * it was neither persisted nor per pad — one global field served every pad.
-     */
-    fun setRole(role: Party2) {
-        _state.value = _state.value.copy(role = role)
+    // `setRole` USED TO LIVE HERE and is deliberately gone. See `refresh`: an
+    // unknown origin refuses rather than delegating, on every edition.
+
+    /** Edit the create form. See [UiState.create] for why it does not live in the
+     *  composition. */
+    fun updateCreate(edit: (CreateForm) -> CreateForm) {
+        _state.value = _state.value.copy(create = edit(_state.value.create))
+    }
+
+    /** Start a new create form. Called when the operator LEAVES the finished
+     *  ceremony, never on the way in — returning to a half-filled form is the
+     *  behaviour this exists to preserve. */
+    fun resetCreateForm() {
+        _state.value = _state.value.copy(create = CreateForm())
     }
 }
+
+/**
+ * The create screen's whole form.
+ *
+ * A plain data class of the operator's answers, and nothing else: no engine
+ * state, nothing durable, nothing that outlives the process. It is here rather
+ * than in the composition only so that switching tabs cannot silently undo the
+ * operator's choice of randomness source. See [UiState.create].
+ */
+data class CreateForm(
+    val label: String = "",
+    val size: PadSize = PadSize.Medium,
+    val external: Boolean = false,
+    val declared: Boolean = false,
+    val origin: String = "",
+    val picked: List<PickedSource> = emptyList(),
+    val fixedLength: Boolean = false,
+    val fixedSize: String = "256",
+)
 
 /* ---- the UI's view of the world ------------------------------------------- */
 
 enum class Screen {
-    Home, CreatePad, AddPad, Pad, Send, Open, Details, Remove,
+    Home, CreatePad, AddPad, Pad, Send, Open, Details, Remove, About,
     // Sealed Pad Transfer — the same SPT protocol the Browser Edition speaks.
     ReceivePad, GivePad, SendSealed, ScanQr,
+}
+
+/**
+ * THE THREE PERSISTENT DESTINATIONS, matching the iPhone edition.
+ *
+ * The labels are the iOS ones VERBATIM — "Pads", "Inbox", "About" — because the
+ * two editions are meant to read as one product and iOS is the authority for what
+ * these destinations mean.
+ *
+ * EACH TAB KEEPS ITS OWN BACK STACK. That is not a nicety: `back()` deliberately
+ * drops the transient sealed-transfer session, because it may hold a decrypted
+ * pad, and `navigate()` clears the banner. If switching tabs reused either, then
+ * glancing at About in the middle of receiving a pad would silently destroy the
+ * ceremony the operator was halfway through. Switching parks the current stack and
+ * restores the other one, and touches nothing else.
+ */
+enum class Tab(val label: String, val root: Screen) {
+    Pads("Pads", Screen.Home),
+    Inbox("Inbox", Screen.ReceivePad),
+    About("About", Screen.About),
 }
 
 data class PickedSource(val uri: Uri, val name: String, val declaredOrigin: String)
@@ -684,28 +954,93 @@ data class UiState(
     val loaded: Boolean = false,
     val busy: Boolean = false,
     val backStack: List<Screen> = listOf(Screen.Home),
+    /** Which persistent destination is showing. */
+    val tab: Tab = Tab.Pads,
+    /**
+     * The back stacks of the tabs that are NOT showing. Parked, not discarded:
+     * coming back to a tab must find it where it was left.
+     */
+    val parked: Map<Tab, List<Screen>> = emptyMap(),
     val pads: List<PairListEntry> = emptyList(),
     val currentPairId: String? = null,
     val current: PairSummary? = null,
     /**
      * Which half of the pair this device owns, DERIVED per pad from how it was
-     * acquired — never a default. Null means the pad's origin is unknown and the
-     * operator must choose; see [dev.systemslibrarian.truepad.storage.PartyRole].
+     * acquired — never a default. Null means the pad's origin is unknown and
+     * TruePad REFUSES; there is no control that sets one, and a role the operator
+     * picked would be a guess wearing a different name. See
+     * [dev.systemslibrarian.truepad.storage.PartyRole].
      */
     val role: Party2? = null,
-    /** True when the pad supplied the role, so the picker is shown only when there is a question. */
+    /** True when the pad supplied the role. False means TruePad refuses, not that
+     *  the operator is asked — there is no control that sets one. */
     val roleWasDerived: Boolean = false,
+    /**
+     * Whether the RAW pad may still leave this device. FAIL-CLOSED: false until
+     * the engine has actually said otherwise, so a pad whose handoff state has
+     * not been read yet — or could not be read — is never offered a fresh handoff.
+     */
+    val mayHandOff: Boolean = false,
+    /** Whether the ALREADY-COMMITTED sealed package may be offered again. Distinct
+     *  from [mayHandOff]; see [HandoffPolicy] for why collapsing the two stranded
+     *  pads on the iOS edition. */
+    val mayReshareSealed: Boolean = false,
+    /** Whether the pad file of an ALREADY-COMPLETED physical handoff may be
+     *  written again. Not a second handoff: the same pad, already given away, for
+     *  a delivery that did not land. See the computation in `refresh`. */
+    val mayResavePhysical: Boolean = false,
+    /** Why a fresh handoff is refused, in the operator's terms. Null only when
+     *  one is genuinely still available. */
+    val handOffRefusal: String? = null,
+    /**
+     * THE CREATE FORM, held here rather than in the composition.
+     *
+     * Every field was a `remember { }` inside `CreatePadScreen`. The tab shell
+     * parks BACK STACKS, not compositions, so leaving the Pads tab removed the
+     * screen from the tree and discarded all of them — and coming back restored a
+     * stack whose top still said `Screen.CreatePad`, so the operator returned to
+     * what looked like the screen they left with every value silently at its
+     * default. Including `external = false`.
+     *
+     * That is the one reset that is not merely annoying: an operator who had
+     * chosen external material, picked their files and ticked the declaration
+     * comes back to a form that will make a DEVICE-CSPRNG pad, with the Create
+     * button live. Material must never be quietly substituted for what the
+     * operator selected. The ViewModel outlives both the tab park and an activity
+     * recreation, so it outlives the defect and the rotation route as well.
+     */
+    val create: CreateForm = CreateForm(),
     val banner: Banner? = null,
     val lastResult: OpResult? = null,
     val spt: SptUi = SptUi(),
 ) {
     val screen: Screen get() = backStack.last()
 
-    /** The direction this device SENDS on, given the operator's chosen role. */
-    val sendDirection: Direction
-        get() = if (role == Party2.A) Direction.A_TO_B else Direction.B_TO_A
+    /**
+     * The direction this device SENDS on — NULL when the pad cannot say which half
+     * is ours.
+     *
+     * These returned `B_TO_A` for a null role, because `if (role == Party2.A)`
+     * treats "not A" and "we do not know" as the same answer. The pad screen then
+     * printed that half's budget as a confident figure: an unknown-origin pad
+     * whose B->A half was spent said "Messages you can still send: 0" about a pad
+     * with four hundred sends left on the other half, and with the halves the
+     * other way round it promised capacity that was not the operator's. The
+     * Browser fixed exactly this by replacing `resolveRole(...) ?? "A"` with a
+     * null-aware role; there is no honest number to show, so there is none.
+     */
+    val sendDirection: Direction?
+        get() = when (role) {
+            Party2.A -> Direction.A_TO_B
+            Party2.B -> Direction.B_TO_A
+            null -> null
+        }
 
-    /** The direction this device RECEIVES on. */
-    val receiveDirection: Direction
-        get() = if (role == Party2.A) Direction.B_TO_A else Direction.A_TO_B
+    /** The direction this device RECEIVES on. Null for the same reason. */
+    val receiveDirection: Direction?
+        get() = when (role) {
+            Party2.A -> Direction.B_TO_A
+            Party2.B -> Direction.A_TO_B
+            null -> null
+        }
 }

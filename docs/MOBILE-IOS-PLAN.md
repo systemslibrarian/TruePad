@@ -27,9 +27,17 @@ authoritative.
 
 **Not claimed:** no App Store build exists and there is no 3.0 tag. The app HAS
 been installed and launched on a physical iPhone (iPhone 12, iOS 18.6.2) with 9
-on-device automated tests passing — which is not the same as full physical
-validation. Human VoiceOver, human TalkBack, the Android↔iPhone two-device
-ceremony and physical TPM validation all remain outstanding.
+on-device automated tests passing.
+
+**The Android↔iPhone two-device ceremony has since been run** on real hardware
+and is no longer outstanding, with two qualifications that travel with it: the
+word comparisons were AUTOMATED rather than spoken between two people, and the
+message carriers were host/test carriers rather than optical
+(`docs/REMAINING-PHYSICAL-GATES.md` §A–§B).
+
+**Human VoiceOver, human TalkBack and physical TPM validation are NOT TESTED**,
+and all three are **non-blocking** by project-owner decision
+(`docs/RELEASE-CHECKLIST-3.0.md`, the canonical authority).
 
 See `docs/IOS-SECURITY.md` for the security and durability boundaries, which is
 the document that governs where these claims stop.

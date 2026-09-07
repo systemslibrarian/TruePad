@@ -32,9 +32,19 @@
 #      That job is written to be UNABLE to go green over an empty run. Booting an
 #      emulator and calling a Gradle task proves nothing: a connected-test task
 #      that discovers no tests exits 0, and so does one whose APK never
-#      installed. So the results XML is parsed afterwards and every expected test
-#      class must be present, the count must meet a floor, and failures, errors
-#      and skips must all be zero. A skipped security test is not a passing one.
+#      installed. So the results XML is parsed afterwards and EVERY EXPECTED TEST
+#      CLASS must be present with at least its expected number of tests, and
+#      failures, errors and skips must all be zero. A skipped security test is not
+#      a passing one.
+#
+#      There is no total-count floor any more, and this used to say there was. The
+#      floor was the sum of the per-class expectations, so it could never fire
+#      independently of the loop that already checks each class, and it could not
+#      catch the thing it was described as catching — a gutted EXPECTED table
+#      shrinks the floor along with itself. That job belongs to
+#      tests/stated-counts.test.ts, which checks the table against the suite that
+#      EXISTS rather than against the run. See the comment in
+#      android/tools/verify-instrumentation.sh, which sets this out in full.
 #
 # STILL NOT COVERED: physical hardware. Everything here is an emulator, which
 # says nothing about a real TEE, real flash, or a vendor's backup implementation.

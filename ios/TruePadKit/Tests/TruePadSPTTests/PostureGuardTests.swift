@@ -12,8 +12,19 @@ final class PostureGuardTests: XCTestCase {
 
     /// The shipping products. The test-only and host-only targets are excluded on
     /// purpose and named here so the exclusion is deliberate rather than implicit.
+    /// The app shell: shipping Swift that is not a SwiftPM target.
+    static let appShellTarget = "TruePadApp"
+    /// The SwiftPM targets. Used where the question is about `Package.swift`.
     static let shippingTargets = ["TruePadCore", "TruePadClaims", "TruePadStorage", "TruePadSPT",
                                   "TruePadUI"]
+
+    /// Every directory of SHIPPING SWIFT, which is a larger set than the SwiftPM
+    /// targets: `ios/TruePadApp/TruePadApp/` is compiled into the binary an
+    /// operator installs and declares no target of its own, so it sat outside the
+    /// no-network ban, the stored-verdict ban and the leakage sweep alike. It is
+    /// clean today — which is exactly the kind of fact that stops being true
+    /// without anyone noticing.
+    static let shippingSourceTargets = shippingTargets + [appShellTarget]
 
     func manifestCode() throws -> String {
         try String(contentsOf: Self.kitRoot.appendingPathComponent("Package.swift"), encoding: .utf8)
@@ -26,6 +37,21 @@ final class PostureGuardTests: XCTestCase {
     }
 
     func sources(of target: String) throws -> [(name: String, text: String)] {
+        // THE APP SHELL IS A TARGET TOO. `ios/TruePadApp/TruePadApp/` is compiled
+        // into the binary an operator installs, and it sat outside every sweep
+        // here — the no-network ban, the stored-verdict ban, all of it. It is
+        // clean today, which is exactly the kind of fact that stops being true
+        // without anyone noticing. Named rather than derived from Package.swift,
+        // because it is not a SwiftPM target.
+        if target == Self.appShellTarget {
+            let dir = Self.kitRoot.deletingLastPathComponent()
+                .appendingPathComponent("TruePadApp/TruePadApp")
+            let files = try FileManager.default.subpathsOfDirectory(atPath: dir.path)
+                .filter { $0.hasSuffix(".swift") }
+            return try files.map { (name: "\(target)/\($0)",
+                                    text: try String(contentsOf: dir.appendingPathComponent($0),
+                                                     encoding: .utf8)) }
+        }
         let dir = Self.kitRoot.appendingPathComponent("Sources/\(target)")
         let files = try FileManager.default.subpathsOfDirectory(atPath: dir.path)
             .filter { $0.hasSuffix(".swift") }
@@ -94,7 +120,7 @@ final class PostureGuardTests: XCTestCase {
         }
 
         // And no shipping source may import it either, whatever the manifest says.
-        for target in Self.shippingTargets {
+        for target in Self.shippingSourceTargets {
             for file in try sources(of: target) {
                 XCTAssertFalse(file.text.contains("import _CryptoExtras"),
                                "\(file.name) imports _CryptoExtras")
@@ -127,7 +153,7 @@ final class PostureGuardTests: XCTestCase {
             "NWConnection",
             "NWListener",
         ]
-        for target in Self.shippingTargets {
+        for target in Self.shippingSourceTargets {
             for file in try sources(of: target) {
                 let text = Self.stripComments(file.text)
                 for needle in forbidden {
@@ -213,6 +239,63 @@ final class PostureGuardTests: XCTestCase {
     /// Strip `//` and `/* */` so prose explaining a forbidden term is not mistaken
     /// for a use of it — the same lesson the production-source audit already
     /// learned.
+    /// The brace-balanced block introduced by the first `{` at or after `anchor`,
+    /// anchor included. Nil when the anchor is absent or its block never closes.
+    ///
+    /// STRUCTURAL, NOT A BYTE COUNT. Both plaintext-leakage guards used to read a
+    /// fixed window forward from this same anchor — `prefix(900)` in
+    /// `LeakageAuditTests` and `prefix(700)` in `AppShellRegressionTests`. The
+    /// block they guard ends 621 characters in, so the tighter one had 79
+    /// characters of margin: adding 308 characters of ORDINARY PRODUCT PROSE
+    /// inside the block pushes `.textSelection(.enabled)` past both windows, and
+    /// every precondition those guards assert still passes while it happens. A
+    /// region a paragraph can walk out of is not a region.
+    ///
+    /// `ThemeTokenTests` learned this from a 220-character window that a mutation
+    /// walked straight through, and replaced it with structural walking. The two
+    /// guards that matter most had not caught up.
+    ///
+    /// Braces inside string literals are skipped by a quote-toggling scan, which
+    /// is deliberately simple and has two known limits, stated so nobody
+    /// calibrates the guard's strength wrongly from this comment:
+    ///
+    ///   · a `\(...)` interpolation is NOT re-entered, so a quote inside one
+    ///     flips the scanner's idea of whether it is in a string. In practice the
+    ///     region walked here contains none, and a wrong flip ENDS the region
+    ///     early or runs it to the end of the file — the first is caught by the
+    ///     callers' `hasSuffix("}")` and precondition assertions, the second
+    ///     makes the region larger, never smaller.
+    ///   · it is applied to comment-stripped text, and `stripComments` is not
+    ///     string-aware either; a `//` inside a string literal in the scanned file
+    ///     would corrupt the input. Also caught by the same preconditions.
+    ///
+    /// Both fail toward a region that is too LARGE or an outright test failure,
+    /// never toward one that is too small — which is the direction that would hide
+    /// a violation. Strictly stronger than the character count it replaces.
+    static func blockAfter(_ anchor: String, in text: String) -> String? {
+        guard let a = text.range(of: anchor) else { return nil }
+        var depth = 0
+        var started = false
+        var inString = false
+        var escaped = false
+        var out = ""
+        for ch in text[a.lowerBound...] {
+            out.append(ch)
+            if escaped { escaped = false; continue }
+            if ch == "\\" { escaped = true; continue }
+            if ch == "\"" { inString.toggle(); continue }
+            if inString { continue }
+            if ch == "{" {
+                depth += 1
+                started = true
+            } else if ch == "}" {
+                depth -= 1
+                if started && depth == 0 { return out }
+            }
+        }
+        return nil
+    }
+
     static func stripComments(_ text: String) -> String {
         var out = ""
         var depth = 0

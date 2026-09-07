@@ -117,6 +117,31 @@ export function authMeter(m: DirectionMeters): MeterView {
 // remaining indicator the simple UI shows (no per-direction meters on the main
 // screens — those live under Advanced / Pad details).
 function directionRemainingFraction(m: DirectionMeters): number {
+  // ON A FIXED STORE THE BAR COUNTS MESSAGES, not raw bytes.
+  //
+  // Every send spends a whole F-byte record, so the bytes left below one record
+  // can never be spent at all. Measuring them made the bar disagree with the
+  // badge beside it: a Small pad fixed at F = 4096 is out of messages after four
+  // sends with half its bytes still on disk, so the card read "Exhausted" in one
+  // corner and a half-full bar at tone "ok" in the other.
+  //
+  // ONE FRACTION, ONE QUANTITY. `maxRemainingSends` already carries BOTH budgets,
+  // so its denominator must be the same minimum taken at full capacity — not the
+  // byte budget alone. Dividing a two-budget numerator by a one-budget
+  // denominator deflated the bar whenever records were the binding half, which is
+  // the shipped default: a fresh Medium pad (E = 262,144, N = 512) at the offered
+  // F = 256 affords 1024 records by bytes and has 512, so it drew a HALF-EMPTY bar
+  // beside "Ready" and "Messages left 512" before a single message was sent. That
+  // is the same contradiction in the other direction, and the separate `auth`
+  // term below is redundant here because the minimum is already taken.
+  const fixed = m.record.kind === "fixed" ? m.record.bytes : null;
+  if (fixed !== null) {
+    const capacity = Math.min(
+      m.authentication.capacityRecords,
+      Math.floor(m.encryption.capacity / fixed)
+    );
+    return capacity > 0 ? Math.max(0, Math.min(1, m.maxRemainingSends / capacity)) : 0;
+  }
   const enc = m.encryption.capacity > 0 ? m.encryption.remainingBytes / m.encryption.capacity : 0;
   const auth = m.authentication.capacityRecords > 0 ? m.authentication.remainingRecords / m.authentication.capacityRecords : 0;
   return Math.max(0, Math.min(1, Math.min(enc, auth)));
@@ -151,7 +176,12 @@ export function pairStatus(pair: PairSummary): StatusView {
 }
 
 export function recordModeLabel(record: DirectionMeters["record"]): string {
-  return record.kind === "fixed" ? `Fixed · ${fmtInt(record.bytes)} B per record` : "Variable length";
+  // NOT `fmtInt`. The three editions must render this row identically, and the
+  // mobile ones have no thousands separator — so at F = 1024 the Browser said
+  // "Fixed · 1,024 B per record" where the handsets said "Fixed · 1024 B per
+  // record". A record size is a protocol quantity the operator types back into a
+  // create screen, not a headline figure to make readable.
+  return record.kind === "fixed" ? `Fixed · ${record.bytes} B per record` : "Variable length";
 }
 
 /* ---- the consequence vocabulary ---------------------------------------- */

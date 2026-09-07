@@ -85,6 +85,42 @@ class SptRestoreTest {
         )
     }
 
+    /**
+     * A REQUEST THAT CANNOT BE READ IS NOT A REQUEST THAT IS NOT THERE.
+     *
+     * The restore returned a plain null for BOTH, so an unreadable pending request
+     * — a torn write, a truncated `request.json`, a `dk.bin` that will not load —
+     * was reported to the interface as "nothing pending". The interface then
+     * offered "Create a receive code" over a live one-time key that could not be
+     * cancelled, could not be rejected after a failed word comparison, and could
+     * not open the sealed file that came back for it. That is precisely the
+     * stranding this whole verb was written to close, surviving inside it.
+     *
+     * It refuses now. Null still means, and only means, nothing pending.
+     */
+    @Test
+    fun `an unreadable pending request refuses rather than reading as absent`() {
+        val fs = MemoryFs()
+        val created = Engine(fs).sptCreateReceiveRequest()
+        assertNotNull("precondition: the request is restorable while it is readable",
+                      Engine(fs).sptRestorePendingReceiveRequest())
+
+        // Corrupt the request body on disk, leaving the directory entry in place —
+        // the shape a torn write leaves behind.
+        val path = "spt/receive/${created.requestIdHex}/request.json"
+        assertNotNull("the fixture no longer writes where this test looks", fs.readFile(path))
+        fs.writeFileAtomic(path, "{ not json".toByteArray())
+
+        val refusal = try {
+            Engine(fs).sptRestorePendingReceiveRequest()
+            null
+        } catch (e: dev.systemslibrarian.truepad.spt.SptRefused) {
+            e
+        }
+        assertNotNull("an unreadable request was reported as nothing pending", refusal)
+        assertEquals("receive-request-state", refusal!!.reason)
+    }
+
     /** The operator's own cancellation is equally terminal. */
     @Test
     fun `a cancelled request is not restored`() {

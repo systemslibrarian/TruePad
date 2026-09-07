@@ -179,9 +179,12 @@ shown beside these.
 
 ## 18. Testing / falsification evidence
 
-At the 3.0.0 release: ~1621 unit tests across ~75 files in the Browser/CLI
-edition, plus 246 Android JVM tests, 51 Android on-device instrumentation tests
-and 386 iOS tests; 36 Playwright browser tests; a
+Reproduced at the current release-candidate SHA: 1678 unit tests across 80 files
+in the Browser/CLI edition (`npm test`), plus 299 distinct Android JVM tests
+(`./gradlew test` reports 388 executions because the app module runs under both
+the debug and release variants), 55 Android on-device instrumentation tests, and
+471 iOS tests (`swift test --package-path ios/TruePadKit`); 36 Playwright browser
+tests; a
 mutation-style falsification matrix (single-line mutations of security predicates
 must be caught by a targeted test) totalling 43 mutations with 0 real escapes;
 machine guards forbidding persisted verdicts and pad-derived metadata; claims
@@ -217,11 +220,20 @@ not proof of design correctness and not an independent human review**.
 
 ## 20. Future independent validation
 
-Before any formal 3.0.0: an **independent human cryptography/security review**
-(see the review brief); **physical-TPM** hardware validation; **real-device**
-Android/iOS validation; **human accessibility** (TalkBack/VoiceOver); and
-**real-handheld QR** validation. None is satisfied by the internal evidence above.
-Release gating is enumerated in `docs/RELEASE-CHECKLIST-3.0.md`.
+None of the items in this section is satisfied by the internal evidence above.
+**Release gating is enumerated in `docs/RELEASE-CHECKLIST-3.0.md`, which is the
+canonical authority; where this section and that document differ, that document
+is correct.**
+
+**Done since this section was first written, on real hardware:** real-device
+Android and iOS validation, and real-handheld QR validation in both directions.
+
+**Wanted, and explicitly NOT release-blocking** by standing project-owner
+decision: an **independent human cryptography/security review** (see the review
+brief), **physical-TPM** hardware validation, and **human accessibility**
+(TalkBack and VoiceOver). Each is genuinely wanted and none has been performed;
+this section previously listed all five as required "before any formal 3.0.0",
+which contradicted that decision.
 
 ---
 

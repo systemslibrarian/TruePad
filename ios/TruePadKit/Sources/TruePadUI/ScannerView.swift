@@ -37,9 +37,17 @@ public struct ScannerView: View {
                     .accessibilityHidden(true)   // a live preview says nothing to VoiceOver
                 VStack {
                     Spacer()
+                    // OVER A LIVE CAMERA, so the blur stays: a flat product panel
+                    // here would either hide the preview or be unreadable against
+                    // whatever the lens happens to be pointed at. Only the type and
+                    // the ink come from the theme.
                     Text(model.status)
+                        .font(TruePadFont.body)
+                        .foregroundStyle(TruePadPalette.ink)
+                        .multilineTextAlignment(.center)
                         .padding()
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .background(.ultraThinMaterial,
+                                    in: RoundedRectangle(cornerRadius: TruePadMetrics.corner))
                         .padding()
                         .accessibilityLabel(model.status)
                 }

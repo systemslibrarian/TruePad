@@ -45,6 +45,35 @@ public final class CreatePadModel: ObservableObject {
     // integers either way.
     @Published public var encryptionBytes = PadSize.default.bytes
     @Published public var authRecords = PadSize.default.records
+    /// THE OPERATOR'S OWN NOTE ABOUT WHERE THE BYTES CAME FROM.
+    ///
+    /// It used to be hardcoded here — every iOS external pad recorded the same
+    /// sentence, written by the app rather than the operator. The Browser Edition
+    /// asks ("Where did these bytes come from?") and records the answer, so iOS
+    /// was giving a WEAKER provenance record while the manifest read as though a
+    /// declaration had been made. A declaration nobody made is not a declaration.
+    ///
+    /// It remains a DECLARATION and never evidence: TruePad cannot check it, and
+    /// nothing downstream treats it as proof.
+    @Published public var declaredOrigin = ""
+
+    /// The pad this sheet just made. Nil until it succeeds.
+    @Published public private(set) var createdPairId: String?
+
+    /// LENGTH PRIVACY, off by default. The daily flow never sees it; it lives
+    /// under Advanced, like the raw capacity fields and for the same reason.
+    ///
+    /// (This comment was attached to `createdPairId` above, which is a pad id and
+    /// has nothing to do with length privacy or with Advanced. Two doc comments
+    /// had been merged onto one property, so the property that HAS an explanation
+    /// carried none.)
+    @Published public var fixedLength = false
+    /// HELD AS TEXT, not as an Int. A number field that parses as it is typed
+    /// cannot tell "not finished typing" from "not a number", and a value the
+    /// operator is halfway through entering must not be silently replaced by
+    /// whatever it currently parses to. The text is the operator's; the decision
+    /// about it is `recordReadiness`.
+    @Published public var fixedSizeText = String(FixedRecordIntake.defaultBytes)
     @Published public var chosenFileName: String?
     @Published public var chosenFileBytes: [UInt8]?
     @Published public var choosingFile = false
@@ -92,17 +121,63 @@ public final class CreatePadModel: ObservableObject {
         }
     }
 
+    /// Why the pad cannot be created yet — or `.ready`.
+    public var readiness: ExternalSourceIntake.Readiness {
+        ExternalSourceIntake.readiness(have: chosenFileBytes?.count,
+                                       need: requiredSourceBytes,
+                                       declaration: declaredOrigin)
+    }
+
     public var requiredSourceBytes: Int {
         (try? Partition.requiredSourceLength(capacity: encryptionBytes,
                                              capacityRecords: authRecords)) ?? 0
     }
 
+    /// Why "Create pad" is disabled, in the same words the fields use — or nil
+    /// when it is not.
+    ///
+    /// SAME AUTHORITY, ONE PLACE. Derived in the order `canCreate` decides, so the
+    /// button and its explanation cannot disagree; the failure mode of writing
+    /// them separately is a disabled button under text saying everything is fine.
+    /// This exists because both explanations lived beside their FIELDS, inside a
+    /// disclosure that opens closed and sits below the button — so the reason was
+    /// off-screen exactly when it mattered.
+    public var blockingReason: String? {
+        if label.isEmpty { return "Give the pad a name." }
+        if let why = recordReadiness.explanation { return why }
+        if source == .file, let why = readiness.explanation { return why }
+        return nil
+    }
+
     public var canCreate: Bool {
         guard !label.isEmpty else { return false }
+        // THE RECORD SIZE GATES CREATION TOO, and it gates it for BOTH sources.
+        // It is checked before the source because an unusable record size is
+        // unusable however the material was obtained.
+        guard recordReadiness.isReady else { return false }
         switch source {
         case .device: return true
-        case .file: return (chosenFileBytes?.count ?? 0) >= requiredSourceBytes
+        // ONE AUTHORITY, shared with the screen that explains itself. If the
+        // button's condition and the explanation's condition were written
+        // separately they would eventually disagree, and the failure mode is a
+        // disabled button under text saying everything is fine.
+        case .file: return readiness == .ready
         }
+    }
+
+    /// Whether the typed record size can be used, and if not, why not. The screen
+    /// shows this and `canCreate` obeys it — one authority, as above.
+    public var recordReadiness: FixedRecordIntake.Readiness {
+        FixedRecordIntake.readiness(fixed: fixedLength,
+                                    typed: fixedSizeText,
+                                    encryptionCapacity: encryptionBytes)
+    }
+
+    /// What the engine is handed. Nil means variable-length, which is the
+    /// default and is what omitting the argument has always meant.
+    public var recordBytes: Int? {
+        if case .ready(let bytes) = recordReadiness { return bytes }
+        return nil
     }
 
     public func create() {
@@ -111,9 +186,12 @@ public final class CreatePadModel: ObservableObject {
             switch source {
             case .file:
                 guard let bytes = chosenFileBytes else { return }
+                // The operator's words, recorded verbatim. Trimmed only of
+                // surrounding whitespace; nothing is substituted if it is short,
+                // because the point is that it is THEIRS.
                 sources = [SourceInput(name: chosenFileName ?? "source.bin",
-                                       declaredOrigin: "declared by operator at gen; "
-                                           + "not verified by this tool",
+                                       declaredOrigin: declaredOrigin
+                                           .trimmingCharacters(in: .whitespacesAndNewlines),
                                        bytes: bytes)]
             case .device:
                 // THE WIRE NAME MATTERS. `device-random` is the frozen value the
@@ -124,8 +202,12 @@ public final class CreatePadModel: ObservableObject {
                                        declaredOrigin: "this device's random generator",
                                        bytes: randomBytes(requiredSourceBytes))]
             }
-            _ = try engine.gen(label: label, sources: sources,
-                               encryptionBytes: encryptionBytes, authRecords: authRecords)
+            let result = try engine.gen(label: label, sources: sources,
+                                        encryptionBytes: encryptionBytes, authRecords: authRecords,
+                                        recordBytes: recordBytes)
+            // WHICH pad was made, so the screen behind this sheet can offer the
+            // next step on it rather than leaving the operator to find it.
+            createdPairId = result.pair.pairId
             created = true
         } catch {
             refusalMessage = operatorMessage(for: error)
@@ -141,6 +223,8 @@ public final class ReceiveRequestModel: ObservableObject {
     @Published public private(set) var request: SptCreateResult?
     @Published public private(set) var qr: QrPayload?
     @Published public private(set) var requestWords: [String] = []
+    /// The validated public `TPR2:` request, for copy and share.
+    @Published public private(set) var code: PublicTransport?
     /// What became of the LAST request, once it is over. Nil while one is live.
     @Published public private(set) var outcome: ReceiveRequestStatus?
     @Published public var showingRefusal = false
@@ -231,8 +315,16 @@ public final class ReceiveRequestModel: ObservableObject {
     private func adopt(_ result: SptCreateResult) {
         request = result
         requestWords = CeremonyWords.render(result.requestIndices) ?? []
-        // Re-validated before it can be drawn. A request that will not
-        // round-trip is not shown as a code at all.
+        // RE-VALIDATED ONCE, then used for every egress. The same canonical
+        // string is what is shown, copied, shared and drawn — a screen cannot
+        // copy one spelling while displaying another, because there is only one.
+        if case .success(let material) = PublicTransport.receiveRequest(result.tpr2Text) {
+            code = material
+        } else {
+            code = nil
+        }
+        // A request that will not round-trip is not shown as a code at all, and
+        // a request too long for a QR is still perfectly copyable.
         if case .success(let payload) = QrPayloadBuilder.receiveRequest(result.tpr2Text) {
             qr = payload
         } else {
@@ -249,6 +341,7 @@ public final class ReceiveRequestModel: ObservableObject {
             outcome = .cancelled
             self.request = nil
             qr = nil
+            code = nil
             requestWords = []
             // If the missing restore let the operator publish more than one,
             // surface the next rather than stranding it until a relaunch.
@@ -309,16 +402,39 @@ public final class SealModel: ObservableObject {
         }
     }
 
-    /// Whether this pad has ALREADY been sealed, asked of durable state.
+    /// Whether the package already committed for this pad was sealed to THIS
+    /// receive request, asked of the engine — which compares the durable marker's
+    /// `requestHash` by exactly the comparison `sptSeal` is about to make.
     ///
     /// Matters because the wording differs: a first seal sends the whole pad and
-    /// can happen only once, while coming back to an already-sealed pad hands
-    /// over the SAME committed package and encapsulates nothing. Telling an
-    /// operator mid-re-share that "this pad can only leave once" implies a second
-    /// send is about to happen, which is precisely what cannot occur.
+    /// can happen only once, while coming back to the SAME request hands over the
+    /// SAME committed package and encapsulates nothing. Telling an operator
+    /// mid-re-share that "this pad can only leave once" implies a second send is
+    /// about to happen, which is precisely what cannot occur.
+    ///
+    /// THIS USED TO ASK A DIFFERENT QUESTION FROM THE ONE IT ANSWERED. It read
+    /// the pad-level handoff state, whose type carries only a timestamp and
+    /// cannot carry request identity at all, and on that answer the screen
+    /// asserted "This pad was already sealed to this request" — about every
+    /// request, including a different one the engine was going to refuse.
     public var isReshare: Bool {
-        if case .sealed = engine.handoffState(pairId: pairId) { return true }
-        return false
+        guard let review else { return false }
+        return engine.sptSealedToRequest(pairId: pairId, requestHashHex: review.requestHashHex)
+    }
+
+    /// Sealed already, but to a DIFFERENT receive request — so `sptSeal` will
+    /// refuse this one.
+    ///
+    /// NAMED RATHER THAN LEFT TO THE FALLBACK. Without it this case fell into the
+    /// first-seal branch, which promises "A sealed transfer sends the WHOLE pad"
+    /// to an operator whose next tap can only produce a refusal, after they have
+    /// already compared twelve words with the other person.
+    public var isSealedToAnotherRequest: Bool {
+        guard review != nil, !isReshare else { return false }
+        // THE SAME PARSER `isReshare` USES, and the one `sptSeal` obeys. This
+        // asked `Engine.handoffState` — TruePadStorage's reader — so one screen
+        // was drawing a conclusion from two different parses of one file.
+        return engine.sptHasSealedHandoff(pairId: pairId)
     }
 
     public func confirm() {

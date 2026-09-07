@@ -18,18 +18,28 @@ import XCTest
 final class LeakageAuditTests: XCTestCase {
     static var kitRoot: URL { PostureGuardTests.kitRoot }
 
-    /// Production sources of every shipping target, comments stripped.
+    /// Production sources of every shipping target, comments stripped — PLUS the
+    /// app shell, which is shipping code too.
+    ///
+    /// The sweep walked `TruePadKit/Sources/<target>` only. `ios/TruePadApp/
+    /// TruePadApp/` is compiled into the binary an operator installs, and it was
+    /// outside every guard here: no logging ban, no pasteboard ban, no
+    /// accessibility-identifier check. It happens to be clean today, which is
+    /// exactly the kind of fact that stops being true without anyone noticing —
+    /// the blind spot is the finding, not its current contents.
     func productionSources() throws -> [(name: String, text: String)] {
         var out: [(String, String)] = []
-        for target in PostureGuardTests.shippingTargets {
-            let dir = Self.kitRoot.appendingPathComponent("Sources/\(target)")
-            for path in try FileManager.default.subpathsOfDirectory(atPath: dir.path)
-            where path.hasSuffix(".swift") {
-                let raw = try String(contentsOf: dir.appendingPathComponent(path), encoding: .utf8)
-                out.append(("\(target)/\(path)", PostureGuardTests.stripComments(raw)))
+        // ONE LIST OF SHIPPING TARGETS, shared with PostureGuardTests, which now
+        // includes the app shell — so the two sweeps cannot cover different sets.
+        for target in PostureGuardTests.shippingSourceTargets {
+            for file in try PostureGuardTests().sources(of: target) {
+                out.append((file.name, PostureGuardTests.stripComments(file.text)))
             }
         }
         XCTAssertGreaterThan(out.count, 15, "the sweep found suspiciously few sources")
+        // POSITIVE CONTROL for the addition: the app shell really is in scope now.
+        XCTAssertTrue(out.contains { $0.0.hasPrefix("TruePadApp/") },
+                      "the app shell is not in the sweep, so nothing here guards it")
         return out
     }
 
@@ -61,15 +71,159 @@ final class LeakageAuditTests: XCTestCase {
     /// NO PASTEBOARD from the engine or the presentation logic. The clipboard is
     /// readable by other apps and syncs across devices by Handoff, so anything
     /// that reaches it has left the app's control.
+    /// EXACTLY ONE FILE MAY REFERENCE THE PASTEBOARD.
+    ///
+    /// The ban used to be absolute. It is now narrower and stronger: one audited
+    /// boundary, `PublicTransportPasteboard`, which takes a `PublicTransport`
+    /// value — a type that cannot be constructed from arbitrary text — and every
+    /// other reference still fails. A blanket ban that the product had to route
+    /// around with text selection was not actually protecting anything; a typed
+    /// boundary is.
+    static let pasteboardBoundary = "TruePadUI/PublicTransportPasteboard.swift"
+
     func testNoShippingSourceTouchesThePasteboard() throws {
+        var boundarySeen = false
         for file in try productionSources() {
             for needle in ["UIPasteboard", "NSPasteboard", "generalPasteboard"] {
-                XCTAssertFalse(Self.containsAsCall(file.text, needle),
-                               "\(file.name) references \(needle) — pad material must never reach "
-                               + "the clipboard, and the copy affordance belongs to the operator's "
-                               + "own selection, not to TruePad")
+                guard Self.containsAsCall(file.text, needle) else { continue }
+                XCTAssertEqual(file.name, Self.pasteboardBoundary,
+                               "\(file.name) references \(needle) — only the audited public "
+                               + "transport boundary may touch the clipboard. Pad material and "
+                               + "plaintext must never reach it.")
+                boundarySeen = true
             }
         }
+        // NON-VACUOUS: the exception must still be in use. If the boundary stops
+        // touching the pasteboard, this test has stopped constraining anything and
+        // the exception should be deleted rather than left standing.
+        XCTAssertTrue(boundarySeen,
+                      "no file references the pasteboard at all, so the named exception guards "
+                      + "nothing")
+    }
+
+    /// The boundary takes a TYPE, not a string. This is the assertion that stops
+    /// it quietly becoming a general-purpose copy facility.
+    func testThePasteboardBoundaryOnlyAcceptsValidatedPublicTransport() throws {
+        let file = try productionSources().first { $0.name == Self.pasteboardBoundary }
+        let text = try XCTUnwrap(file?.text, "the audited pasteboard boundary is missing")
+
+        XCTAssertTrue(text.contains("func copy(_ material: PublicTransport)"),
+                      "the boundary no longer takes a validated PublicTransport value")
+        XCTAssertFalse(text.contains(": String"),
+                       "the boundary accepts a raw String, so a view could hand it anything")
+        // One assignment, of the value's own text, and nothing else.
+        XCTAssertTrue(text.contains("UIPasteboard.general.string = material.text"))
+        let writes = text.components(separatedBy: "UIPasteboard.general").count - 1
+        XCTAssertEqual(writes, 1, "the boundary touches the pasteboard \(writes) times; it must be once")
+    }
+
+    /// ACCESSIBILITY IDENTIFIERS ARE NAMES, NEVER VALUES.
+    ///
+    /// Two identifiers ship — `envelope-input` and `request-input` — so the
+    /// physical two-device harness can find the fields an operator pastes into.
+    /// They are deliberately NOT hidden behind DEBUG: a build that is tested is
+    /// the build that should ship, and gating them would make the physically
+    /// exercised binary differ from the released one.
+    ///
+    /// What makes that safe is that an identifier is a static generic NAME. It
+    /// carries no pad id, no key, no plaintext, no transport value, no filename
+    /// and no role; it is not interpolated from anything; and nothing in the app
+    /// reads one, so no behaviour, authorisation or validation can depend on it.
+    /// This asserts all of that, and pins the set so a third one is a decision
+    /// somebody makes on purpose rather than a habit that spreads.
+    func testAccessibilityIdentifiersAreStaticNamesCarryingNoValue() throws {
+        let approved: Set<String> = ["envelope-input", "request-input"]
+        var found: Set<String> = []
+
+        for file in try productionSources() {
+            var rest = Substring(file.text)
+            while let call = rest.range(of: ".accessibilityIdentifier(") {
+                let after = rest[call.upperBound...]
+                guard let close = after.firstIndex(of: ")") else { break }
+                let argument = String(after[..<close]).trimmingCharacters(in: .whitespaces)
+
+                // A STRING LITERAL, and only that. An interpolated identifier is
+                // how a pairId or a filename would end up in the tree.
+                XCTAssertTrue(argument.hasPrefix("\"") && argument.hasSuffix("\""),
+                              "\(file.name) builds an accessibility identifier from an "
+                              + "expression: \(argument). Identifiers must be literals.")
+                XCTAssertFalse(argument.contains("\\("),
+                               "\(file.name) interpolates a value into an accessibility "
+                               + "identifier: \(argument)")
+
+                let value = argument.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                found.insert(value)
+                rest = after[close...]
+            }
+        }
+
+        // POSITIVE CONTROL: the scan actually found the identifiers that exist.
+        XCTAssertEqual(found, approved,
+                       "the set of shipping accessibility identifiers changed. Adding one is a "
+                       + "decision to take deliberately: it must be a static generic name that "
+                       + "carries no value.")
+
+        // And none of them reads like a value rather than a name.
+        for value in found {
+            for forbidden in ["TP2", "TPR2", "pair", "pad", "key", "secret", "plaintext",
+                              "role", "party", ".json", ".tps2", "witness"] {
+                XCTAssertFalse(value.lowercased().contains(forbidden.lowercased()),
+                               "the identifier \(value) names \(forbidden) — an identifier is a "
+                               + "name, not a value")
+            }
+            XCTAssertFalse(value.contains(where: \.isNumber),
+                           "the identifier \(value) carries digits, which is how an index or an "
+                           + "id gets into the accessibility tree")
+        }
+    }
+
+    /// NOTHING BRANCHES ON AN IDENTIFIER. If no shipping code reads one, no
+    /// behaviour can depend on one — which is the property that makes a
+    /// testability hook safe to ship.
+    func testNoShippingCodeReadsAnAccessibilityIdentifier() throws {
+        for file in try productionSources() {
+            for needle in ["accessibilityIdentifier ==", "== accessibilityIdentifier",
+                           "accessibilityIdentifier)", ".identifier =="] {
+                XCTAssertFalse(file.text.contains(needle),
+                               "\(file.name) reads an accessibility identifier (\(needle)); "
+                               + "behaviour must never depend on one")
+            }
+        }
+    }
+
+    /// PLAINTEXT REMAINS STRUCTURALLY UNCOPYABLE. Not by convention — the Open
+    /// screen has no copy affordance and the policy says so.
+    func testTheDecryptedMessageStillHasNoWayToTheClipboard() throws {
+        XCTAssertFalse(EgressPolicy.mayCopyToClipboard(.plaintext))
+        XCTAssertFalse(EgressPolicy.mayRenderAsQr(.plaintext))
+        XCTAssertFalse(EgressPolicy.mayShareAsFile(.plaintext))
+        XCTAssertTrue(EgressPolicy.mayCopyToClipboard(.publicText))
+
+        let views = try productionSources().first { $0.name == "TruePadUI/MessageViews.swift" }
+        let text = try XCTUnwrap(views?.text)
+        // POSITIVE CONTROL: this is the file holding both screens.
+        XCTAssertTrue(text.contains("struct OpenView"))
+        XCTAssertTrue(text.contains("struct SendView"))
+
+        // The plaintext block must not gain selection or a copy control.
+        //
+        // THE WHOLE BLOCK, WALKED BY BRACES — not `prefix(900)`. The block ends
+        // 621 characters in, so that window left 79 characters of margin and a
+        // paragraph of ordinary prose inside the block put a `.textSelection`
+        // outside it while every assertion here still passed. See
+        // `PostureGuardTests.blockAfter`.
+        guard let tail = PostureGuardTests.blockAfter("if let plaintext = model.plaintext", in: text) else {
+            return XCTFail("the Open screen no longer has the shape this guard reads")
+        }
+        // The region really is the whole block, and really is bounded.
+        XCTAssertTrue(tail.hasSuffix("}"))
+        XCTAssertTrue(tail.contains("Text(plaintext)"),
+                      "precondition: this region must be the one that renders the message")
+        XCTAssertFalse(tail.contains("textSelection"),
+                       "the decrypted message became selectable, which routes it to the general "
+                       + "pasteboard")
+        XCTAssertFalse(tail.contains("PublicTransportPasteboard"),
+                       "the decrypted message gained a copy control")
     }
 
     /// NO ANALYTICS, NO CRASH REPORTING, NO THIRD-PARTY TELEMETRY. A crash

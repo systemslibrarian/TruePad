@@ -54,6 +54,27 @@ class AppSourceAuditTest {
         return text
     }
 
+    /**
+     * CODE WITHOUT ITS STRING LITERALS, for the bans that are about DEPENDENCIES.
+     *
+     * The same argument the comment stripper above makes, one step further. The
+     * About destination has to be able to say "No analytics, no crash reporting,
+     * nothing written to the system log" — that sentence is the app DENYING
+     * telemetry, and a scanner that fails on it punishes the claim for naming what
+     * it rules out. `analytics`, `firebase`, `okhttp` and the rest are risks
+     * because they are IMPORTS AND CALLS; none of them is a risk because it is
+     * spelled inside a user-facing sentence.
+     *
+     * Coverage is not lost by this: what a string literal could genuinely smuggle
+     * in is an ENDPOINT, and `theAppShipsNoUrls` below is a check the audit did
+     * not have before.
+     */
+    private fun File.codeWithoutStrings(): String =
+        code().replace(Regex("\"(\\\\.|[^\"\\\\])*\""), "\"\"")
+
+    private fun File.stringLiterals(): List<String> =
+        Regex("\"(\\\\.|[^\"\\\\])*\"").findAll(code()).map { it.value }.toList()
+
     private fun xmlCode(f: File): String =
         f.readText().replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), " ")
 
@@ -131,6 +152,114 @@ class AppSourceAuditTest {
      * there, and the only way a plaintext or a pad byte reaches it is through a
      * call that does not exist.
      */
+    /**
+     * NO ENDPOINT IS SPELLED ANYWHERE IN THE APP.
+     *
+     * The counterpart to reading dependency bans against code rather than prose:
+     * what a string literal could actually carry is an address. TruePad has no
+     * server and no transport of its own, so there is nothing for a URL to be
+     * doing in it — not in code, and not in a resource.
+     */
+    @Test
+    fun theAppShipsNoUrls() {
+        var scanned = 0
+        for (f in appSources) {
+            for (literal in f.stringLiterals()) {
+                scanned += 1
+                assertFalse(
+                    "${f.name} contains a URL in a string literal: $literal",
+                    literal.contains("://"),
+                )
+            }
+        }
+        // POSITIVE CONTROL: the literal scanner found something to look at. A
+        // regex that matched nothing would pass this test on every future change.
+        assertTrue("no string literals were scanned at all", scanned > 50)
+
+        // RAW TEXT, RESOURCES AND THE MANIFEST TOO.
+        //
+        // The literal scanner is built on `code()`, which tracks quoting per LINE —
+        // so a line inside a Kotlin raw string is read as code and its contents can
+        // vanish before this check sees them. And an endpoint does not have to be
+        // in Kotlin at all: a string resource or a manifest attribute carries one
+        // just as well. Scanning the raw bytes of every shipping file closes both.
+        val everyShippingFile = appSources +
+            (resDir.walkTopDown().filter { it.isFile }.toList()) +
+            listOf(manifest)
+        // XML NAMESPACES ARE NAMES, NOT DESTINATIONS. `xmlns:android="http://
+        // schemas.android.com/apk/res/android"` is how every Android resource file
+        // is required to begin; nothing resolves it and nothing fetches it. These
+        // three are removed by exact text before the scan, so a real endpoint that
+        // merely happens to sit in a resource still fails.
+        val namespaces = listOf(
+            "http://schemas.android.com/apk/res/android",
+            "http://schemas.android.com/apk/res-auto",
+            "http://schemas.android.com/tools",
+        )
+        var rawScanned = 0
+        for (f in everyShippingFile) {
+            rawScanned += 1
+            var raw = runCatching { f.readText() }.getOrElse { "" }
+            // ANCHORED TO THE WHOLE ATTRIBUTE VALUE, not a bare substring. Plain
+            // `replace(ns, "")` also erases a namespace-shaped PREFIX of a real
+            // destination — `http://schemas.android.com/apk/res/android.evil
+            // .example/x` loses its `://` along with the prefix and passes. The
+            // quotes make the exclusion the exact attribute value XML requires
+            // and nothing that merely starts with it.
+            for (ns in namespaces) raw = raw.replace("\"$ns\"", "\"\"")
+            assertFalse(
+                "${f.name} contains a URL: ${raw.substringAfter("://").take(40)}",
+                raw.contains("://"),
+            )
+        }
+        assertTrue("no shipping files were scanned for URLs", rawScanned > 10)
+    }
+
+    /**
+     * A DEPENDENCY CANNOT HIDE IN A STRING EITHER.
+     *
+     * Reading the vendor bans against code with string literals removed is right
+     * for prose — the About destination has to be able to say "No analytics, no
+     * crash reporting" — but it opens one door if nothing else is watching it:
+     * `Class.forName("com.google.firebase.analytics.FirebaseAnalytics")` puts the
+     * dependency in a literal, where the ban can no longer see it.
+     *
+     * So this closes it from both sides. A string literal may not carry a
+     * fully-qualified class name, and the code may not reflect at all. TruePad has
+     * no plugin surface and nothing to load by name; a codebase with no reflection
+     * cannot grow a dependency that only exists at runtime.
+     */
+    @Test
+    fun noDependencyCanBeReachedReflectively() {
+        // A dotted lowercase package path followed by a capitalised class.
+        val fqcn = Regex("[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*){2,}\\.[A-Z][A-Za-z0-9]*")
+        for (f in appSources) {
+            for (literal in f.stringLiterals()) {
+                val found = fqcn.find(literal)
+                assertTrue(
+                    "${f.name} names a class in a string literal (${found?.value}) — a dependency " +
+                        "must be an import this audit can see, not a name looked up at runtime",
+                    found == null,
+                )
+            }
+            // And nothing may look a class up by name in the first place.
+            val code = f.codeWithoutStrings()
+            for (b in listOf(
+                "Class.forName", "java.lang.reflect", "kotlin.reflect",
+                "getDeclaredMethod", "getDeclaredField", "getMethod(", "newInstance(",
+                "ServiceLoader",
+                // The rest of the ways a class is reached by name. The first list
+                // stopped at the obvious ones, which left `loadClass` and a
+                // constructor lookup as a complete path with no banned token in it.
+                "loadClass(", "getConstructor", "getMethods(", "getDeclaredMethods(",
+                "MethodHandles", "java.lang.invoke", "Proxy.newProxyInstance",
+                "System.loadLibrary", "System.load(", "DexClassLoader", "PathClassLoader",
+            )) {
+                assertFalse("${f.name} reflects (${b}); TruePad loads nothing by name", code.contains(b))
+            }
+        }
+    }
+
     @Test
     fun theAppLogsNothing() {
         val banned = listOf(
@@ -158,9 +287,26 @@ class AppSourceAuditTest {
             "android.webkit",
         )
         for (f in appSources) {
-            val text = f.code()
+            // DEPENDENCY BANS READ THE CODE, NOT THE PROSE. See codeWithoutStrings.
+            val text = f.codeWithoutStrings()
             for (b in banned) {
                 assertFalse("${f.name} must not reference $b", text.contains(b, ignoreCase = true))
+            }
+            // AND THE LITERALS ARE STILL SCANNED, against a NAMED exception.
+            //
+            // Reading the bans against code alone left a hole: a vendor name inside
+            // a string literal became invisible, which is exactly where a
+            // reflective dependency would put one. So literals are scanned too, and
+            // the only text allowed to name telemetry is the sentence that DENIES
+            // it. An allow-list of one is a decision; silence was an accident.
+            for (literal in f.stringLiterals()) {
+                if (literal.contains(Claims.NO_TELEMETRY)) continue
+                for (b in banned) {
+                    assertFalse(
+                        "${f.name} names $b inside a string literal: $literal",
+                        literal.contains(b, ignoreCase = true),
+                    )
+                }
             }
         }
         val manifestText = xmlCode(manifest)

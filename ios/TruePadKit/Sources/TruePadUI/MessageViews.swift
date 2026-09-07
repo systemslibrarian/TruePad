@@ -16,6 +16,15 @@ import UIKit
  * constructed from arbitrary text — `QrPayloadBuilder` decodes and re-encodes
  * first — so "what may be in a QR" is answered once, in a tested file, and a view
  * physically cannot ask this to render a pad.
+ *
+ * APPEARANCE COMES FROM Theme.swift — EXCEPT FOR THE TWO LIGHT SURFACES IN THIS
+ * FILE, WHICH ARE NOT A THEMING OVERSIGHT. The inline QR card's white background
+ * and the full-screen scan view's white ground are the only hard-coded colours
+ * left in the product UI, and they are here because a decoder keys on the quiet
+ * zone and the contrast ratio, both of which a dark surface destroys. The
+ * two-device physical run is what established that. `ThemeTokenTests` allow-lists
+ * them BY NAME, so a later pass that "finishes the theming" has to argue with a
+ * test rather than quietly cost the ceremony its scan reliability.
  * ========================================================================= */
 
 
@@ -32,12 +41,14 @@ private func roleAnnouncement(_ role: Party?, verb: String) -> String {
 
 public struct SendView: View {
     @ObservedObject public var model: SendModel
+    @State private var sharing = false
 
     public init(model: SendModel) { self.model = model }
 
     public var body: some View {
-        Form {
-            Section("Message") {
+        VStack(alignment: .leading, spacing: TruePadMetrics.blockSpacing) {
+            VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                SectionTitle("Message")
                 // AUTOCORRECTION AND AUTOCAPITALISATION OFF, on the one field in
                 // the app that holds the plaintext the pad exists to protect.
                 //
@@ -57,46 +68,115 @@ public struct SendView: View {
                     .lineLimit(3...10)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .truePadField()
                     .accessibilityLabel("The message to send. It is encrypted with pad material "
                                         + "that is then destroyed.")
-                // THE PICKER IS SHOWN ONLY WHEN THE PAD CANNOT SAY.
+                // DERIVED, OR REFUSED. There is no picker.
                 //
-                // It used to be offered always, defaulted to A, and independently
+                // The picker was offered always and defaulted to A, independently
                 // of the Open screen's picker — so an importing device opened
-                // correctly at ITS default and then sent on party A's half. Two
-                // devices holding one pair both burned A->B. See `PartyRole`.
+                // correctly at ITS default and then sent on party A's half, and
+                // two devices holding one pair both burned A->B. Narrowing it to
+                // "only when the pad cannot say" left the worse half of the
+                // defect: that IS the case where a pick is a guess, and it is
+                // exactly the case where a guess spends the other person's
+                // material. It also stood one line under a prompt saying "there
+                // is nothing for you to set by hand — a role you picked would be
+                // a guess wearing a different name", so the screen contradicted
+                // itself in the operator's own reading order.
+                //
+                // A picker here is a SECOND role authority beside the pad's
+                // origin, which is the architecture the cross-copy reuse fix
+                // exists to prevent; the Browser refused to add one for that
+                // reason (src/browser/ui/role.ts). `canSend` requires a non-nil
+                // role, so an unknown origin now refuses. See `PartyRole`.
                 if model.roleWasDerived {
-                    LabeledContent("Sending as", value: model.role == .a ? "A" : "B")
-                        .accessibilityLabel(roleAnnouncement(model.role, verb: "sending"))
+                    KeyValueRow("Sending as",
+                                value: model.role == .a ? "A" : "B",
+                                spoken: roleAnnouncement(model.role, verb: "sending"))
                 } else {
-                    Text(PartyRole.unknownOriginPrompt)
-                        .font(.footnote).foregroundStyle(.secondary)
-                    Picker("Send as", selection: $model.role) {
-                        Text("A").tag(Optional(Party.a))
-                        Text("B").tag(Optional(Party.b))
-                    }
-                    .pickerStyle(.segmented)
+                    FaintText(PartyRole.unknownOriginPrompt)
                 }
             }
-            Section {
-                Button("Encrypt and consume the pad") { model.send() }
+
+            VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                PrimaryButton("Encrypt and consume the pad") { model.send() }
                     .disabled(!model.canSend)
-            } footer: {
-                Text("The pad material this uses is destroyed as the message is written. It cannot "
-                     + "be recovered, and it will never be used again.")
+                FaintText("The pad material this uses is destroyed as the message is written. It "
+                          + "cannot be recovered, and it will never be used again.")
             }
 
             if let envelope = model.envelopeText {
-                Section("Give this to the other person") {
-                    if let qr = model.qr {
-                        QrCodeView(payload: qr)
-                    }
-                    Text(envelope)
-                        .font(.footnote.monospaced())
+                Rule()
+                SectionTitle("Give this to the other person")
+                if let qr = model.qr {
+                    QrCodeView(payload: qr)
+                }
+
+                // THE COMPACT FORM IS WHAT A PERSON IS GIVEN.
+                //
+                // Both spellings are the same envelope and both open through the
+                // same validated path; this is only about which one a human is
+                // handed. The canonical JSON stays, one disclosure down, because
+                // it is the technical form and removing it would be a change to
+                // what TruePad supports rather than to what it shows.
+                if let material = model.compact {
+                    Text(material.text)
+                        .font(TruePadFont.machine)
+                        .foregroundStyle(TruePadPalette.ink)
                         .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityLabel("The encrypted message, as text you can copy.")
+
+                    VStack(alignment: .leading, spacing: TruePadMetrics.buttonGroupSpacing) {
+                        // EXACTLY THE DISPLAYED VALUE. `material` is the one
+                        // re-validated string; the button cannot copy a different
+                        // spelling because there is not one to copy.
+                        PrimaryButton("Copy") { PublicTransportPasteboard.copy(material) }
+                        SecondaryButton("Share") { sharing = true }
+                    }
+                    FaintText(VerbatimText.shareSheetIsACarrier)
+
+                    Details("Technical form") {
+                        Text(envelope)
+                            .font(TruePadFont.machine)
+                            .foregroundStyle(TruePadPalette.muted)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityLabel("The same message in its canonical JSON form.")
+                        // THE TECHNICAL FORM IS COPYABLE TOO, as it has always been
+                        // in the Browser edition. Same envelope, other spelling,
+                        // same public classification — and it goes through the same
+                        // audited boundary, so it is re-validated before it can
+                        // reach the pasteboard.
+                        // THE PUBLISHED VALUE, not a fresh validation. `Details`
+                        // stores its content eagerly, so this body is built on
+                        // every evaluation of the screen — including every
+                        // keystroke in the compose field, since `$model.plaintext`
+                        // is bound to it — whether the disclosure is open or not.
+                        // Validating here therefore re-parsed, re-hex-decoded,
+                        // re-encoded and re-compared the whole envelope per
+                        // character typed, on the main thread. Same validation,
+                        // same boundary; it happens once, in `send()`.
+                        if let json = model.canonicalJson {
+                            SecondaryButton("Copy JSON") { PublicTransportPasteboard.copy(json) }
+                        }
+                    }
+                } else {
+                    // The compact spelling did not round-trip. The canonical form
+                    // is still the message and still works.
+                    Text(envelope)
+                        .font(TruePadFont.machine)
+                        .foregroundStyle(TruePadPalette.ink)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityLabel("The encrypted message, as text you can copy.")
                 }
             }
+        }
+        .truePadScreen()
+        .sheet(isPresented: $sharing) {
+            if let text = model.compact?.text { ShareSheet(items: [text]) }
         }
         .navigationTitle("Write a message")
         .alert("TruePad refused", isPresented: $model.showingRefusal) {
@@ -114,37 +194,42 @@ public struct OpenView: View {
     public init(model: OpenModel) { self.model = model }
 
     public var body: some View {
-        Form {
-            Section("The message you received") {
+        VStack(alignment: .leading, spacing: TruePadMetrics.blockSpacing) {
+            VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                SectionTitle("The message you received")
                 TextField("Paste it here", text: $model.envelopeText, axis: .vertical)
                     .lineLimit(3...10)
-                    .font(.footnote.monospaced())
+                    .accessibilityIdentifier("envelope-input")
+                    .font(TruePadFont.machine)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                Button("Scan a code instead…") { scanning = true }
+                    .truePadField()
+                SecondaryButton("Scan a code instead…") { scanning = true }
+                // DERIVED, OR REFUSED — the same rule as the Send screen, and for
+                // the same reason. Opening at a guessed role is what MASKED the
+                // reuse: the importing device opened correctly at its default and
+                // so nothing looked wrong until it sent.
                 if model.roleWasDerived {
-                    LabeledContent("Opening as", value: model.role == .a ? "A" : "B")
-                        .accessibilityLabel(roleAnnouncement(model.role, verb: "opening"))
+                    KeyValueRow("Opening as",
+                                value: model.role == .a ? "A" : "B",
+                                spoken: roleAnnouncement(model.role, verb: "opening"))
                 } else {
-                    Text(PartyRole.unknownOriginPrompt)
-                        .font(.footnote).foregroundStyle(.secondary)
-                    Picker("Open as", selection: $model.role) {
-                        Text("A").tag(Optional(Party.a))
-                        Text("B").tag(Optional(Party.b))
-                    }
-                    .pickerStyle(.segmented)
+                    FaintText(PartyRole.unknownOriginPrompt)
                 }
             }
-            Section {
-                Button("Open") { model.open() }
+
+            VStack(alignment: .leading, spacing: TruePadMetrics.tightSpacing) {
+                PrimaryButton("Open") { model.open() }
                     .disabled(!model.canOpen)
-            } footer: {
-                Text("A message that does not verify costs one verification attempt and consumes "
-                     + "no pad material. That is the price of a bounded forgery guarantee.")
+                FaintText("A message that does not verify costs one verification attempt and "
+                          + "consumes no pad material. That is the price of a bounded forgery "
+                          + "guarantee.")
             }
 
             if let plaintext = model.plaintext {
-                Section("Message") {
+                Rule()
+                SectionTitle("Message")
+                Group {
                     // NO `.textSelection(.enabled)` HERE, deliberately.
                     //
                     // Selection routes text to the GENERAL pasteboard, which is
@@ -156,14 +241,15 @@ public struct OpenView: View {
                     //
                     // The envelope on the Send screen KEEPS selection: it is
                     // `.publicText`, and copying it is the whole workflow.
-                    Text(plaintext)
+                    BodyText(plaintext)
                         .accessibilityLabel("The opened message: \(plaintext)")
                     if let note = model.skippedNote {
-                        Text(note).font(.footnote).foregroundStyle(.secondary)
+                        FaintText(note)
                     }
                 }
             }
         }
+        .truePadScreen()
         .navigationTitle("Open a message")
         .sheet(isPresented: $scanning) {
             ScannerView { scanned in
@@ -233,16 +319,12 @@ public struct QrCodeView: View {
                     .accessibilityLabel("A QR code. " + VerbatimText.qrCarriesOnlyPublicData)
                     .accessibilityHint("Opens the code full screen so the other phone can scan it.")
                     .onTapGesture { enlarged = true }
-                Button("Show it full screen to be scanned") { enlarged = true }
-                    .font(.callout)
+                SecondaryButton("Show it full screen to be scanned") { enlarged = true }
             } else {
-                Text("This code could not be drawn. Use the text instead.")
-                    .foregroundStyle(.secondary)
+                MutedText("This code could not be drawn. Use the text instead.")
             }
             #endif
-            Text(VerbatimText.qrCarriesOnlyPublicData)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            FaintText(VerbatimText.qrCarriesOnlyPublicData)
         }
         .frame(maxWidth: .infinity)
         #if canImport(UIKit)
@@ -340,7 +422,10 @@ struct FullScreenQrView: View {
                          ? "Hold the other phone's camera in front of this. Tap to close."
                          : "This screen is small for a code this size. Hold the other "
                            + "phone close and steady. Tap to close.")
-                        .font(.footnote)
+                        // The SIZE comes from the token layer; the COLOUR does
+                        // not, and must not — this sits on white so a camera can
+                        // read the symbol above it.
+                        .font(TruePadFont.faint)
                         .foregroundStyle(.black.opacity(0.6))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 24)

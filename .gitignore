@@ -13,3 +13,12 @@ playwright-report
 xcuserdata/
 *.xcuserdatad
 DerivedData/
+
+# PHYSICAL-CEREMONY EVIDENCE. `scripts/cross-edition-physical.sh` collects a run
+# into `artifacts/cross-edition/<timestamp>/` by default, and what it collects
+# includes `02-transfer.tps2` — a SEALED PAD TRANSFER PACKAGE pulled off the
+# iPhone — alongside both .xcresult bundles and the device logs. One ceremony run
+# followed by a routine `git add -A` would put a sealed pad into history, where
+# deleting it later does not remove it. PROVENANCE.md already says the evidence
+# bundle "is not committed"; this is what makes that true rather than a habit.
+artifacts/

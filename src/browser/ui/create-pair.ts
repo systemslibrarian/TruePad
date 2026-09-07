@@ -42,6 +42,7 @@ import {
 } from "./source-claims.ts";
 import type { Ctx } from "./context.ts";
 import type { BrowserWitnessClass, ManifestView } from "../engine/protocol.ts";
+import { MAX_CIPHERTEXT_BYTES } from "../../core/wc-one-time.ts";
 
 // What the created screen says about where the pad material came from. The
 // external verdict is carried through verbatim from the ENGINE's gen reply, so
@@ -250,8 +251,27 @@ export async function renderCreate(ctx: Ctx, root: HTMLElement): Promise<void> {
   function problem(): string | null {
     if (!Number.isInteger(state.e) || state.e < 1) return "Enter a positive capacity.";
     if (!Number.isInteger(state.n) || state.n < 1) return "Enter a positive number of messages.";
-    if (state.record === "fixed" && (!Number.isInteger(state.f) || state.f < 32 || state.f > state.e)) {
-      return "Fixed size must be at least 32 and no more than the capacity.";
+    if (state.record === "fixed") {
+      // THE SCREEN ENFORCES THE ENGINE'S WHOLE RULE, not part of it.
+      //
+      // This checked integer, >= 32 and <= capacity. The engine
+      // (`recordSpecFrom`, engine/verbs.ts) enforces two more: a multiple of 16,
+      // and a ceiling of MAX_CIPHERTEXT_BYTES. So a value like 100, or 2,000,000
+      // on a Large pad, passed the button and was then refused by the engine —
+      // surfacing as a developer-worded "Could not create the pad" after the
+      // operator had committed. The Android edition had the identical defect and
+      // it was reported from a handset; this is the same fix, and the ceiling is
+      // the LOWER of the two bounds because that is the only one true of both.
+      const ceiling = Math.min(state.e, MAX_CIPHERTEXT_BYTES);
+      if (!Number.isInteger(state.f) || state.f < 32) {
+        return "Fixed size must be at least 32.";
+      }
+      if (state.f > ceiling) {
+        return `Fixed size must be no more than ${ceiling}, the largest this pad can carry.`;
+      }
+      if (state.f % 16 !== 0) {
+        return "Fixed size must be a multiple of 16. TruePad will not round your number for you.";
+      }
     }
     if (state.source === "file") {
       const L = requiredL(state.e, state.n);
@@ -477,13 +497,35 @@ function renderCreated(ctx: Ctx, root: HTMLElement, pairId: string, claim: Sourc
       saveBtn.className = "btn lg";
       onlineBtn.className = "btn lg";
       startBtn.className = "btn primary lg";
+      // AND SAVING IT AGAIN IS NOT THE SAME ACT. `exportPair` refuses the OTHER
+      // route now, but it deliberately allows a second save by this one — the
+      // first can be cancelled at the file dialog or land nowhere. Restyling
+      // alone left one live control under a sentence promising the engine
+      // "refuses the other afterwards", which is true of the other route and not
+      // of a second save. Two identical copies handed to two people both import
+      // as party B and both burn B->A at the same offsets.
+      saveBtn.replaceChildren(icon("download"), h("span", { text: "Save the same pad file again" }));
+      onlineBtn.disabled = true;
+      onlineBtn.title = "This pad has already been handed over as a file.";
+      handoffNote.textContent =
+        "Saved. This pad has been handed over as a file, so it cannot also be sent securely "
+        + "online. Saving again writes the SAME pad — not a second one — for a copy that never "
+        + "arrived.";
     }
   });
 
+  // WHAT HAPPENS AFTER THE FIRST SAVE, said in one place so `onSaved` can change
+  // it rather than leaving the pre-handoff sentence standing.
+  const handoffNote = h("p", {
+    class: "save-note",
+    text: "The first of these that succeeds decides how this pad is handed over. The engine "
+      + "records it and refuses the other route afterwards."
+  });
+
   // Both delivery methods, offered together, neither preselected. The FIRST one
-  // that succeeds decides this pad's handoff mode for good — the engine records
-  // it and refuses the other afterwards — so the choice belongs here, before
-  // either irreversible step, rather than being implied by which button is
+  // that succeeds decides this pad's handoff MODE for good — the engine records
+  // it and refuses the OTHER route afterwards — so the choice belongs here,
+  // before either irreversible step, rather than being implied by which button is
   // bigger.
   const onlineBtn = h(
     "button",
@@ -517,6 +559,7 @@ function renderCreated(ctx: Ctx, root: HTMLElement, pairId: string, claim: Sourc
       h("h2", { text: "Give the other person their copy" }),
       h("p", { class: "muted", text: "Choose one way. Use one delivery method for each pad." }),
       h("div", { class: "btn-row" }, onlineBtn, saveBtn),
+      handoffNote,
       claim.kind === "external"
         ? h("p", {
             class: "faint small",

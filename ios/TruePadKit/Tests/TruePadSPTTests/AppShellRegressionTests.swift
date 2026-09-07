@@ -637,12 +637,17 @@ final class AppShellRegressionTests: XCTestCase {
         let text = PostureGuardTests.stripComments(
             try String(contentsOf: file, encoding: .utf8))
 
-        // The region that renders the decrypted message.
-        guard let start = text.range(of: "if let plaintext = model.plaintext") else {
+        // The region that renders the decrypted message — THE WHOLE BLOCK, walked
+        // by braces rather than the `prefix(700)` this used to take. The block
+        // ends 621 characters in, so that window had 79 characters of margin: a
+        // paragraph of ordinary product prose inside the block moved a
+        // `.textSelection(.enabled)` outside the window while this test's own
+        // precondition below still passed. See `PostureGuardTests.blockAfter`.
+        guard let region = PostureGuardTests.blockAfter("if let plaintext = model.plaintext", in: text) else {
             return XCTFail("the Open screen no longer renders `model.plaintext` — "
                            + "this guard is now looking at nothing")
         }
-        let region = text[start.lowerBound...].prefix(700)
+        XCTAssertTrue(region.hasSuffix("}"))
         XCTAssertTrue(region.contains("Text(plaintext)"),
                       "precondition: this region must be the one that renders the message")
         XCTAssertFalse(region.contains("textSelection"),

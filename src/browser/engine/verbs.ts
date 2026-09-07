@@ -405,8 +405,32 @@ async function directionMeters(vfs: Vfs, store: LoadedStore, kind: BrowserWitnes
       contestedLive += 1;
     }
   }
+  // §16 — WHAT A SEND ACTUALLY COSTS. On a FIXED store every send spends exactly
+  // F encryption bytes and one authentication record however short the message:
+  // burnImpl builds a full F-byte frame and `c` is always F. So on a fixed store
+  // the encryption budget bounds the MESSAGE COUNT exactly, at
+  // floor(remainingBytes / F). On a variable store a send can be as small as the
+  // operator likes, so records are the only bound and remainingRecords is a true
+  // maximum — that branch is unchanged.
+  //
+  // Reporting remainingRecords on a fixed store OVERSTATED the budget, often by
+  // an order of magnitude. A Small pad (E = 16,384 per direction, N = 64) fixed
+  // at F = 4096 can send four messages; after the fourth it reported sixty, and
+  // the pad-level status word stayed "Ready" for a pad that could never send
+  // again. The figure is presentational — the burn verb's own
+  // `encryption-exhausted` refusal is what actually protects the pad — but an
+  // operator plans around this number.
+  const recordSpec = head.recordPolicy.record;
+  const sendsAffordableByBytes =
+    recordSpec.kind === "fixed" ? Math.floor(remainingBytes / recordSpec.bytes) : remainingRecords;
+  const maxRemainingSends = Math.min(remainingRecords, sendsAffordableByBytes);
   const limitedBy =
-    remainingRecords <= Math.ceil(remainingBytes / head.authentication.maxCiphertextBytes) ? "AUTHENTICATION" : "ENCRYPTION";
+    remainingRecords <=
+    (recordSpec.kind === "fixed"
+      ? sendsAffordableByBytes
+      : Math.ceil(remainingBytes / head.authentication.maxCiphertextBytes))
+      ? "AUTHENTICATION"
+      : "ENCRYPTION";
   const witness = witnessFor(vfs, kind);
   const state = await witness.report(head.pairId, head.direction, {
     nextOffset: effective.nextOffset,
@@ -424,7 +448,7 @@ async function directionMeters(vfs: Vfs, store: LoadedStore, kind: BrowserWitnes
     },
     record: head.recordPolicy.record,
     verification: { failureCount: effective.failureCount, frozen: frozenHalf(store) },
-    maxRemainingSends: remainingRecords,
+    maxRemainingSends,
     limitedBy,
     witness: { class: kind, state }
   };
@@ -435,12 +459,18 @@ async function directionMeters(vfs: Vfs, store: LoadedStore, kind: BrowserWitnes
 async function buildSummary(vfs: Vfs, pairId: string): Promise<PairSummary> {
   const pair = await loadPair(vfs, pairId);
   const meta = await readPairMeta(vfs, pairId);
+  // THE MODE AND THE TIME, never the marker's hashes. See PairSummary.handoff.
+  const handoff = await readHandoffState(vfs, pairId);
   return {
     pairId,
     label: meta.label,
     createdAt: meta.createdAt,
     destroyed: false,
     origin: meta.origin,
+    handoff: {
+      kind: handoff.kind,
+      at: handoff.kind === "physical" || handoff.kind === "sealed" ? handoff.marker.at : null
+    },
     meters: {
       "A->B": await directionMeters(vfs, pair["A->B"], meta.witness),
       "B->A": await directionMeters(vfs, pair["B->A"], meta.witness)
@@ -1712,6 +1742,9 @@ async function listImpl(vfs: Vfs): Promise<ListResult> {
           createdAt: meta.createdAt,
           destroyed: true,
           origin: meta.origin,
+          // A DESTROYED PAD HANDS NOTHING OVER, whatever its marker says. The
+          // meters are zeroed here for the same reason.
+          handoff: { kind: "unreadable-spent", at: null },
           meters: { "A->B": zeroMeters("A->B"), "B->A": zeroMeters("B->A") }
         });
         continue;

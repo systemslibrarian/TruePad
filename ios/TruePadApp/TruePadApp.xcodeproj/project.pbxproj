@@ -53,6 +53,11 @@
 		TP0000000000000000000018 /* TruePadSPT in Frameworks */ = {isa = PBXBuildFile; productRef = TP0000000000000000000015 /* TruePadSPT */; };
 		TP0000000000000000000019 /* TruePadStorage in Frameworks */ = {isa = PBXBuildFile; productRef = TP0000000000000000000016 /* TruePadStorage */; };
 		TP0000000000000000000022 /* TruePadPhysicalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TP0000000000000000000021 /* TruePadPhysicalTests.swift */; };
+		TP0000000000000000000040 /* ExternalSourceLifetimeTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = TP0000000000000000000041 /* ExternalSourceLifetimeTest.swift */; };
+		TP0000000000000000000042 /* VisualParityScreenshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = TP0000000000000000000043 /* VisualParityScreenshots.swift */; };
+		TP0000000000000000000044 /* FixedRecordSmokeTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = TP0000000000000000000045 /* FixedRecordSmokeTest.swift */; };
+		TP0000000000000000000046 /* CrossEditionSealTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = TP0000000000000000000047 /* CrossEditionSealTest.swift */; };
+		TP0000000000000000000048 /* CrossEditionMessageTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = TP0000000000000000000049 /* CrossEditionMessageTest.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -61,6 +66,11 @@
 		TP0000000000000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		TP0000000000000000000020 /* TruePadAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TruePadAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		TP0000000000000000000021 /* TruePadPhysicalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TruePadPhysicalTests.swift; sourceTree = "<group>"; };
+		TP0000000000000000000041 /* ExternalSourceLifetimeTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalSourceLifetimeTest.swift; sourceTree = "<group>"; };
+		TP0000000000000000000043 /* VisualParityScreenshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualParityScreenshots.swift; sourceTree = "<group>"; };
+		TP0000000000000000000045 /* FixedRecordSmokeTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixedRecordSmokeTest.swift; sourceTree = "<group>"; };
+		TP0000000000000000000047 /* CrossEditionSealTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossEditionSealTest.swift; sourceTree = "<group>"; };
+		TP0000000000000000000049 /* CrossEditionMessageTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossEditionMessageTest.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -116,6 +126,11 @@
 			isa = PBXGroup;
 			children = (
 				TP0000000000000000000021 /* TruePadPhysicalTests.swift */,
+				TP0000000000000000000041 /* ExternalSourceLifetimeTest.swift */,
+				TP0000000000000000000043 /* VisualParityScreenshots.swift */,
+				TP0000000000000000000045 /* FixedRecordSmokeTest.swift */,
+				TP0000000000000000000047 /* CrossEditionSealTest.swift */,
+				TP0000000000000000000049 /* CrossEditionMessageTest.swift */,
 			);
 			path = TruePadAppUITests;
 			sourceTree = "<group>";
@@ -259,6 +274,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				TP0000000000000000000022 /* TruePadPhysicalTests.swift in Sources */,
+				TP0000000000000000000040 /* ExternalSourceLifetimeTest.swift in Sources */,
+				TP0000000000000000000042 /* VisualParityScreenshots.swift in Sources */,
+				TP0000000000000000000044 /* FixedRecordSmokeTest.swift in Sources */,
+				TP0000000000000000000046 /* CrossEditionSealTest.swift in Sources */,
+				TP0000000000000000000048 /* CrossEditionMessageTest.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

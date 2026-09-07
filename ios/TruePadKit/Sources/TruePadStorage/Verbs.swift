@@ -313,9 +313,33 @@ public final class Engine: @unchecked Sendable {
         where sequence >= e.nextSequence && count >= h.verifyAttemptLimit {
             contestedLive += 1
         }
-        let ceilRecordsForBytes =
-            (remainingBytes + WcOneTime.maxCiphertextBytes - 1) / WcOneTime.maxCiphertextBytes
-        let limitedBy = remainingRecords <= ceilRecordsForBytes ? "AUTHENTICATION" : "ENCRYPTION"
+        // §16 — WHAT A SEND ACTUALLY COSTS. On a FIXED store every send spends
+        // exactly F encryption bytes and one authentication record however short
+        // the message: burn builds a full F-byte frame, so `c` is always F. The
+        // encryption budget therefore bounds the MESSAGE COUNT exactly, at
+        // remainingBytes / F. On a variable store a send can be as small as the
+        // operator likes, so records are the only bound and remainingRecords is a
+        // true maximum — that branch is unchanged.
+        //
+        // Reporting remainingRecords on a fixed store OVERSTATED the budget, often
+        // by an order of magnitude. A Small pad (E = 16,384 per direction, N = 64)
+        // fixed at F = 4096 can send four messages; after the fourth it reported
+        // sixty, and the pad list still said "Ready" for a pad that could never
+        // send again. The figure is presentational — burn's own
+        // `encryption-exhausted` refusal is what protects the pad — but an
+        // operator plans around this number.
+        let sendsAffordableByBytes: Int
+        let bindingByBytes: Int
+        switch h.record {
+        case .fixed(let f):
+            sendsAffordableByBytes = remainingBytes / f
+            bindingByBytes = sendsAffordableByBytes
+        case .variable:
+            sendsAffordableByBytes = remainingRecords
+            bindingByBytes =
+                (remainingBytes + WcOneTime.maxCiphertextBytes - 1) / WcOneTime.maxCiphertextBytes
+        }
+        let limitedBy = remainingRecords <= bindingByBytes ? "AUTHENTICATION" : "ENCRYPTION"
         let state = witnessFor(fs: witnessFs, kind: kind)
             .report(pairId: h.pairId, direction: h.direction, store: highWaters(store))
         // Derive — never store — this direction's deployment classification from
@@ -330,7 +354,8 @@ public final class Engine: @unchecked Sendable {
             remainingBytes: remainingBytes, capacityRecords: h.capacityRecords,
             nextSequence: e.nextSequence, remainingRecords: remainingRecords,
             contestedLive: contestedLive, record: h.record, failureCount: e.failureCount,
-            frozen: frozenHalf(store), maxRemainingSends: remainingRecords, limitedBy: limitedBy,
+            frozen: frozenHalf(store),
+            maxRemainingSends: min(remainingRecords, sendsAffordableByBytes), limitedBy: limitedBy,
             witnessKind: kind, witnessState: state,
             deployment: assessDeployment(facts), sourceClass: facts.source)
     }
