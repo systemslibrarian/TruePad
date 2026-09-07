@@ -96,10 +96,35 @@ went in. The Browser/CLI count moves because `tests/release-state.test.ts` is ne
 every other figure is unchanged, which is the point — release mechanics changed no
 behaviour.
 
+**The first release commit did not tag.** Its exact-SHA CI came back with five
+workflows green and the iOS one red at `Test under AddressSanitizer`: 471 tests,
+1 failure. It was not caused by the release commit — nothing that commit changes
+under `ios/` is compiled or read by `swift test`, the same job's plain `swift
+test` was green at 471/471, the reviewed candidate had passed the identical
+workflow minutes earlier, and five full local ASan runs on the same code were
+clean, as were fifteen targeted ASan runs of `ConcurrencyTests` — the only suite
+whose outcome depends on real thread scheduling. **Re-running the same job on the
+same SHA passed**, including both sanitizer steps. So: one occurrence, never
+reproduced, on a gate that is genuinely nondeterministic where it exercises
+concurrency. It is recorded here as a flake rather than explained away, because
+the failing test was never identified and therefore cannot be said to have been
+understood.
+
+What the red run could NOT do was say which test failed: the step piped `swift
+test` through `tail -20`, so the only complete output lived in `/tmp` on a runner
+that is then destroyed. A gate that can go red without being actionable is not a
+gate. The sanitizer steps now print the failing cases and keep all three logs as
+an artifact, and **no test and no assertion was weakened to get past it** — in
+particular `ConcurrencyTests`' two contention assertions are untouched, so the
+same failure can still happen. It will just be legible when it does.
+
+The release moved to a second commit carrying that fix, and the `v3.0.0` tag
+points at that commit rather than at the first one.
+
 | Gate | Result on the release tree |
 | --- | --- |
 | `npm run typecheck` (3 projects) | PASS |
-| `npm test` | **1717 / 1717**, 82 files (1703 / 81 at the candidate, + 14 release-state guards in 1 new file) |
+| `npm test` | **1720 / 1720**, 82 files (1703 / 81 at the candidate, + 17 release-state guards in 1 new file) |
 | `npm run build` | PASS |
 | `npm run test:e2e` (Playwright) | **36 / 36** |
 | Frozen crypto/wire — `git diff v2.0.0 HEAD -- src/core src/spt` | **empty** |

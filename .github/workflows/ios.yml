@@ -109,6 +109,12 @@ jobs:
           total, failures = max(int(t) for t, _ in runs), max(int(f) for _, f in runs)
           print(f"executed {total} tests, {failures} failures (floor {FLOOR})")
           if failures:
+              # NAME THEM. A summary line saying "1 failure" and nothing else is
+              # a red gate nobody can act on; see the ASan step below for the run
+              # where that actually happened.
+              for line in text.splitlines():
+                  if "' failed (" in line or "error:" in line:
+                      print(line)
               sys.exit(f"{failures} test failures")
           if total < FLOOR:
               sys.exit(f"only {total} tests ran, below the floor of {FLOOR} — "
@@ -121,15 +127,29 @@ jobs:
       # engine's locking, which is what stops two concurrent burns taking the same
       # one-time key. ConcurrencyTests exists so TSan has real contention to look
       # at rather than a single-threaded run that would pass vacuously.
+      #
+      # WHY THESE STEPS PRINT MORE THAN A TAIL. `tee ... | tail -20` keeps a green
+      # run short, and that was the whole design — until an ASan run reported
+      # "Executed 471 tests, with 1 failure" and NOTHING in the log said which
+      # test. The full output existed only in /tmp on a runner that is then
+      # destroyed, so the red gate could not be acted on at all: not reproduced,
+      # not attributed, not fixed. The tail stays for the ordinary case; a failure
+      # now names the failing cases and the whole log is kept as an artifact.
       - name: Test under AddressSanitizer
         working-directory: ios/TruePadKit
         run: |
           set -o pipefail
           swift test --sanitize=address 2>&1 | tee /tmp/ios-asan.log | tail -20
           if grep -qE 'ERROR: AddressSanitizer|runtime error:' /tmp/ios-asan.log; then
-            echo "AddressSanitizer reported a finding"; exit 1
+            echo "::error::AddressSanitizer reported a finding"
+            grep -nE 'ERROR: AddressSanitizer|runtime error:' -A 25 /tmp/ios-asan.log | head -80
+            exit 1
           fi
-          grep -qE 'Executed [0-9]+ tests, with 0 failures' /tmp/ios-asan.log
+          if ! grep -qE 'Executed [0-9]+ tests, with 0 failures' /tmp/ios-asan.log; then
+            echo "::error::the AddressSanitizer run had test failures — the failing cases follow"
+            grep -nE "' failed \(|error:|Test Suite '[A-Za-z]+' failed" /tmp/ios-asan.log | head -60
+            exit 1
+          fi
 
       - name: Test under ThreadSanitizer
         working-directory: ios/TruePadKit
@@ -137,9 +157,29 @@ jobs:
           set -o pipefail
           swift test --sanitize=thread 2>&1 | tee /tmp/ios-tsan.log | tail -20
           if grep -qE 'WARNING: ThreadSanitizer|data race' /tmp/ios-tsan.log; then
-            echo "ThreadSanitizer reported a finding"; exit 1
+            echo "::error::ThreadSanitizer reported a finding"
+            grep -nE 'WARNING: ThreadSanitizer|data race' -A 25 /tmp/ios-tsan.log | head -80
+            exit 1
           fi
-          grep -qE 'Executed [0-9]+ tests, with 0 failures' /tmp/ios-tsan.log
+          if ! grep -qE 'Executed [0-9]+ tests, with 0 failures' /tmp/ios-tsan.log; then
+            echo "::error::the ThreadSanitizer run had test failures — the failing cases follow"
+            grep -nE "' failed \(|error:|Test Suite '[A-Za-z]+' failed" /tmp/ios-tsan.log | head -60
+            exit 1
+          fi
+
+      # The logs the three steps above wrote, kept only when something went wrong.
+      # This is the artefact that makes a red run diagnosable after the runner is
+      # gone; without it the evidence is destroyed with the machine.
+      - name: Keep the test logs when a run is red
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-test-logs
+          path: |
+            /tmp/ios-tests.log
+            /tmp/ios-asan.log
+            /tmp/ios-tsan.log
+          if-no-files-found: ignore
 
       - name: KAT-support isolation is structural
         run: ios/scripts/check-release-isolation.sh

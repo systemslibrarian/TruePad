@@ -214,6 +214,47 @@ describe("no current document still describes 3.0 as unreleased", () => {
   });
 });
 
+describe("the supply-chain claim the release makes about its own CI is true", () => {
+  /* The CHANGELOG states a NUMBER of pinned GitHub Actions references. That
+   * number was correct when written and went stale the moment a workflow gained
+   * a step — which is exactly what happened while preparing this release. A
+   * count in prose with nothing checking it is a supply-chain claim that decays
+   * silently, so the tree is the authority for it here. */
+  function workflowUses(): string[] {
+    const dir = join(ROOT, ".github/workflows");
+    const out: string[] = [];
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".yml") && !f.endsWith(".yaml")) continue;
+      for (const m of read(".github/workflows", f).matchAll(/^\s*(?:-\s*)?uses:\s*(\S+)/gm)) {
+        out.push(m[1]);
+      }
+    }
+    return out;
+  }
+
+  it("finds the workflows it claims to police", () => {
+    // POSITIVE CONTROL: a broken read would make both assertions below vacuous.
+    expect(workflowUses().length, "GitHub Actions references").toBeGreaterThan(20);
+  });
+
+  it("pins every action to an immutable 40-hex commit SHA", () => {
+    const floating = workflowUses().filter((u) => !/@[0-9a-f]{40}$/.test(u));
+    expect(floating, `these actions are not pinned to a commit SHA: ${floating.join(", ")}`)
+      .toEqual([]);
+  });
+
+  it("states the right number of them in the CHANGELOG", () => {
+    const actual = workflowUses().length;
+    const claims = [...read("CHANGELOG.md").matchAll(/All (\d+) GitHub Actions references pinned/g)];
+    expect(claims.length, "the CHANGELOG no longer states the pinned-action count")
+      .toBeGreaterThan(0);
+    for (const m of claims) {
+      expect(Number(m[1]), `the CHANGELOG says ${m[1]} pinned actions; the workflows hold ${actual}`)
+        .toBe(actual);
+    }
+  });
+});
+
 describe("the previous release stays exactly where it is", () => {
   it("2.0.0 remains recorded as the first formal release", () => {
     expect(read("CHANGELOG.md")).toMatch(

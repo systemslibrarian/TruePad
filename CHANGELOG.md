@@ -135,7 +135,7 @@ never by inspecting the decrypted bytes:
 
 ### Supply chain
 
-- All 28 GitHub Actions references pinned to immutable commit SHAs; Dependabot
+- All 29 GitHub Actions references pinned to immutable commit SHAs; Dependabot
   added for `github-actions`; the Gradle distribution is now checksum-verified.
   Full audit in `docs/SUPPLY-CHAIN.md`.
 
