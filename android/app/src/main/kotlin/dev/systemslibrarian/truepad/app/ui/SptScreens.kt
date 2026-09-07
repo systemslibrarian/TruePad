@@ -23,6 +23,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.systemslibrarian.truepad.app.Claims
+import dev.systemslibrarian.truepad.app.Egress
 import dev.systemslibrarian.truepad.app.PadViewModel
 import dev.systemslibrarian.truepad.app.Tab
 import dev.systemslibrarian.truepad.app.Screen
@@ -172,10 +173,10 @@ fun ReceivePadScreen(state: UiState, vm: PadViewModel) {
     CodeBlock(request.tpr2Text, "The receive code, ready to give to the sender.", "receive-code-output")
     FullWidth {
         PrimaryButton("Copy code", Modifier.testTag("btn-copy-receive-code")) {
-            context.copySensitiveText("TruePad receive code", request.tpr2Text)
+            context.copySensitiveText("TruePad receive code", request.tpr2Text, Egress.PUBLIC_TEXT)
         }
         SecondaryButton("Share code", Modifier.testTag("btn-share-receive-code")) {
-            context.shareReceiveCode(request.tpr2Text)
+            context.shareReceiveCode(request.tpr2Text, Egress.PUBLIC_TEXT)
         }
     }
     // If the sender is nearby, they can scan this instead of pasting it.

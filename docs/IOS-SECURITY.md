@@ -516,6 +516,22 @@ to say about plaintext, and `mayCopyToClipboard` was dead code no view consulted
 the Open screen no longer offers selection. The envelope on the Send screen keeps
 it: an envelope is `publicText`, and copying it is the workflow.
 
+**This rule is no longer iOS-only.** For a while it was, and the product enforced
+opposite rules for the same bytes: the Browser offered Copy and Save on the
+decrypted message and Android offered Copy, each beside its own warning about the
+clipboard. Both now match this edition, with the same taxonomy and the same
+sentence to the operator:
+
+> Decrypted message text remains display-only inside TruePad. Received file
+> payloads may be saved as the explicit file-delivery operation.
+
+The second clause is the Browser's alone — it has "Send file"/"Open file" tiles
+and iOS does not, so iOS has no received-file case. A file the operator asked for
+AS A FILE may be written, because that is the delivery rather than a second copy
+of something already on screen; it can never reach a clipboard or a QR. Which
+class applies is decided by the operator's declared mode, never by inspecting the
+decrypted bytes.
+
 ---
 
 ### The operator's role: derived from the pad, never defaulted

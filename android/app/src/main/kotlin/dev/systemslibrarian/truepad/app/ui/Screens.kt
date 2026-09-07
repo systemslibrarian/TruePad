@@ -30,6 +30,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.systemslibrarian.truepad.app.Claims
+import dev.systemslibrarian.truepad.app.Egress
 import dev.systemslibrarian.truepad.app.FixedRecordIntake
 import dev.systemslibrarian.truepad.core.ASSESSMENT_LABEL
 import dev.systemslibrarian.truepad.core.SOURCE_LABEL
@@ -529,10 +530,10 @@ fun SendScreen(state: UiState, vm: PadViewModel) {
             // the screen cannot hand over a different spelling from the one the
             // operator is looking at.
             PrimaryButton("Copy", Modifier.testTag("btn-copy-envelope")) {
-                context.copySensitiveText("TruePad encrypted message", shown)
+                context.copySensitiveText("TruePad encrypted message", shown, Egress.PUBLIC_TEXT)
             }
             SecondaryButton("Share", Modifier.testTag("btn-share-envelope")) {
-                context.shareEncryptedMessage(shown)
+                context.shareEncryptedMessage(shown, Egress.PUBLIC_TEXT)
             }
             SecondaryButton("Back to pad", Modifier.testTag("btn-back-to-pad")) { vm.clearResult(); vm.back() }
         }
@@ -593,16 +594,33 @@ fun OpenScreen(state: UiState, vm: PadViewModel) {
         // On success the plaintext IS the screen. No cryptographic status
         // wrapped around it, no badge, no ceremony — the released rule.
         SectionTitle("Message")
-        SelectionContainer {
-            Body(result.plaintext, Modifier.fillMaxWidth().padding(vertical = 8.dp).testTag("plaintext-output"))
-        }
+        // NOT INSIDE A SelectionContainer, and this is the same decision iOS made
+        // and wrote down. Removing the Copy button is not the policy if a
+        // long-press and "Copy" reaches the same clipboard: the screen would say
+        // "there is no copy for it" while offering one through the platform
+        // instead of through TruePad. The ENVELOPE on the Send screen keeps its
+        // SelectionContainer, because it is public transport and copying it is
+        // the workflow.
+        //
+        // TalkBack is unaffected — the text is still read; only the drag-to-select
+        // gesture is declined.
+        Body(result.plaintext, Modifier.fillMaxWidth().padding(vertical = 8.dp).testTag("plaintext-output"))
         FullWidth {
-            SecondaryButton("Copy", Modifier.testTag("btn-copy-plaintext")) {
-                context.copySensitiveText("TruePad message", result.plaintext)
-            }
             SecondaryButton("Back to pad") { vm.clearResult(); vm.back() }
         }
-        Faint(Claims.CLIPBOARD_WARNING)
+        // NO COPY. The decrypted message is on the screen and stays there. The
+        // clipboard is readable by any app with focus, is kept in a platform
+        // history and syncs across the operator's devices — and this screen's own
+        // CLIPBOARD_WARNING conceded that the sensitive-clip mark "does not stop
+        // another app from reading the clipboard". A copy adds a SECOND copy of
+        // the one thing the pad exists to protect, and none is needed to read it.
+        // iOS has refused this since its Open screen was written; this is Android
+        // adopting the same rule. See Egress.kt.
+        //
+        // CLIPBOARD_WARNING is gone with the button it qualified: a warning about
+        // a clipboard nothing writes to would be describing a risk this screen no
+        // longer takes. The narrower true sentence replaces it.
+        Faint(Claims.PLAINTEXT_STAYS_HERE)
         Details("Details") {
             Faint(
                 "The tag verified before any byte was released, and this message's record is now retired — it " +

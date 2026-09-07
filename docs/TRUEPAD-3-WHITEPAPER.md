@@ -179,9 +179,9 @@ shown beside these.
 
 ## 18. Testing / falsification evidence
 
-Reproduced at the current release-candidate SHA: 1678 unit tests across 80 files
-in the Browser/CLI edition (`npm test`), plus 299 distinct Android JVM tests
-(`./gradlew test` reports 388 executions because the app module runs under both
+Reproduced at the current release-candidate SHA: 1703 unit tests across 81 files
+in the Browser/CLI edition (`npm test`), plus 301 distinct Android JVM tests
+(`./gradlew test` reports 392 executions because the app module runs under both
 the debug and release variants), 55 Android on-device instrumentation tests, and
 471 iOS tests (`swift test --package-path ios/TruePadKit`); 36 Playwright browser
 tests; a

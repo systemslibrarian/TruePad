@@ -596,16 +596,45 @@ It is a request the system honours. It is **not** a defence against a rooted or
 compromised device, an accessibility service the user has granted capture rights
 to, or a camera pointed at the screen. The app says so on screen.
 
-### Clipboard
+### Clipboard, and what may leave at all
 
-Nothing is copied except by a button the operator pressed, and only a message
-they are already looking at — never pad material, keys, masks, tags or witness
-state. On API 33+ the clip is marked `EXTRA_IS_SENSITIVE`, which asks the system
-not to render a preview of it in the clipboard confirmation UI; that preview is
-what would otherwise put a decrypted message on screen outside `FLAG_SECURE`.
+**Decrypted message text remains display-only inside TruePad. Received file
+payloads may be saved as the explicit file-delivery operation.** That is the
+whole policy, and it is the same sentence on all three editions.
 
-The clipboard is a cross-application surface and TruePad cannot police it. The
-app states plainly that another application may read it.
+This section previously described the opposite for the message: "only a message
+they are already looking at" was the Open screen's Copy button, and the
+`EXTRA_IS_SENSITIVE` rationale here was that the clipboard preview "would
+otherwise put a decrypted message on screen outside `FLAG_SECURE`". Both
+described a control that no longer exists. iOS had refused it since its Open
+screen was written; Android and the Browser now match.
+
+What a decrypted MESSAGE may do: be displayed. There is no Copy, no Share, no
+Save, no QR, and the text is not selectable — a long-press reaching the platform
+copy menu would be the same clipboard by another route, which is why iOS declines
+selection too. TalkBack is unaffected.
+
+What may still leave, and by which route (`app/Egress.kt`):
+
+| Class | Clipboard | Share sheet | File | QR |
+|---|---|---|---|---|
+| `PUBLIC_TEXT` — TP2 envelope, TPR2 receive code | yes | yes | yes | yes |
+| `PAD_FILE` — courier bundle, sealed package | no | no | picker only | no |
+| `PLAINTEXT_MESSAGE` — the decrypted message | no | no | no | no |
+
+Android has no received-file case because it has no file-receive feature; the
+Browser does, and there a file the operator asked for AS A FILE may be saved,
+because writing it is the delivery rather than a second copy of something already
+on screen. It can never reach a clipboard or a QR.
+
+Every egress helper takes a required classification and refuses the forbidden
+ones itself, so a new call site cannot route the message out by forgetting.
+
+**This is an application egress policy, not a data-loss-prevention claim.** It
+does not stop a screenshot, an accessibility service, a debugger attached to the
+process, the operating system reading memory, or someone reading the words aloud.
+The clipboard remains a cross-application surface that TruePad cannot police, and
+where a copy IS offered the app still says so plainly.
 
 ### Files in
 

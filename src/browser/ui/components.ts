@@ -8,6 +8,7 @@
  * secret; these are presentation primitives only.
  * ========================================================================= */
 
+import { requireCopyable, requireSavable, type Egress } from "./egress.ts";
 import { h, icon, mount, type Child } from "./dom.ts";
 import type { Ctx } from "./context.ts";
 import type { MeterView, StatusView, Tone } from "./format.ts";
@@ -310,7 +311,16 @@ export function payloadBlock(opts: { label: string; text: string; meta?: string;
 
 /* ---- operator affordances ----------------------------------------------- */
 
-export function copyButton(ctx: Ctx, getText: () => string, label = "Copy", variant = "primary"): HTMLElement {
+export function copyButton(
+  ctx: Ctx,
+  getText: () => string,
+  egress: Egress,
+  label = "Copy",
+  variant = "primary"
+): HTMLElement {
+  // CLASSIFIED AT THE BOUNDARY. The parameter is required and has no default, so
+  // a new call site cannot omit it and the compiler names every existing one.
+  requireCopyable(egress);
   const glyph = icon("copy");
   const text = h("span", { text: label });
   let timer: number | undefined;
@@ -342,7 +352,14 @@ export function copyButton(ctx: Ctx, getText: () => string, label = "Copy", vari
 /* Save bytes to a file the operator names — an operator-initiated download,
    never an automatic upload. When the bytes are pad material the calling
    screen frames it as the courier step. */
-export function saveBytesButton(bytes: () => Uint8Array, filename: string, label = "Save", variant = "secondary"): HTMLElement {
+export function saveBytesButton(
+  bytes: () => Uint8Array,
+  filename: string,
+  egress: Egress,
+  label = "Save",
+  variant = "secondary"
+): HTMLElement {
+  requireSavable(egress);
   return h(
     "button",
     {

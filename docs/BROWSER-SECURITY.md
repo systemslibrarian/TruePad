@@ -455,6 +455,52 @@ source's physics. Three separate guarantees; never quote one for another.
 
 ---
 
+## 6.5 Egress: what may leave, and by which route
+
+**Decrypted message text remains display-only inside TruePad. Received file
+payloads may be saved as the explicit file-delivery operation.**
+
+The Open screen used to offer Copy and Save on the decrypted message, beside the
+same controls the Send screen uses for a public encrypted envelope, with nothing
+in the type system able to tell the two apart. iOS had refused both since its
+Open screen was written; this edition and Android now match it.
+
+| Class (`ui/egress.ts`) | Clipboard | File | QR |
+|---|---|---|---|
+| `public-text` — TP2 envelope, canonical JSON, TPR2 receive code | yes | yes | yes |
+| `pad-file` — courier bundle, sealed package | no | yes | no |
+| `plaintext-message` — the decrypted message | no | no | no |
+| `received-file` — a payload the operator asked for AS A FILE | no | yes | no |
+
+`received-file` is why the second sentence of the policy exists. "Open file" has
+no on-screen form to fall back on: writing the file IS the delivery, not a second
+copy of something already displayed, and refusing it would delete the feature
+rather than close an egress path. It can never reach a clipboard or a QR.
+
+**Which class applies is decided by the operator's declared mode, never by the
+material.** The first version of this rule chose between `plaintext-message` and
+`received-file` with a content sniff on the decrypted bytes, and got it backwards
+both ways: every plain-text file sniffed as text, landed in the message branch
+and lost its Save — so "Open file" silently stopped delivering for the commonest
+kind of file, after the pad material had already been spent — while a message
+containing control bytes landed in the file branch and was handed the export the
+policy forbids. A classification a *sender* can influence by choosing bytes is
+not a classification. `egressForOpenedPayload(mode)` is the only producer of
+either case, and a guard holds that those two literals appear in no other file,
+so no screen can label the displayed message `received-file` to obtain a save.
+
+Every egress helper — `copyButton`, `saveBytesButton`, `savePadFileButton`,
+`showQrCodeControl` — takes a required classification and refuses the forbidden
+ones itself. The decrypted message is also not selectable (`.message-body
+{ user-select: none }`), because a drag and Ctrl-C reaches the same clipboard the
+removed button did; screen readers are unaffected.
+
+**This is an application egress policy, not a data-loss-prevention claim.** It
+does not stop a screenshot, an extension, devtools, the operating system, or a
+person transcribing the words. What it stops is TruePad offering to do it.
+
+---
+
 ## 7. Network, PWA, and privacy
 
 **BROWSER-OP.** The Browser Edition ships a web app manifest and a service

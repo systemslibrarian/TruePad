@@ -10,6 +10,7 @@
  * to move the same text.
  * ========================================================================= */
 
+import { requireQrRenderable } from "../egress.ts";
 import { h, icon } from "../dom.ts";
 import { encodeReceiveCodeToMatrix } from "./encode.ts";
 import { renderQrMatrixToSvg } from "./svg.ts";
@@ -23,6 +24,11 @@ const NOT_VERIFY_NOTE = "Scanning the code does not verify who created it. Compa
  * rendered lazily on first reveal.
  */
 export function showQrCodeControl(code: string): HTMLElement {
+  // A QR IS A CLIPBOARD YOU CAN PHOTOGRAPH, so it obeys the same policy. This
+  // predicate existed and had no caller at all, which meant the comment "never
+  // drawn as a QR" and the tests asserting it were enforced by nothing. The only
+  // QR in the product carries a TPR2 receive code, which is public transport.
+  requireQrRenderable("public-text");
   const container = h("div", { class: "qr-show" });
   const figureSlot = h("div", { class: "qr-figure-slot", hidden: true });
 

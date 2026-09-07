@@ -243,8 +243,8 @@ function renderReady(ctx: Ctx, root: HTMLElement, pairId: string, envelope: stri
       h(
         "div",
         { class: "btn-row" },
-        copyButton(ctx, () => shown, "Copy"),
-        saveBytesButton(() => new TextEncoder().encode(shown), `message-${pairId.slice(0, 8)}.txt`, "Save"),
+        copyButton(ctx, () => shown, "public-text", "Copy"),
+        saveBytesButton(() => new TextEncoder().encode(shown), `message-${pairId.slice(0, 8)}.txt`, "public-text", "Save"),
         shareBtn
       ),
       h(
@@ -275,7 +275,7 @@ function renderReady(ctx: Ctx, root: HTMLElement, pairId: string, envelope: stri
                   { class: "qd-body" },
                   h("p", { text: "This is the same encrypted message in TruePad's technical JSON form. Either one opens." }),
                   payloadBlock({ label: "Canonical JSON", text: envelope, meta: fmtBytes(envelope.length) }),
-                  h("div", { class: "btn-row" }, copyButton(ctx, () => envelope, "Copy JSON"))
+                  h("div", { class: "btn-row" }, copyButton(ctx, () => envelope, "public-text", "Copy JSON"))
                 )
               )
         )

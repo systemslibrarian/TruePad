@@ -1547,6 +1547,20 @@ input[type="radio"] {
   font-family: var(--font-serif);
   font-size: var(--fs-lg);
   line-height: 1.65;
+  /* NOT SELECTABLE, and this is the same decision iOS made and wrote down.
+   *
+   * Removing the Copy button is not the policy if a drag and Ctrl-C reaches the
+   * same clipboard: the screen would say "there is no copy for it" while
+   * offering one through the platform instead of through TruePad. iOS declines
+   * `.textSelection(.enabled)` on plaintext for exactly this reason, and the
+   * envelope on the Send screen keeps selection because it is public transport.
+   *
+   * Screen readers are unaffected — this hides nothing from assistive
+   * technology, it only declines the drag-to-select gesture. It is also not a
+   * control: a screenshot, devtools, or reading the words aloud all still work,
+   * which is why the sentence beside it claims nothing more than it does. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .ok-head {

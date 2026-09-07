@@ -243,6 +243,12 @@ public struct OpenView: View {
                     // `.publicText`, and copying it is the whole workflow.
                     BodyText(plaintext)
                         .accessibilityLabel("The opened message: \(plaintext)")
+                    // SAID OUT LOUD, on all three editions, in the same words.
+                    // The policy was applied here and explained only in a comment;
+                    // an operator looking for a Copy button deserves to know why
+                    // there is not one. Deliberately narrow — see
+                    // VerbatimText.plaintextStaysHere.
+                    FaintText(VerbatimText.plaintextStaysHere)
                     if let note = model.skippedNote {
                         FaintText(note)
                     }

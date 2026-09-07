@@ -92,16 +92,35 @@ class MainActivity : ComponentActivity() {
  * and on older releases many could read it in the background. TruePad therefore
  * never copies anything on its own: nothing is placed here except by a button
  * the operator pressed, and pad material, keys, masks, tags and witness state
- * are never candidates at all — only a message the operator is already looking
- * at.
+ * are never candidates at all.
+ *
+ * NOR IS THE DECRYPTED MESSAGE, any more. This said "only a message the operator
+ * is already looking at", which was the Open screen's Copy button — removed, on
+ * the rule iOS has always had. What reaches here now is PUBLIC_TEXT only: a TP2
+ * envelope or a TPR2 receive code, both of which are meant to travel. The
+ * `egress` parameter is what enforces that, immediately below.
  *
  * EXTRA_IS_SENSITIVE (API 33+) asks the system not to render a preview of the
- * copied text in the clipboard confirmation UI, which is what would otherwise
- * put a decrypted message on screen a second time, outside FLAG_SECURE. It is a
- * request, not a control: it does not stop another application from reading the
- * clipboard, and Claims.CLIPBOARD_WARNING says exactly that.
+ * copied text in the clipboard confirmation UI. It is a request, not a control:
+ * it does not stop another application from reading the clipboard, and
+ * Claims.CLIPBOARD_WARNING says exactly that.
+ *
+ * ITS RATIONALE HAS CHANGED, and this paragraph used to give the old one — that
+ * the preview "would otherwise put a decrypted message on screen a second time".
+ * A decrypted message can no longer reach here at all: the only material this
+ * function now accepts is PUBLIC_TEXT, which is a TP2 envelope or a TPR2 receive
+ * code. The flag is kept anyway, because a preview of an envelope on a lock
+ * screen is still a shoulder-surfing surface and suppressing it costs nothing —
+ * not because the clipboard might hold a secret. `shareReceiveCode` deliberately
+ * does NOT set it, and its comment explains why the two differ.
  */
-fun Context.copySensitiveText(label: String, text: String) {
+fun Context.copySensitiveText(label: String, text: String, egress: Egress) {
+    // CLASSIFIED AT THE BOUNDARY. The parameter is required and has no default,
+    // so a new call site cannot omit it and the compiler names every existing
+    // one. `PLAINTEXT` is refused here rather than by remembering not to ask:
+    // the Open screen's Copy button was the same call as the Send screen's, with
+    // a different string, and nothing could tell them apart.
+    if (!EgressPolicy.mayCopyToClipboard(egress)) throw EgressRefused(egress, "copied to the clipboard")
     val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
     val clip = ClipData.newPlainText(label, text)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -121,7 +140,8 @@ fun Context.copySensitiveText(label: String, text: String) {
  * right destination for it. A PAD, which is secret, is never shared this way;
  * it goes only to a location the operator picked in the system file picker.
  */
-fun Context.shareEncryptedMessage(text: String) {
+fun Context.shareEncryptedMessage(text: String, egress: Egress) {
+    if (!EgressPolicy.mayShareAsText(egress)) throw EgressRefused(egress, "handed to the share sheet")
     val send = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
         putExtra(Intent.EXTRA_TEXT, text)
@@ -141,7 +161,8 @@ fun Context.shareEncryptedMessage(text: String) {
  * as text (this app has no content provider). No EXTRA_IS_SENSITIVE: nothing
  * here is secret, and marking it so would be a false claim.
  */
-fun Context.shareReceiveCode(text: String) {
+fun Context.shareReceiveCode(text: String, egress: Egress) {
+    if (!EgressPolicy.mayShareAsText(egress)) throw EgressRefused(egress, "handed to the share sheet")
     val send = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
         putExtra(Intent.EXTRA_TEXT, text)

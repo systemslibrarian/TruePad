@@ -155,6 +155,23 @@ object Claims {
             "the clipboard."
 
     /**
+     * WHAT TRUEPAD SAYS ABOUT THE DECRYPTED MESSAGE STAYING PUT.
+     *
+     * Deliberately modest. It says what TruePad DOES — it does not offer a copy
+     * or a share for the decrypted message — and claims nothing about what the
+     * device, the operating system or another person can do. A screenshot, an
+     * accessibility service, a debugger attached to the process, and someone
+     * reading the words aloud are all untouched by it. It is an application
+     * egress policy, not a data-loss-prevention claim, and saying otherwise
+     * would be the overstatement this file's own guards exist to catch.
+     *
+     * Word for word the Browser's `PLAINTEXT_STAYS_HERE` (ui/egress-copy.ts) and
+     * the iOS sentence, so one rule reads the same on all three.
+     */
+    const val PLAINTEXT_STAYS_HERE =
+        "This message stays in TruePad — there is no copy or save for it. You can read it here."
+
+    /**
      * FLAG_SECURE is set on the window, and this says exactly what that buys.
      */
     const val SCREEN_CAPTURE_NOTE =

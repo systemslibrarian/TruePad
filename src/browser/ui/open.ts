@@ -10,7 +10,9 @@
  * ========================================================================= */
 
 import { h, icon, mount } from "./dom.ts";
-import { backLink, callout, copyButton, filePicker, saveBytesButton, screenHead } from "./components.ts";
+import { backLink, callout, filePicker, saveBytesButton, screenHead } from "./components.ts";
+import { PLAINTEXT_STAYS_HERE } from "./egress-copy.ts";
+import { egressForOpenedPayload } from "./egress.ts";
 import { consequenceFor, fmtBytes } from "./format.ts";
 import { UNKNOWN_ORIGIN_PROMPT, resolveRole } from "./role.ts";
 import type { Ctx } from "./context.ts";
@@ -35,8 +37,38 @@ function backRow(ctx: Ctx, pairId: string): HTMLElement {
   );
 }
 
-function renderAccepted(ctx: Ctx, root: HTMLElement, reply: Extract<EngineOk, { op: "open" }>, pairId: string): void {
+/**
+ * THE CLASSIFICATION FOLLOWS THE OPERATOR'S DECLARED MODE, NOT A CONTENT SNIFF.
+ *
+ * This branched on `isProbablyText(plaintext)` and `mode` was never passed in at
+ * all, which got the policy exactly backwards in both directions:
+ *
+ *   · Every plain-text FILE — .txt, .csv, .json, .md, source, PEM, a config —
+ *     sniffs as text, so it landed in the message branch and lost its Save. The
+ *     "Open file" tile silently stopped delivering for the commonest kind of
+ *     file, which is the feature deletion the `received-file` class exists to
+ *     avoid.
+ *   · A decrypted MESSAGE whose bytes happened to trip the sniff landed in the
+ *     file branch and was handed a plaintext file export under `received-file` —
+ *     the precise egress this repair forbids, wearing the label that permits it.
+ *
+ * A content heuristic can never carry that distinction: it is about what the
+ * OPERATOR asked for. "Open message" is display-only; "Open file" is a delivery
+ * whose whole point is a file on disk. The sniff survives for one honest job —
+ * deciding whether a received FILE can also be shown on screen — and decides
+ * nothing about egress.
+ */
+function renderAccepted(
+  ctx: Ctx,
+  root: HTMLElement,
+  reply: Extract<EngineOk, { op: "open" }>,
+  pairId: string,
+  mode: "message" | "file"
+): void {
   const { plaintext } = reply;
+  // Asked once, from the mode, and passed to whichever branch renders. No screen
+  // decides this and no content decides this.
+  const egress = egressForOpenedPayload(mode);
   const back = backLink(() => ctx.navigate({ name: "pair", pairId }), "Pad");
   const verified = h(
     "details",
@@ -49,8 +81,14 @@ function renderAccepted(ctx: Ctx, root: HTMLElement, reply: Extract<EngineOk, { 
     )
   );
 
-  if (isProbablyText(plaintext)) {
-    const decoded = new TextDecoder().decode(plaintext);
+  if (mode === "message") {
+    // A MESSAGE IS DISPLAYED AND NOTHING ELSE. If its bytes are not displayable
+    // text the operator sees that plainly, rather than being handed a file export
+    // for material this policy classifies as display-only.
+    const decoded = isProbablyText(plaintext)
+      ? new TextDecoder().decode(plaintext)
+      : "(This message is not displayable text. It opened and verified; TruePad "
+        + "does not offer a file export for a message.)";
     mount(
       root,
       h(
@@ -59,12 +97,16 @@ function renderAccepted(ctx: Ctx, root: HTMLElement, reply: Extract<EngineOk, { 
         back,
         h("h2", { class: "message-head", text: "Message" }),
         h("div", { class: "message-body", attrs: { "aria-label": "Message" }, text: decoded }),
-        h(
-          "div",
-          { class: "btn-row" },
-          copyButton(ctx, () => decoded, "Copy"),
-          saveBytesButton(() => plaintext, `message-${pairId.slice(0, 8)}.txt`, "Save")
-        ),
+        // NO COPY, AND NO SAVE. The decrypted message is on the screen and stays
+        // there. A clipboard copy is readable by any app with focus, is kept in a
+        // platform history, and syncs across the operator's devices; a saved file
+        // is a durable copy outside anything the engine can retire. Both make a
+        // SECOND copy of the one thing the pad exists to protect, and neither is
+        // needed to read it. iOS has refused both since its Open screen was
+        // written; this is the Browser adopting the same rule. See ui/egress.ts.
+        //
+        // The claim is deliberately narrow — see PLAINTEXT_STAYS_HERE.
+        h("p", { class: "faint small", text: PLAINTEXT_STAYS_HERE }),
         verified,
         h("hr", { class: "divider" }),
         backRow(ctx, pairId)
@@ -79,7 +121,13 @@ function renderAccepted(ctx: Ctx, root: HTMLElement, reply: Extract<EngineOk, { 
         back,
         h("div", { class: "ok-head" }, icon("check"), h("h1", { text: "File received" })),
         h("p", { class: "muted", text: `${fmtBytes(plaintext.length)}. Save it to keep it.` }),
-        h("div", { class: "btn-row" }, saveBytesButton(() => plaintext, `file-${pairId.slice(0, 8)}.bin`, "Save file", "primary")),
+        // A RECEIVED FILE IS SAVED, AND THAT IS NOT THE SAME ACT AS SAVING A
+        // MESSAGE. A message is displayed, so writing it out adds a second copy of
+        // something the operator already has. A file has no on-screen form at all:
+        // writing it IS the delivery. Classified separately so the difference is
+        // in the type system rather than in a comment, and still never copied to
+        // the clipboard and never drawn as a QR.
+        h("div", { class: "btn-row" }, saveBytesButton(() => plaintext, `file-${pairId.slice(0, 8)}.bin`, egress, "Save file", "primary")),
         verified,
         h("hr", { class: "divider" }),
         backRow(ctx, pairId)
@@ -136,7 +184,7 @@ export async function renderOpen(ctx: Ctx, root: HTMLElement, pairId: string, mo
     openBtn.disabled = true;
     const reply = await ctx.engine.open({ pairId, as: role, envelope });
     openBtn.disabled = false;
-    if (reply.ok) { renderAccepted(ctx, root, reply, pairId); return; }
+    if (reply.ok) { renderAccepted(ctx, root, reply, pairId, mode); return; }
     if (reply.kind === "error") { mount(errorSlot, callout({ tone: "danger", title: "Could not open", body: reply.message })); return; }
 
     const c = consequenceFor(reply.reason);

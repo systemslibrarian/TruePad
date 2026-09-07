@@ -126,11 +126,11 @@ class TransportPresentationTest {
     fun copyAndShareCarryExactlyWhatIsDisplayed() {
         assertTrue(
             "Copy does not hand over the displayed value",
-            screens.contains("context.copySensitiveText(\"TruePad encrypted message\", shown)"),
+            screens.contains("context.copySensitiveText(\"TruePad encrypted message\", shown, Egress.PUBLIC_TEXT)"),
         )
         assertTrue(
             "Share does not hand over the displayed value",
-            screens.contains("context.shareEncryptedMessage(shown)"),
+            screens.contains("context.shareEncryptedMessage(shown, Egress.PUBLIC_TEXT)"),
         )
         // And neither may go back to handing over the raw engine JSON.
         assertFalse(
@@ -149,23 +149,93 @@ class TransportPresentationTest {
         assertTrue("the receive screen lost Share code", sptScreens.contains("SecondaryButton(\"Share code\""))
         assertTrue(
             "Copy code does not hand over the displayed receive code",
-            sptScreens.contains("copySensitiveText(\"TruePad receive code\", request.tpr2Text)"),
+            sptScreens.contains("copySensitiveText(\"TruePad receive code\", request.tpr2Text, Egress.PUBLIC_TEXT)"),
         )
         assertTrue(
             "Share code does not hand over the displayed receive code",
-            sptScreens.contains("shareReceiveCode(request.tpr2Text)"),
+            sptScreens.contains("shareReceiveCode(request.tpr2Text, Egress.PUBLIC_TEXT)"),
         )
     }
 
-    /** THE DECRYPTED MESSAGE IS NOT SHAREABLE. Copy only, as before. */
+    /**
+     * THE DECRYPTED MESSAGE HAS NO ROUTE OUT AT ALL — not Share, and no longer
+     * Copy either.
+     *
+     * This used to assert "Copy only, as before": it required `btn-copy-plaintext`
+     * to EXIST and only checked that no Share appeared beside it. The clipboard is
+     * readable by any app with focus, is kept in a platform history and syncs
+     * across devices, and this screen's own CLIPBOARD_WARNING conceded that the
+     * sensitive-clip mark does not stop another app reading it. iOS refused this
+     * from the start; the assertion is now the iOS rule.
+     */
     @Test
-    fun theDecryptedMessageStillHasNoShareControl() {
-        val open = screens.indexOf("btn-copy-plaintext")
-        assertTrue("the open screen no longer has a plaintext copy control", open > 0)
-        val window = screens.substring(maxOf(0, open - 600), minOf(screens.length, open + 600))
+    fun theDecryptedMessageHasNoRouteOut() {
+        assertFalse("the open screen can copy the decrypted message again",
+                    screens.contains("btn-copy-plaintext"))
+        // `result.plaintext` must reach no egress helper at all.
+        for (sink in listOf("copySensitiveText", "shareEncryptedMessage", "shareReceiveCode")) {
+            assertFalse(
+                "$sink is handed the decrypted message",
+                Regex("$sink\\([^)]*result\\.plaintext").containsMatchIn(screens),
+            )
+        }
+        // And the screen says why, in the words the other two editions use.
+        assertTrue("the open screen does not say why there is no copy",
+                   screens.contains("Claims.PLAINTEXT_STAYS_HERE"))
+    }
+
+    /**
+     * AND THE POLICY IS STRUCTURAL, not a habit of not asking. Every egress helper
+     * takes a required classification and refuses PLAINTEXT itself, so a new call
+     * site cannot route the decrypted message out by forgetting.
+     */
+    /**
+     * THE PLATFORM'S OWN COPY GESTURE IS CLOSED TOO, asserted in the suite Gradle
+     * runs.
+     *
+     * Removing the Copy button is not the policy if a long-press and "Copy"
+     * reaches the same clipboard — the screen says "there is no copy or save for
+     * it", and that is only true if the gesture is declined as well. iOS refuses
+     * `.textSelection(.enabled)` on plaintext for exactly this reason.
+     *
+     * There is a Node-side twin of this in tests/plaintext-egress.test.ts, but an
+     * Android-only CI job runs Gradle and not vitest, so a guard that lives only
+     * there proves nothing about this edition.
+     */
+    @Test
+    fun theDecryptedMessageIsNotSelectable() {
+        val code = screens.replace(Regex("/\\*[\\s\\S]*?\\*/"), "")
+            .lineSequence().map { it.substringBefore("//") }.joinToString("\n")
+        val block = code.substringAfter("SectionTitle(\"Message\")").substringBefore("FullWidth {")
+        assertTrue("the message block was not found", block.length > 50)
+        assertTrue(block.contains("plaintext-output"))
         assertFalse(
-            "the decrypted message gained a Share control",
-            window.contains("shareEncryptedMessage") || window.contains("btn-share-plaintext"),
+            "the decrypted message is selectable again, so the platform can copy it",
+            block.contains("SelectionContainer"),
         )
+        // The ENVELOPE keeps its selection — public transport, and copying it is
+        // the workflow. Without this the assertion above would also pass on an app
+        // that had lost selection everywhere.
+        assertTrue(
+            "public transport lost its selection, which is the workflow",
+            code.contains("SelectionContainer"),
+        )
+    }
+
+    @Test
+    fun theEgressHelpersRefusePlaintextThemselves() {
+        val main = File("src/main/kotlin/dev/systemslibrarian/truepad/app/MainActivity.kt").readText()
+        assertTrue(main.contains("fun Context.copySensitiveText(label: String, text: String, egress: Egress)"))
+        assertTrue(main.contains("fun Context.shareEncryptedMessage(text: String, egress: Egress)"))
+        assertTrue(main.contains("fun Context.shareReceiveCode(text: String, egress: Egress)"))
+        assertTrue(main.contains("throw EgressRefused"))
+        assertFalse("plaintext may reach the clipboard",
+                    EgressPolicy.mayCopyToClipboard(Egress.PLAINTEXT_MESSAGE))
+        assertFalse("plaintext may reach the share sheet",
+                    EgressPolicy.mayShareAsText(Egress.PLAINTEXT_MESSAGE))
+        assertTrue("public transport lost its clipboard route",
+                   EgressPolicy.mayCopyToClipboard(Egress.PUBLIC_TEXT))
+        assertTrue("public transport lost its share route",
+                   EgressPolicy.mayShareAsText(Egress.PUBLIC_TEXT))
     }
 }

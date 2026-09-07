@@ -12,6 +12,7 @@
  * NO "copy to clipboard": a one-time pad must never land on the clipboard.
  * ========================================================================= */
 
+import { requireSavable } from "./egress.ts";
 import { h, icon } from "./dom.ts";
 import { friendlyRefusal } from "./spt-shared.ts";
 import type { Ctx } from "./context.ts";
@@ -56,6 +57,11 @@ export function savePadFileButton(
   label = "Save pad file",
   opts: { variant?: string; onSaved?: () => void } = {}
 ): HTMLButtonElement {
+  // THE PAD FILE GOES THROUGH THE SAME POLICY as everything else that leaves.
+  // `pad-file` was a case no call site consulted, which made "classified at the
+  // boundary" a larger claim than the code supported: the biggest secret the app
+  // can write — the whole pad — was the one egress that asked nothing.
+  requireSavable("pad-file");
   const btn = h("button", { class: `btn ${opts.variant ?? ""}`.trim(), type: "button" }, icon("download"), h("span", { text: label })) as HTMLButtonElement;
   btn.addEventListener("click", async () => {
     btn.disabled = true;

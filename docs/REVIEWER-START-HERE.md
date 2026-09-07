@@ -67,15 +67,15 @@ npm run test:tpm-interop    # OPTIONAL, needs Linux + swtpm + tpm2-tools (emulat
 ```
 
 The falsification/mutation approach and the guard tests are described in the
-review brief. Reproduced counts at this SHA: **1678 unit tests / 80 files**
+review brief. Reproduced counts at this SHA: **1703 unit tests / 81 files**
 (`npm test`) and **36 Playwright tests / 6 files** (`npm run test:e2e`). Re-run
 them rather than citing these; they move whenever a test is added. The falsification matrix is described in the
 review brief; its count is not restated here, because a number quoted without
 being re-run is exactly the kind of stale claim this page exists to avoid.
 
-The mobile editions carry their own suites: **Android 299 JVM/unit tests**
-(`./gradlew test` reports 388 executions, but the app module's 89 tests are built
-and run for both the debug and release variants, so 299 is the distinct count)
+The mobile editions carry their own suites: **Android 301 JVM/unit tests**
+(`./gradlew test` reports 392 executions, but the app module's 91 tests are built
+and run for both the debug and release variants, so 301 is the distinct count)
 plus **55 on-device instrumentation tests**
 (`connectedDebugAndroidTest`, verified by `android/tools/verify-instrumentation.sh`
 against a per-class expectation), and **iOS 471 tests**

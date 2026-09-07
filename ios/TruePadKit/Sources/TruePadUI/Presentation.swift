@@ -705,6 +705,22 @@ public enum ExternalSourceIntake {
 }
 
 public enum VerbatimText {
+    /// WHAT TRUEPAD SAYS ABOUT THE DECRYPTED MESSAGE STAYING PUT.
+    ///
+    /// Deliberately modest. It says what TruePad DOES — it does not offer a copy
+    /// or a save for the decrypted message — and claims nothing about what the
+    /// device, the operating system or another person can do. A screenshot, an
+    /// accessibility service, a debugger attached to the process, and someone
+    /// reading the words aloud are all untouched by it. It is an application
+    /// egress policy, not a data-loss-prevention claim.
+    ///
+    /// Word for word the Browser's `PLAINTEXT_STAYS_HERE` (ui/egress-copy.ts) and
+    /// Android's `Claims.PLAINTEXT_STAYS_HERE`, so one rule reads the same on all
+    /// three editions. iOS already ENFORCED this; it had never said it.
+    public static let plaintextStaysHere =
+        "This message stays in TruePad \u{2014} there is no copy or save for it. "
+        + "You can read it here."
+
     /// The §17 destruction limitation.
     public static var destructionLimitation: String { destroyLimitation }
 
