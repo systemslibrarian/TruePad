@@ -56,8 +56,12 @@ optical. The procedure below therefore remains unexecuted *as written* — a hum
 spoken ceremony has still not been performed.
 
 **What it proves.** That a pad sealed on Android is delivered to, and opened by,
-iOS across the real optical path — and that the twelve- and eight-word
-comparisons two people actually read aloud match on two different platforms.
+iOS across the real optical path, and that the twelve- and eight-word comparisons
+render and match on two different platforms. It does **NOT** prove that two people
+read them aloud to each other: the comparisons were made by AUTOMATED comparison,
+exactly as the banner above says. An earlier version of this paragraph said "two
+people actually read aloud", which contradicted its own banner and is the precise
+overclaim the qualification exists to prevent.
 
 **What it does NOT prove.** Anything information-theoretic. `.tps2` delivery is
 computational, permanently. This gate is about interoperability and the human

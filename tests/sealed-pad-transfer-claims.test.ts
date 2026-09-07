@@ -18,16 +18,20 @@ const SPEC = readFileSync(join(ROOT, "docs", "SEALED-PAD-TRANSFER.md"), "utf8");
 const FLAT = SPEC.replace(/^\s*>\s?/gm, "").replace(/\*\*/g, "").replace(/\s+/g, " ");
 
 describe("the document says exactly what is and is not implemented", () => {
-  it("carries the Phase 1D status", () => {
-    expect(SPEC).toContain("STATUS: PHASE 1D — BEGINNER BROWSER SEALED PAD TRANSFER UI IMPLEMENTED.");
-    // And no longer carries the Phase 1C one, in any form. A status line left
-    // behind is worse than none: it is a false statement with a date on it.
+  it("carries the shipped 3.0.0 status, and no earlier phase status", () => {
+    expect(SPEC).toContain("STATUS: SHIPPED IN TRUEPAD 3.0.0 — BROWSER, ANDROID AND iOS EDITIONS.");
+    // And no longer carries an earlier phase status, in any form. A status line
+    // left behind is worse than none: it is a false statement with a date on it.
+    // Phase 1D shipped the Browser UI; the mobile editions shipped the same
+    // specification afterwards, so the phase line stopped being the scope.
     expect(SPEC).not.toContain("BEGINNER PRODUCT UI NOT YET OFFERED");
-    expect(SPEC).not.toMatch(/STATUS: PHASE 1[ABC]\b/);
+    expect(SPEC).not.toMatch(/STATUS: PHASE 1[ABCD]\b/);
+    // The phase NARRATIVE stays — it is how the Browser path was built.
+    expect(SPEC).toMatch(/\*\*Phase 1A\*\* implemented suite/);
   });
 
   it("says where it IS offered, and where it is not", () => {
-    expect(FLAT).toMatch(/Sealed transfer is offered in the Browser Edition/);
+    expect(FLAT).toMatch(/Sealed transfer is offered in the Browser, Android and iOS Editions/);
     expect(FLAT).toMatch(/The CLI offers nothing of it/);
     expect(FLAT).toMatch(/it cannot know who\s*spoke first/);
     expect(FLAT).toMatch(/Indices are not a mnemonic/);
@@ -1059,7 +1063,10 @@ describe("no live normative text describes the withdrawn atomic-single-file mode
   it("status language recognises what is built without claiming the feature", () => {
     const claims = readFileSync(join(ROOT, "docs", "PRODUCT-CLAIMS.md"), "utf8");
     expect(claims).not.toMatch(/Sealed Pad Transfer — SPECIFIED, NOT IMPLEMENTED/);
-    expect(claims).toMatch(/Sealed Pad Transfer — SHIPPED \(Browser Edition only\)/);
+    expect(claims).toMatch(/Sealed Pad Transfer — SHIPPED \(Browser, Android and iOS Editions\)/);
+    // ...and no longer says the feature is Browser-only, which it stopped being
+    // when 3.0.0 shipped the same specification on both mobile editions.
+    expect(claims).not.toMatch(/Sealed Pad Transfer — SHIPPED \(Browser Edition only\)/);
     // The ledger shipped for a whole phase saying the feature was unreachable
     // while it was on the created-pad screen. These pin the retraction: a
     // claims document that is merely ADDED to, and never corrected, is how a

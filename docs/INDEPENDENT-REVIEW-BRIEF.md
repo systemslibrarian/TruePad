@@ -3,14 +3,21 @@
 This brief is for an independent human cryptographer / security engineer. It
 states the scope, the questions we most want challenged, the highest-risk
 components, the defects we already found and fixed, how to run the evidence, and
-what a finding would have to show to block a formal 3.0.0 release.
+what a finding would have to show to matter.
+
+**3.0.0 has been released, and independent review was never one of its gates**
+(`docs/RELEASE-CHECKLIST-3.0.md` §C). This brief is therefore a standing offer
+rather than a queue: nothing waits on it, and a finding that lands after the tag
+is handled like any other security report under `SECURITY.md`.
 
 **Internal AI adversarial audits and the falsification matrix are engineering
 evidence, not independent review. This brief is the request for the latter.**
 
 - **Repository:** https://github.com/systemslibrarian/TruePad
-- **SHA under review:** `master` = **3.0.0-dev.0** (`a6a8b6…`).
-- **Latest formal release (unchanged):** TruePad 2.0.0 (`240d7f0`).
+- **Version under review:** `master` = **3.0.0**, the current formal release.
+  (An earlier revision of this brief pointed at `3.0.0-dev.0` / `a6a8b6…`, which
+  was the development state at the time it was written.)
+- **Previous formal release:** TruePad 2.0.0 (`240d7f0`).
 
 ## Scope
 
@@ -102,10 +109,11 @@ applied and a targeted test MUST go red). At this SHA the cumulative matrix is 4
 mutations with 0 real escapes. This proves the *tests bite*; it does not prove the
 *design is correct* — that is your review.
 
-## What would block 3.0
+## What counts as a critical finding
 
-A finding blocks a formal 3.0.0 release if it demonstrates, within the §2
-boundary, any of: pad or auth-material reuse; a forgery/parser-ambiguity; a
+3.0.0 has shipped, so nothing here is waiting to be unblocked. A finding is
+**critical** — and would have blocked the 3.0.0 release had it landed before the
+tag — if it demonstrates, within the §2 boundary, any of: pad or auth-material reuse; a forgery/parser-ambiguity; a
 rollback or clone that is not detected; an authority substitution or TOFU that
 reaches CONDITIONALLY ELIGIBLE; a ceremony-laundering or withdrawal-resurrection
 path; a sealed-lineage laundering; or a documented claim the implementation does

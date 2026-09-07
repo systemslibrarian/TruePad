@@ -9,7 +9,8 @@ inherit — still stands and is still the governing text.
 **Corrected status (the original block named a branch that no longer exists):**
 
 - **Android:** the `android-phase-2` branch was proven an ancestor of master and
-  then DELETED, local and remote. The Android 3.0-dev application lives on
+  then DELETED, local and remote. The Android Edition (3.0.0, versionCode 3)
+  lives on
   **master**, not on a branch. Its engine, storage, SPT, QR and UI are built;
   emulator instrumentation and single-device physical validation on a real
   handset are done.
@@ -25,8 +26,10 @@ inherit — still stands and is still the governing text.
   iOS 18.6.2), where 9 on-device automated tests pass. This paragraph previously
   said it had not been, and that it was blocked on a
   local Apple ID for development signing, not on code.
-- **Neither is released.** No App Store build, no Play production build, no 3.0
-  tag.
+- **Both ship in the formal 3.0.0 release** (tag `v3.0.0`, 2026-09-07). What is
+  still absent: no App Store build, no Play production build, and no signed APK
+  distributed — the mobile editions are distributed as source with build
+  instructions.
 - **DONE since this line was written:** the two-device Android↔iPhone optical
   ceremony — with the standing qualification that the word comparisons were
   AUTOMATED rather than spoken between two people, and that the message carriers

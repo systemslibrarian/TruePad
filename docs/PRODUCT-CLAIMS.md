@@ -1,4 +1,4 @@
-# TruePad 2 — cross-edition product claims
+# TruePad 3 — cross-edition product claims
 
 This is the **cross-edition** claims ledger: one table so an operator can see,
 at a glance, which guarantees are the same on every edition, which are the
@@ -29,8 +29,8 @@ here; the **Android** and **Desktop** *product* columns are marked
 `forthcoming` and must not be read as present guarantees.
 
 **Read `forthcoming` as "not yet assessed against this table", not as "does not
-exist".** That distinction has become material: an Android 3.0-dev application
-exists on master, and the iOS Edition has a native Swift kernel and kit. Neither
+exist".** That distinction has become material: the Android Edition and the iOS
+Edition both **ship in 3.0.0**. Neither
 has been evaluated row-by-row here, so neither column is populated — and an
 unpopulated column is not a claim in either direction. Their current security
 boundaries live in `docs/ANDROID-SECURITY.md` and `docs/IOS-SECURITY.md`.
@@ -72,8 +72,9 @@ this true, and how strong is it?*", not "*is it good?*".
 
 Legend: **✓ PROTOCOL** identical everywhere · **BROWSER-OP** / native-op the
 platform's operational form · **OPERATOR** the operator's to discharge ·
-**not claimed** stated absent · **forthcoming** not yet a shipped product
-column, do not rely on it.
+**not claimed** stated absent · **forthcoming** not yet assessed row-by-row in
+this table — NOT a statement that the edition does not exist (see above); do not
+rely on an unpopulated column in either direction.
 
 | # | Claim | Class | Browser Edition | Android (forthcoming) | Desktop (forthcoming) |
 | - | --- | --- | --- | --- | --- |
@@ -258,20 +259,20 @@ cloud storage and encrypted messengers **do not preserve that claim**; they may
 be computationally secure ways to move a file, which is a *different*
 guarantee, not a weaker form of the same one.
 
-#### Sealed Pad Transfer — SHIPPED (Browser Edition only)
+#### Sealed Pad Transfer — SHIPPED (Browser, Android and iOS Editions)
 
 `docs/SEALED-PAD-TRANSFER.md` specifies **Sealed Pad Transfer v1**: online pad
 delivery under a hybrid post-quantum/traditional KEM, with two human
-verification ceremonies. It is **offered in the Browser Edition** as one of two
-ways to give the other person their copy of a pad — *Send securely online*
+verification ceremonies. It is **offered in the Browser, Android and iOS
+Editions** as one of two ways to give the other person their copy of a pad — *Send securely online*
 beside *Save pad file*, neither presented as better. Where it stands, precisely:
 
 | Layer | Status |
 | --- | --- |
 | Cryptographic / transport core — suite `0x0001`, TPR2 and TPS2 codecs, key schedule, reference vectors | **implemented** (`src/spt/**`) |
 | Storage / provenance foundation — pad origin, the one-handoff record, its crash behaviour | **implemented** (`src/browser/engine/**`) |
-| The product transfer flow — receive requests, both word ceremonies, sealing, opening, import | **implemented** (Browser Edition, `src/browser/ui/**`) |
-| QR transport for the receive code | **implemented in the 3.0 development line** (Browser Edition, `src/browser/ui/qr/**`); it was **deferred at the 2.0.0 release** (see the sealed-transfer release audit). An optional convenience carrying the same public TPR2; copy/paste remains the normative channel and the twelve words still authenticate |
+| The product transfer flow — receive requests, both word ceremonies, sealing, opening, import | **implemented** (Browser `src/browser/ui/**`; Android `:truepad-spt` + `SptScreens.kt`; iOS `TruePadSPT` + `TruePadUI`) |
+| QR transport for the receive code | **implemented in 3.0.0** (Browser Edition, `src/browser/ui/qr/**`, and both mobile editions); it was **deferred at the 2.0.0 release** (see the sealed-transfer release audit). An optional convenience carrying the same public TPR2; copy/paste remains the normative channel and the twelve words still authenticate |
 | Any CLI sealed-transfer command | **not implemented** — `truepad-pad` and `truepad2` have no such verb |
 
 **The CLI offers none of it.** The distinction that matters is not whether the
@@ -284,7 +285,7 @@ cannot be blurred:
 | Recipient authentication | you are looking at them | a **12-word, 132-bit** fingerprint compared over an authenticated side channel — an OPERATOR declaration, never a verification result |
 | Against a compromised endpoint | the pad is exposed anyway | **no protection**, and specifically: an active script with transfer-worker authority is classified as endpoint compromise, not as an attacker the ceremonies stop |
 | Harvest-now-decrypt-later | no exposure from delivery | an archived package is attackable later — by a future break of the delivery cryptography, or by a restored/cloned copy of the recipient key state. Either yields the pad, and the pad yields every archived message it protected |
-| Status | **shipped** | **shipped** (Browser Edition only; the CLI has no such command) |
+| Status | **shipped** | **shipped** (Browser, Android and iOS Editions; the CLI has no such command) |
 
 The point of the row is the middle one. Sealing an information-theoretic cipher's
 key material inside a computational envelope produces a **computational**

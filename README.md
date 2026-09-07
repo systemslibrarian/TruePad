@@ -1,11 +1,11 @@
-# TruePad 2
+# TruePad 3
 
 **A working educational cryptographic system about the hard part of one-time
 pads: keeping pad material single-use, and keeping the security claims honest,
 across crashes, stale copies, restores, two-party state, browsers, and the
 delivery of the pad itself.**
 
-![The TruePad 2 Browser Edition showing a pad named "Example pad" with four actions — Send message, Open message, Send file, Open file — above an expanded Pad details panel listing remaining capacity and the two ways to give the other person their copy.](docs/assets/truepad-browser.png)
+![The TruePad 3 Browser Edition showing a pad named "Example pad" with four actions — Send message, Open message, Send file, Open file — above an expanded Pad details panel listing remaining capacity and the two ways to give the other person their copy.](docs/assets/truepad-browser.png)
 
 ## The XOR is the easy part
 
@@ -29,12 +29,12 @@ A reused pad cannot be fixed at all.
 **This is not a recommendation to use one-time pads for real traffic.** It is a
 working, audited implementation that states on every screen what it does not do.
 
-> **Development status.** The latest *formal release* is **TruePad 2.0.0**;
-> `master` carries **TruePad 3.0 development** (`3.0.0-dev.0`), which adds the
+> **Release status.** The latest *formal release* is **TruePad 3.0.0**
+> (`package.json` reads `3.0.0`): the Browser Edition, a native Android Edition,
+> a native iOS Edition, Sealed Pad Transfer between two real handsets, and the
 > maximum-assurance architecture (TPM-anchored monotonic authority, an
-> operator-pinned root of trust, the ceremony state machine) and is not tagged,
-> released, or published. **TruePad does NOT guarantee perfect secrecy as a
-> product claim.**
+> operator-pinned root of trust, the ceremony state machine). **TruePad does NOT
+> guarantee perfect secrecy as a product claim.**
 >
 > **Reviewing the cryptography?** Start at
 > [`docs/REVIEWER-START-HERE.md`](docs/REVIEWER-START-HERE.md) — a two-hour path,
@@ -47,19 +47,19 @@ working, audited implementation that states on every screen what it does not do.
 
 The most common mistake about one-time pads is treating "the cipher is
 information-theoretic" as though it described the whole system. It does not.
-TruePad 2 keeps three claims apart, because they rest on different assumptions:
+TruePad 3 keeps three claims apart, because they rest on different assumptions:
 
 | | What it covers | What it rests on |
 | --- | --- | --- |
 | **1. Private pad handoff** | delivering the raw pad by a secret route — in person, or a channel only the two of you control | If the OTP premises hold — source quality, secrecy, non-reuse, authentication — this is the route relevant to the **conditional information-theoretic** deployment path. TruePad **cannot prove physical randomness**, and says so. |
 | **2. Sealed online pad delivery** | delivering the pad as a `.tps2` file through an ordinary channel | **Computational.** X-Wing draft-10 (ML-KEM-768 with X25519), HKDF-SHA-256, AES-256-GCM. This is **not** an information-theoretic Internet-delivery claim. |
-| **3. Messages, once both sides hold the pad** | ordinary TruePad 2 messaging | One-time pad encryption plus one-time **Wegman–Carter** authentication. The theorem is information-theoretic under its premises; material from a software CSPRNG inherits that generator's assumptions. |
+| **3. Messages, once both sides hold the pad** | ordinary TruePad messaging | One-time pad encryption plus one-time **Wegman–Carter** authentication. The theorem is information-theoretic under its premises; material from a software CSPRNG inherits that generator's assumptions. |
 
 A short form worth remembering, as long as you keep hold of what it refers to:
 
 > **PQC delivers the pad. OTP encrypts the messages.**
 
-That describes **sealed online delivery only**. Ordinary TruePad 2 messages do
+That describes **sealed online delivery only**. Ordinary TruePad 3 messages do
 not use X-Wing, ML-KEM or AES-GCM — once the pad is in place the delivery
 cryptography has finished its job and never runs again.
 
@@ -68,7 +68,7 @@ inherit the one-time pad's unconditional guarantee. They do not. That guarantee
 is about the cipher, under its premises, once both people already hold the pad —
 it says nothing about how the pad got there.
 
-## TruePad 2 — the current system
+## TruePad 3 — the current system
 
 **[Browser Edition](https://systemslibrarian.github.io/TruePad/) — the main
 experience.** A working two-party app: create a pad, share it once, then send
@@ -76,8 +76,19 @@ and open messages and files. Give the pad over by **private handoff** *or* by
 **sealed online delivery**. No backend, no account, no telemetry, nothing
 uploaded — it runs entirely on your device.
 
-**Format v2 — the current authenticated system.** Underneath the Browser
-Edition: OTP encryption with one-time Wegman–Carter authentication, durable
+**Android Edition — a native app.** Kotlin and Jetpack Compose over the same
+Format v2 kernel, built from `android/`. It does Sealed Pad Transfer on the
+handset: make a receive code, let the other phone scan it off your screen, send
+the sealed `.tps2` back. **Pads / Inbox / About** navigation, and each tab keeps
+its own place so looking something up mid-ceremony does not lose the ceremony.
+No signed APK is distributed; you build it yourself.
+
+**iOS Edition — a native app.** Swift and SwiftUI over the same kernel, built
+from `ios/`. It carries the same visual identity as the Android Edition, and it
+interoperates with the other two editions in both directions. There is no App
+Store build and no IPA; you build and run it yourself.
+
+**Format v2 — the current authenticated system.** Underneath all three editions: OTP encryption with one-time Wegman–Carter authentication, durable
 single-use state, rollback and witness protections, and sealed pad delivery. The
 `truepad2` CLI works the same store from a terminal, and adds the TPM/native
 distinctions.
@@ -136,13 +147,20 @@ write fallback is not truly atomic, the word ceremonies depend on humans actuall
 performing them, an archived sealed file carries harvest-now-decrypt-later
 exposure, and no software can prove that anything was physically erased.
 
-The latest **formal release is 2.0.0**; `master` now carries **TruePad 3.0
-development** (`package.json` reads `3.0.0-dev.0`), which is not released, not
-tagged, not published to npm, and does not change the public demo. The number
-reflects the current Format v2 / Browser generation, and there was never a formal
-TruePad 1.0 — 2.0.0 is where the formal version history begins, not the second
-entry in it. The 3.0 development line adds the maximum-assurance architecture (see
+The latest **formal release is 3.0.0**, tagged `v3.0.0`, and it is what the
+public demo serves. It is the project's **second** formally tagged release rather
+than its third: there was never a formal TruePad 1.0, so 2.0.0 is where the formal
+version history begins, not the second entry in it. 3.0.0 adds the Android and iOS
+editions, Sealed Pad Transfer on mobile, fixed-length records, corrected
+fixed-record capacity accounting, and the maximum-assurance architecture (see
 [Changelog](CHANGELOG.md) and [docs/MAXIMUM-ASSURANCE.md](docs/MAXIMUM-ASSURANCE.md)).
+It is **not** published to npm: the distribution is this repository, the GitHub
+release, and the Pages demo.
+
+Four things were **not** done for 3.0.0 and are not claimed: human TalkBack
+testing, human VoiceOver testing, physical TPM 2.0 validation, and independent
+human security review. Each is a standing project-owner decision recorded in
+[docs/RELEASE-CHECKLIST-3.0.md](docs/RELEASE-CHECKLIST-3.0.md), not an oversight.
 
 ## Earlier teaching CLI: `truepad-pad` (v1)
 
@@ -562,8 +580,9 @@ to a restore of the recipient's device storage from a backup. A pad
 you carried yourself is not.
 
 TruePad does not send anything for you. It makes the sealed file; you choose the
-channel. The sealed path exists in the Browser Edition only — `truepad-pad` and
-`truepad2` have no sealed-transfer command.
+channel. The sealed path exists in the three app editions — Browser, Android and
+iOS — but not in the terminal: `truepad-pad` and `truepad2` have no
+sealed-transfer command.
 
 ---
 

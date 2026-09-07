@@ -1,6 +1,8 @@
 # TruePad 3 iOS Edition — security & durability claims
 
-**Status: DEVELOPMENT. Not released, not tagged, not on the App Store.**
+**Status: RELEASED in TruePad 3.0.0.** There is no App Store build and no IPA:
+the iOS Edition is distributed as source with build instructions, and nothing here
+should be read as claiming an App Store distribution exists.
 
 This document states what the iOS Edition claims, what it does not, and where the
 line runs. It is written to the same standard as `ANDROID-SECURITY.md`: every

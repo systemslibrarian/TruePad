@@ -3,10 +3,15 @@
 You are a security engineer with two hours. This page tells you exactly where to
 look, what TruePad claims, and what it deliberately does **not** claim.
 
-**State:** `master` = **3.0.0-dev.0** (development). The latest *formal release*
-is **TruePad 2.0.0**; 3.0 is not tagged, released, or published. The literal
-OTP/Wegman–Carter combiner and the message/SPT/QR wire are byte-identical to
-2.0.0; 3.0 adds the state/authority/ceremony layers reviewed below.
+**State:** `master` = **3.0.0**, the current *formal release*, tagged `v3.0.0`
+on 2026-09-07. **TruePad 2.0.0** was the previous formal release and remains
+tagged where it was. The literal OTP/Wegman–Carter combiner and the message/SPT/QR
+wire are byte-identical to 2.0.0; 3.0 adds the state/authority/ceremony layers
+reviewed below, plus the Android and iOS editions.
+
+Releasing 3.0.0 did **not** create an independent review: none was performed, and
+none was required — see `docs/RELEASE-CHECKLIST-3.0.md` §C. This page is still the
+place to start if you want to do one.
 
 ## The claim, in one paragraph
 
@@ -91,7 +96,7 @@ build actually contains.
   interoperability. Physical-TPM hardware validation is **outstanding**
   (`docs/RELEASE-CHECKLIST-3.0.md`, `docs/PHYSICAL-TPM-VALIDATION.md`).
 - **Mobile is partly built, and the two platforms are at different stages.** The
-  **Android 3.0-dev app exists on master** — engine, storage, SPT, QR and UI —
+  **Android Edition ships at 3.0.0** — engine, storage, SPT, QR and UI —
   with emulator instrumentation, single-device physical validation, and the
   two-device ceremony below all done. The
   **iOS Edition now has the whole engine** (`ios/TruePadKit`: the OTP core, the
@@ -136,8 +141,8 @@ build actually contains.
 
   **What remains on mobile is human accessibility, and it is NOT release-blocking**
   by the same standing decision: human TalkBack and human VoiceOver are **NOT
-  TESTED**, with no partial pass inferred. Neither platform is released; there is
-  no App Store build and no 3.0 tag. Secure Enclave is **not** assumed equivalent
+  TESTED**, with no partial pass inferred. Both mobile editions ship in the formal
+  3.0.0 release; there is still no App Store build and no signed APK distributed. Secure Enclave is **not** assumed equivalent
   to a TPM monotonic authority (`docs/IOS-SECURITY.md`, `docs/ANDROID-SECURITY.md`,
   `docs/MOBILE-3.0-HANDOFF.md`).
 - **Browser is never maximum-assurance** and a browser profile restore can rewind

@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: >-
   If you reference TruePad, please cite the repository and the exact commit or
-  release you used. TruePad 3.0 is DEVELOPMENT software; the latest FORMAL release
-  is TruePad 2.0.0.
+  release you used. TruePad 3.0.0 is the latest FORMAL release; TruePad 2.0.0,
+  the previous formal release, was the first one this project ever tagged.
 title: "TruePad — authenticated one-time-pad key management (educational/research)"
 abstract: >-
   TruePad is an educational and research implementation of authenticated
@@ -19,7 +19,8 @@ authors:
 repository-code: "https://github.com/systemslibrarian/TruePad"
 url: "https://github.com/systemslibrarian/TruePad"
 license: AGPL-3.0-only
-version: "3.0.0-dev.0"
+version: "3.0.0"
+date-released: "2026-09-07"
 keywords:
   - one-time pad
   - authenticated one-time pad
@@ -27,7 +28,10 @@ keywords:
   - cryptography education
   - TPM rollback protection
   - post-quantum pad delivery
-# No DOI, journal, conference, peer review, or external audit is claimed. This
-# metadata is repository-level only; a formal citation may be issued at a formal
-# 3.0.0 release after independent review and physical validation (see
-# docs/RELEASE-CHECKLIST-3.0.md).
+# No DOI, journal, conference, peer review, or external audit is claimed, and the
+# 3.0.0 release does not create one. This metadata is repository-level only. The
+# release bar this project actually applied is recorded in
+# docs/RELEASE-CHECKLIST-3.0.md: zero unresolved HIGH findings, zero unresolved
+# MEDIUM findings, and green software gates at the release SHA. Independent human
+# security review, human TalkBack, human VoiceOver and physical TPM 2.0 validation
+# were NOT performed and were not gates.

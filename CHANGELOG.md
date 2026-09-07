@@ -1,8 +1,21 @@
 # Changelog
 
-## Unreleased — planned v3.0.0 (development)
+## v3.0.0 — 2026-09-07
 
-### iOS Edition (new, in progress)
+**TruePad 3.0.0 is the project's second formally tagged release, and the first to
+ship three editions: the Browser Edition, an Android Edition, and a native iOS
+Edition.** It is not a new cipher. The Format v2 wire is unchanged and is still
+held to the frozen v2.0.0 vectors; what changed is that pad handling became
+something two people can actually do on two phones, and that the most serious
+defect this project has found was fixed.
+
+The governing rule is unchanged — **LOSS IS ACCEPTABLE. REUSE IS NOT.** So are the
+claim boundaries: PQC protects pad delivery, OTP encrypts messages, Wegman–Carter
+authenticates them. TruePad still does **NOT** guarantee perfect secrecy as a
+product claim, and nothing in this release is offered as software proof of
+physical secrecy, randomness, erasure, exclusivity, or hardware monotonicity.
+
+### iOS Edition (new)
 
 - Native Swift kernel and kit under `ios/TruePadKit`: `TruePadCore` (the OTP
   kernel, linking no cryptography library at all), `TruePadStorage` (Store Format
@@ -37,6 +50,64 @@
   VoiceOver**, **human TalkBack**, and **physical TPM 2.0** (the swtpm evidence in
   CI is emulator interoperability only).
 
+### Android Edition
+
+- **Sealed Pad Transfer on the handset.** Create a receive code on one phone, seal
+  a `.tps2` package against it on the other, import it back. The whole exchange is
+  reachable from the app instead of from a terminal.
+- **Pads / Inbox / About** bottom navigation, each tab parking its own back stack,
+  so glancing at About in the middle of receiving a pad no longer destroys the
+  ceremony in progress.
+- **"Share this pad" and "Receive a pad"** as the two obvious front-door actions.
+  The receive code is the thing the two people exchange, and its QR spelling
+  carries the canonical public TPR2 payload exactly — nothing added, nothing
+  truncated.
+- **External random material** can be chosen at creation instead of the device
+  CSPRNG, and the declared origin is recorded rather than assumed. The choice is
+  never silently substituted back to the device generator.
+- **One pad, one handoff.** Once a pad has been handed over the share affordance
+  is withdrawn rather than left to be pressed a second time, and an honest
+  re-save of the same physical copy is offered separately and labelled as such.
+- The interface carries TruePad's own visual identity — one accent, one type
+  scale, one set of surfaces — rather than the platform default, and the iOS
+  Edition takes the same tokens so the two phones look like one product.
+
+### Message packaging and transport
+
+- **Fixed-length records.** A pad may be created with a fixed record size, so two
+  messages of different lengths cost the same material and reveal the same length.
+  This is a metadata-hardening policy, not a Shannon axiom, and the physical
+  ceremony requires it.
+- **Corrected fixed-record capacity accounting.** The remaining-sends meter
+  counted authentication records alone. On a fixed-record pad every send also
+  spends a whole record of encryption bytes, so the meter could promise more sends
+  than the pad was able to pay for. All four engines — Browser, CLI, Android, iOS
+  — now report `min(remaining records, floor(remaining bytes / F))` and name which
+  of the two budgets is the binding one.
+- **TP2 compact transport is the ordinary human-facing spelling of an envelope**:
+  one `TP2:` line short enough to paste into anything. **Canonical JSON is
+  retained as the technical spelling**, unchanged and still normative. Both are
+  accepted everywhere they were before; neither replaces the other.
+
+### Plaintext egress
+
+One policy, on all three editions, decided by what the operator chose to open and
+never by inspecting the decrypted bytes:
+
+> **Decrypted message text remains display-only inside TruePad. Received file
+> payloads may be saved as the explicit file-delivery operation.**
+
+- A decrypted MESSAGE has no Copy, no Save and no Share. Its text is also not
+  selectable, because a drag and a copy shortcut reached the very clipboard the
+  button had just been removed from.
+- A received FILE is still saved, because saving it *is* the delivery.
+- The public transport spellings are untouched and remain copyable, shareable and
+  renderable as QR: the TP2 envelope, the canonical JSON envelope, and the TPR2
+  receive code. Those are ciphertext and public request material, not plaintext.
+- The classification is produced in exactly one place, from the operator's own
+  choice of "open message" or "open file", so a decrypted message cannot be
+  relabelled a received file in order to obtain an export path.
+
 ### Security fixes
 
 - **Cross-copy role/reuse (the most serious defect fixed this cycle).** Direction
@@ -68,11 +139,8 @@
   added for `github-actions`; the Gradle distribution is now checksum-verified.
   Full audit in `docs/SUPPLY-CHAIN.md`.
 
-**`master` carries TruePad 3.0 development; the latest FORMAL release remains
-2.0.0.** This line is not released, not tagged, and not published to npm; the
-public demo stays on the 2.0.0 release. It gathers the maximum-assurance work
-integrated from the QR, Shannon-provenance, fixed-record, and maximum-assurance
-lanes:
+**3.0.0 also lands the maximum-assurance work** integrated from the QR,
+Shannon-provenance, fixed-record and maximum-assurance lanes:
 
 - **QR transport** for the Sealed Pad Transfer receive code.
 - **Derived deployment assessment** (a single evaluator; no stored verdict) that

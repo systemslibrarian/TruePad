@@ -34,11 +34,11 @@ android {
         // which is not a thing to take on lightly for reach.
         minSdk = 26
         targetSdk = 35
-        // Monotonic: the phase-2 preview was versionCode 1. This is the 3.0
-        // development build; the versionName is not a release (there is no
-        // v3.0.0 tag), it is the same 3.0.0-dev.0 the web/CLI package carries.
-        versionCode = 2
-        versionName = "3.0.0-dev.0"
+        // Monotonic: the phase-2 preview was versionCode 1, the 3.0 development
+        // build was 2, and this is the formal 3.0.0 release. The versionName is
+        // the same 3.0.0 the web/CLI package and the iOS MARKETING_VERSION carry.
+        versionCode = 3
+        versionName = "3.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // THE TWO-DEVICE STEPS ARE NOT PART OF THE SUITE. They take runner

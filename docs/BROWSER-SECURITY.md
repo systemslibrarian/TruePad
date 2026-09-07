@@ -1,4 +1,4 @@
-# TruePad 2 Browser Edition — security & durability claims
+# TruePad 3 Browser Edition — security & durability claims
 
 This document is the **browser** claims ledger. It is deliberately separate
 from the CLI's `docs/FORMAT-V2.md` §10 (Linux-ext4) and the operational

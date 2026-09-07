@@ -1,6 +1,7 @@
 # TruePad iOS Edition
 
-Status: **development only.** No App Store build, no 3.0 tag, no release.
+Status: **released in TruePad 3.0.0** (tag `v3.0.0`). There is still no App Store
+build and no IPA — the distribution is this source tree and the instructions below.
 
     ios/
       TruePadKit/            the Swift package
@@ -31,8 +32,11 @@ being true some time ago.
 **Not claimed:** human VoiceOver validation has not happened, and there is no App
 Store build. The app HAS been built, signed, installed and launched on a physical
 iPhone 12 (iOS 18.6.2), where the on-device suite passes, and it has completed a
-two-device ceremony against a physical Android handset. What remains unclaimed is
-human accessibility validation and any distribution channel.
+two-device exchange against a physical Android handset — with the standing
+qualification that the confirmation-word comparisons were asserted by AUTOMATION
+rather than spoken between two people, and that the message carriers were
+host/test carriers rather than optical. What remains unclaimed is human
+accessibility validation and any distribution channel.
 
 ## The X-Wing gate
 

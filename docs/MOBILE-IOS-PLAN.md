@@ -25,7 +25,8 @@ and the SwiftUI application including QR, the share sheet and accessibility
 labelling. See `docs/IOS-SECURITY.md` for the current status table, which is
 authoritative.
 
-**Not claimed:** no App Store build exists and there is no 3.0 tag. The app HAS
+**Not claimed:** no App Store build and no IPA exists. The iOS Edition ships
+inside the formal 3.0.0 release (tag `v3.0.0`, `MARKETING_VERSION` 3.0.0). The app HAS
 been installed and launched on a physical iPhone (iPhone 12, iOS 18.6.2) with 9
 on-device automated tests passing.
 
@@ -88,7 +89,8 @@ the document that governs where these claims stop.
   scan. As on every edition, a scanned `TPR2` enters the **same** flow as paste —
   **no auto-confirm**; the human still compares the words. Handle permission denial
   with a clear message and a working paste fallback.
-- Validate on real cameras per [QR-VALIDATION.md](QR-VALIDATION.md) (outstanding).
+- Validate on real cameras per [QR-VALIDATION.md](QR-VALIDATION.md) — **DONE**,
+  both directions, each phone's real camera reading the other's screen.
 
 ## 6. Import / export
 
@@ -99,8 +101,11 @@ the document that governs where these claims stop.
 ## 7. Accessibility
 
 - Full **VoiceOver** support: labelled controls, correct heading order, 44pt
-  targets, Dynamic Type. A human VoiceOver pass is a release gate (like Android's
-  TalkBack), not something automated tests can sign off.
+  targets, Dynamic Type. A human VoiceOver pass is wanted and is not something
+  automated tests can sign off — but it is explicitly **NON-BLOCKING** by
+  project-owner decision (`RELEASE-CHECKLIST-3.0.md` §B), and it remains **NOT
+  TESTED**. An earlier revision of this line called it a release gate, which
+  contradicted the canonical checklist; the checklist is authoritative.
 
 ## 8. Interoperability
 

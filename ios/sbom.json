@@ -6,7 +6,7 @@
     "component": {
       "type": "application",
       "name": "TruePad iOS Edition",
-      "version": "3.0.0-dev.0",
+      "version": "3.0.0",
       "description": "Authenticated one-time-pad key management. PQC protects pad delivery; OTP encrypts messages; Wegman-Carter authenticates them.",
       "licenses": [{ "license": { "id": "AGPL-3.0-only" } }]
     },
@@ -19,7 +19,7 @@
     {
       "type": "library",
       "name": "TruePadClaims",
-      "version": "3.0.0-dev.0",
+      "version": "3.0.0",
       "scope": "required",
       "licenses": [{ "license": { "id": "AGPL-3.0-only" } }],
       "properties": [{ "name": "truepad:origin", "value": "first-party" }]
@@ -27,7 +27,7 @@
     {
       "type": "library",
       "name": "TruePadCore",
-      "version": "3.0.0-dev.0",
+      "version": "3.0.0",
       "scope": "required",
       "licenses": [{ "license": { "id": "AGPL-3.0-only" } }],
       "properties": [{ "name": "truepad:origin", "value": "first-party" }]
@@ -35,7 +35,7 @@
     {
       "type": "library",
       "name": "TruePadSPT",
-      "version": "3.0.0-dev.0",
+      "version": "3.0.0",
       "scope": "required",
       "licenses": [{ "license": { "id": "AGPL-3.0-only" } }],
       "properties": [{ "name": "truepad:origin", "value": "first-party" }]
@@ -43,7 +43,7 @@
     {
       "type": "library",
       "name": "TruePadStorage",
-      "version": "3.0.0-dev.0",
+      "version": "3.0.0",
       "scope": "required",
       "licenses": [{ "license": { "id": "AGPL-3.0-only" } }],
       "properties": [{ "name": "truepad:origin", "value": "first-party" }]
@@ -51,7 +51,7 @@
     {
       "type": "library",
       "name": "TruePadUI",
-      "version": "3.0.0-dev.0",
+      "version": "3.0.0",
       "scope": "required",
       "licenses": [{ "license": { "id": "AGPL-3.0-only" } }],
       "properties": [{ "name": "truepad:origin", "value": "first-party" }]

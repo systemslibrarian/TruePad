@@ -1,7 +1,7 @@
 # TruePad 3.0: authenticated one-time-pad key management with an operator-pinned root of trust
 
-*A technical description. Development software (`3.0.0-dev.0`); the latest formal
-release is TruePad 2.0.0. This paper describes the architecture and the exact
+*A technical description of TruePad `3.0.0`, the current formal release (TruePad
+2.0.0 was the previous one). This paper describes the architecture and the exact
 boundaries of its claims. It is not peer-reviewed and asserts no external audit.*
 
 ## Abstract
@@ -55,8 +55,8 @@ partition into encryption vs one-time authentication material, monotonic
 consumption cursors, an attempt ledger, and a freeze flag. Sending is a durable
 *burn-before-output* transaction; receiving reserves an attempt, verifies, and
 advances atomically. A single **deployment evaluator** maps recorded facts to one
-of three classifications; every edition (CLI, Browser) feeds it the same facts and
-none duplicates the decision or stores a verdict.
+of three classifications; every edition (CLI, Browser, Android, iOS) feeds it the
+same facts and none duplicates the decision or stores a verdict.
 
 ## 5. OTP confidentiality construction
 
@@ -179,7 +179,7 @@ shown beside these.
 
 ## 18. Testing / falsification evidence
 
-Reproduced at the current release-candidate SHA: 1703 unit tests across 81 files
+Reproduced at the reviewed 3.0.0 candidate `a05ea9b`: 1703 unit tests across 81 files
 in the Browser/CLI edition (`npm test`), plus 301 distinct Android JVM tests
 (`./gradlew test` reports 392 executions because the app module runs under both
 the debug and release variants), 55 Android on-device instrumentation tests, and

@@ -407,6 +407,7 @@ cat > "$evid/RESULT.md" <<EOF
 
     Android published a fresh one-time receive code
     iPhone sealed a fresh 256-byte fixed-record pad to it, twelve words compared in the UI
+                        BY AUTOMATION — asserted by the harness, not spoken aloud by two people
     Android opened and committed it, and derived role B from how it arrived
     Android TP2         -> opened on iPhone
     Android canonical   -> opened on iPhone (a second message; a record is one-time)

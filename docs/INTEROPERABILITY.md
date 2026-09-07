@@ -1,4 +1,4 @@
-# TruePad 2 — CLI ⇄ Browser interoperability
+# TruePad 3 — CLI ⇄ Browser interoperability
 
 The Browser Edition and the operational CLI run the **same frozen protocol**
 and reuse the **same `src/core` crypto**. This document states what that buys —

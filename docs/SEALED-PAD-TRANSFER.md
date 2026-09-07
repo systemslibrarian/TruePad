@@ -1,8 +1,13 @@
 # Sealed Pad Transfer v1
 
-**STATUS: PHASE 1D — BEGINNER BROWSER SEALED PAD TRANSFER UI IMPLEMENTED.**
+**STATUS: SHIPPED IN TRUEPAD 3.0.0 — BROWSER, ANDROID AND iOS EDITIONS.**
 
-Sealed transfer is **offered in the Browser Edition** as one of two ways to give
+Phase 1D — the beginner Browser sealed-transfer UI — was the last phase this
+specification staged. The Android and iOS editions implemented the same
+specification afterwards and ship it in 3.0.0; the phase narrative below is kept
+as the record of how the Browser path was built, not as the current scope.
+
+Sealed transfer is **offered in the Browser, Android and iOS Editions** as one of two ways to give
 the other person their copy of a pad. It is not the default and not presented as
 better: the created-pad screen offers *Send securely online* beside *Save pad
 file*, and the claim distinction travels with the online path wherever it is
@@ -2386,7 +2391,7 @@ details, and never presents the second as an upgrade of the first.
 | Delivery claim | can support the conditional **information-theoretic** path | **computational** |
 | Requires | meeting; removable media | an authenticated side channel for two word comparisons |
 | HNDL exposure | none from delivery | archived package is attackable later |
-| Status | **shipped** | **shipped** (Browser Edition only; the CLI has no such command) |
+| Status | **shipped** | **shipped** (Browser, Android and iOS Editions; the CLI has no such command) |
 
 ---
 

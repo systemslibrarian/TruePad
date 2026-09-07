@@ -2,7 +2,10 @@
 
 > **STATUS: EXECUTED. Real handheld QR: DONE, both directions.** An iPhone 12
 > and a Samsung SM-A176U each read the other phone's on-screen receive code with
-> its own camera, and the sealed-pad ceremony completed in both directions. This
+> its own camera, and the sealed-pad ceremony completed in both directions — with
+> the standing qualification that the word comparisons were performed by AUTOMATED
+> comparison, not spoken between two people, and that the message carriers were
+> host/test carriers rather than optical. This
 > banner previously read "NOT EXECUTED" and was left standing after the run.
 > This requires real phone cameras. Playwright, headless decoding, and image-file
 > decoding are **not** substitutes for a handheld camera and do not satisfy this

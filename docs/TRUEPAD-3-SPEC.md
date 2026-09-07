@@ -1,6 +1,6 @@
 # TruePad 3.0 — Normative Specification
 
-Status: **development** (`3.0.0-dev.0`). This document is the concise, normative
+Status: **released** (`3.0.0`). This document is the concise, normative
 description of TruePad 3.0: what an implementation MUST, SHOULD, and MUST NOT do,
 and what a reviewer can rely on. Rationale is kept brief and links to the detailed
 documents; audit history lives in those documents, not here.

@@ -75,7 +75,7 @@ describe("the PWA install manifest makes no claim the rest of the product condit
 
 describe("README describes the TruePad that ships", () => {
   it("no longer opens as an exhibit plus a CLI", () => {
-    expect(README.startsWith("# TruePad 2")).toBe(true);
+    expect(README.startsWith("# TruePad 3")).toBe(true);
     expect(README).not.toContain("Two things live in this repository");
     expect(README).not.toContain("A true one-time pad exhibit");
   });
@@ -91,7 +91,7 @@ describe("README describes the TruePad that ships", () => {
 
   it("keeps the three guarantees separate and unmergeable", () => {
     const map = FIRST_SCREEN.slice(FIRST_SCREEN.indexOf("Three guarantees"));
-    const table = map.slice(0, map.indexOf("## TruePad 2 — the current system"));
+    const table = map.slice(0, map.indexOf("## TruePad 3 — the current system"));
     expect(table, "private handoff row").toMatch(/[Pp]rivate pad handoff/);
     expect(table, "and its conditional IT claim").toMatch(/conditional[\s\S]{0,40}information-theoretic/i);
     expect(table, "sealed delivery row").toMatch(/[Ss]ealed online pad delivery/);
@@ -114,12 +114,12 @@ describe("README describes the TruePad that ships", () => {
       /PQC delivers the pad\. OTP encrypts the messages\./
     );
     expect(FIRST_SCREEN).toMatch(
-      /ordinary TruePad 2 messages do\s*\n?not use X-Wing, ML-KEM or AES-GCM/i
+      /ordinary TruePad 3 messages do\s*\n?not use X-Wing, ML-KEM or AES-GCM/i
     );
   });
 
-  it("puts TruePad 2 first and the v1 CLI in its place", () => {
-    const current = README.indexOf("## TruePad 2 — the current system");
+  it("puts TruePad 3 first and the v1 CLI in its place", () => {
+    const current = README.indexOf("## TruePad 3 — the current system");
     const legacy = README.indexOf("## Earlier teaching CLI");
     expect(current, "the current system must be introduced").toBeGreaterThan(0);
     expect(legacy, "the legacy CLI must be introduced").toBeGreaterThan(0);
@@ -127,6 +127,12 @@ describe("README describes the TruePad that ships", () => {
     // Browser Edition is named as the main experience, before the CLI appears.
     expect(README.slice(current, legacy)).toMatch(/Browser Edition[\s\S]{0,80}main\s*\n?experience/i);
     expect(README.slice(current, legacy)).toMatch(/Learn — the OTP exhibit/);
+    // 3.0 ships three editions, and the front door must name the two new ones
+    // as CURRENT rather than leaving a reader to discover them in the tree.
+    expect(README.slice(current, legacy), "the Android Edition is current")
+      .toMatch(/\*\*Android Edition[^*]*\*\*/);
+    expect(README.slice(current, legacy), "the iOS Edition is current")
+      .toMatch(/\*\*iOS Edition[^*]*\*\*/);
   });
 
   it("warns that v1 envelopes are unauthenticated, where v1 is introduced", () => {
@@ -148,14 +154,30 @@ describe("README describes the TruePad that ships", () => {
   it("states release status truthfully and invents no history", () => {
     const status = README.slice(README.indexOf("## Release status"));
     const section = status.slice(0, status.indexOf("\n## "));
-    // v2.0.0 is tagged now: the status must say so, and must NOT carry the
-    // pre-release current-state wording that is now false.
+    // 2.0.0 remains history and must stay named as the FIRST formal release...
     expect(section, "must name v2.0.0 as the first formal release").toMatch(
       /TruePad 2\.0\.0 is the project's first formally tagged release/i
+    );
+    // ...and 3.0.0 is the CURRENT one. This is the assertion that fails if the
+    // README drifts back to describing 3.0 as unreleased development.
+    expect(section, "3.0.0 must be named as the latest formal release").toMatch(
+      /formal release is 3\.0\.0/i
+    );
+    expect(section, "the pre-release 3.0 wording must be gone").not.toMatch(
+      /3\.0\.0-dev|TruePad 3\.0\s*\n?development|3\.0 is not (?:released|tagged)/i
     );
     expect(section, "stale candidate wording must be gone").not.toMatch(/audited release candidate/i);
     expect(section, "stale no-tag wording must be gone").not.toMatch(/No formal version or tag exists yet/i);
     expect(section, "and must say why 2").toMatch(/never a formal TruePad 1\.0|Format v2 \/ Browser\s*\n?generation/i);
+    // The four things 3.0.0 did NOT do must still be named where a reader of the
+    // release status will see them, so the release cannot quietly grow claims.
+    // Whitespace-tolerant: these sit in wrapped prose, and a line break between
+    // two of the words is not a missing disclaimer.
+    for (const unearned of [/human\s+TalkBack/i, /human\s+VoiceOver/i, /physical\s+TPM/i,
+                            /independent\s+human\s+security\s+review/i]) {
+      expect(section, `the release status must still disclaim ${String(unearned)}`)
+        .toMatch(unearned);
+    }
     // No fabricated lineage, anywhere.
     expect(README).not.toMatch(/v1\.0\.0/);
   });
@@ -285,12 +307,27 @@ describe("SECURITY.md is truthful about what exists", () => {
     );
   });
 
-  it("names the 2.0.x supported line, and claims no v1.x line", () => {
+  it("names the 3.0.x supported line, keeps 2.0.0 as history, and claims no v1.x line", () => {
     const v = SECURITY.slice(SECURITY.indexOf("## Supported versions"));
-    expect(v, "the supported release line is 2.0.x now that v2.0.0 is tagged").toMatch(
-      /supported release line is \*\*2\.0\.x\*\*/
+    expect(v, "the supported release line is 3.0.x now that v3.0.0 is tagged").toMatch(
+      /supported release line is \*\*3\.0\.x\*\*/
+    );
+    expect(v, "3.0.0 must be named the current formal release").toMatch(
+      /3\.0\.0\s*\n?is the current formal release/i
     );
     expect(v, "master is still where fixes are prepared").toMatch(/target current\s*\n?`master`/);
+    // 2.0.x must be described as the PREVIOUS release, not as a live maintenance
+    // commitment this repository never made.
+    expect(v, "2.0.0 stays named as the first formal release").toMatch(
+      /2\.0\.0 was the project's first formal release/i
+    );
+    expect(v, "no invented 2.0.x maintenance promise").not.toMatch(
+      /supported release line is \*\*2\.0\.x\*\*/
+    );
+    // The development-state wording is what this guard exists to keep out.
+    expect(v, "the pre-release 3.0 wording must be gone").not.toMatch(
+      /TruePad 3\.0 development|3\.0 is not released/i
+    );
     expect(v, "the pre-release 'until tagged' wording must be gone").not.toMatch(
       /Until \*\*TruePad 2\.0\.0\*\* is formally tagged/
     );
@@ -298,7 +335,7 @@ describe("SECURITY.md is truthful about what exists", () => {
   });
 });
 
-describe("CHANGELOG records the v2.0.0 release without inventing a past", () => {
+describe("CHANGELOG records the v3.0.0 and v2.0.0 releases without inventing a past", () => {
   it("carries a formal, dated v2.0.0 release heading", () => {
     expect(CHANGELOG).toMatch(/^# Changelog/);
     // A real released heading with an ISO date, not the pre-release plan.
@@ -311,28 +348,45 @@ describe("CHANGELOG records the v2.0.0 release without inventing a past", () => 
     expect(CHANGELOG).toMatch(/from MIT to GNU AGPL v3 only/);
   });
 
-  it("invents no prior release line, and carries only the one FORMAL release heading (v2.0.0)", () => {
+  it("invents no prior release line, and carries exactly the two FORMAL release headings", () => {
     expect(CHANGELOG).not.toMatch(/v1\.0\.0/);
-    // Exactly one RELEASED heading (`## vX.Y.Z`), and it is v2.0.0. A planned
-    // "## Unreleased — planned v3.0.0" section does not match this shape.
+    // Exactly two RELEASED headings (`## vX.Y.Z`), newest first. A third would
+    // mean a release this ceremony did not make; a missing v2.0.0 would mean
+    // history was rewritten.
     const headings = [...CHANGELOG.matchAll(/^## v\d+\.\d+\.\d+/gm)].map((m) => m[0]);
-    expect(headings).toEqual(["## v2.0.0"]);
+    expect(headings).toEqual(["## v3.0.0", "## v2.0.0"]);
   });
 
-  it("records the 3.0 line as UNRELEASED development, never as a formal release", () => {
-    expect(CHANGELOG, "an Unreleased planned v3.0.0 development section").toMatch(/## Unreleased — planned v3\.0\.0/);
-    // No formal, dated v3.0.0 release heading exists.
-    expect(CHANGELOG).not.toMatch(/^## v3\.0\.0 — \d{4}-\d{2}-\d{2}$/m);
+  it("records 3.0.0 as a formal, dated release and not as development", () => {
+    // Exactly ONE dated v3.0.0 heading, and it is the first thing after the title.
+    const dated = [...CHANGELOG.matchAll(/^## v3\.0\.0 — (\d{4}-\d{2}-\d{2})$/gm)];
+    expect(dated.length, "exactly one dated v3.0.0 heading").toBe(1);
+    expect(CHANGELOG.indexOf(dated[0][0]), "v3.0.0 must be the newest entry")
+      .toBeLessThan(CHANGELOG.indexOf("## v2.0.0"));
+    // The pre-release heading and the development framing must both be gone.
+    expect(CHANGELOG, "the 'Unreleased — planned v3.0.0' heading must be gone")
+      .not.toMatch(/## Unreleased — planned v3\.0\.0/);
+    expect(CHANGELOG, "3.0 must not still be described as unreleased development")
+      .not.toMatch(/carries TruePad 3\.0 development|latest FORMAL release remains\s*\n?2\.0\.0/i);
+    // The 3.0.0 body must still carry the release's own claim boundaries rather
+    // than being reduced to a version bump.
+    const body = CHANGELOG.slice(CHANGELOG.indexOf(dated[0][0]), CHANGELOG.indexOf("## v2.0.0"));
+    expect(body, "the governing rule").toMatch(/LOSS IS ACCEPTABLE\. REUSE IS NOT\./);
+    expect(body, "no perfect-secrecy product claim").toMatch(/NOT\*{0,2} guarantee perfect secrecy/i);
+    expect(body, "the plaintext egress policy").toMatch(
+      /Decrypted message text remains display-only inside TruePad/
+    );
+    expect(body, "the role authority").toMatch(/refus/i);
   });
 });
 
-describe("the package manifest carries the development version and license", () => {
-  it("is stamped 3.0.0-dev.0 under AGPL-3.0-only (master is 3.0 development; the latest formal release is 2.0.0)", () => {
-    expect(PKG.version, "master carries the 3.0 development version").toBe("3.0.0-dev.0");
+describe("the package manifest carries the released version and license", () => {
+  it("is stamped 3.0.0 under AGPL-3.0-only (3.0.0 is the latest formal release)", () => {
+    expect(PKG.version, "the released 3.0.0 version").toBe("3.0.0");
     expect(PKG.license, "the license must not drift off AGPL-3.0-only").toBe("AGPL-3.0-only");
-    // Neither the pre-release placeholder nor a fabricated formal 3.0 tag.
+    // Neither the old placeholder nor a slide back to the development stamp.
     expect(PKG.version).not.toBe("0.1.0");
-    expect(PKG.version).not.toBe("3.0.0");
+    expect(PKG.version).not.toMatch(/-dev/);
   });
 });
 

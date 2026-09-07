@@ -2,9 +2,10 @@
 
 ## What TruePad is
 
-TruePad 2 is an **educational cryptographic systems project** with working
-implementations: a Browser Edition, an authenticated Format v2 store and CLI,
-and sealed online pad delivery. The code is real, the tests are real, and the
+TruePad 3 is an **educational cryptographic systems project** with working
+implementations: a Browser Edition, a native Android Edition, a native iOS
+Edition, an authenticated Format v2 store and CLI, and sealed online pad
+delivery. The code is real, the tests are real, and the
 claims are audited against the implementation.
 
 It is **not a recommendation to deploy one-time pads for routine
@@ -85,10 +86,15 @@ licence for the code to fail inside what it does.
 
 ## Supported versions
 
-The supported release line is **2.0.x**: security fixes land there. Fixes also
-target current `master`, which carries **TruePad 3.0 development** — where the
-next release line is prepared. 3.0 is not released, not tagged, and not published;
-its maximum-assurance architecture is development code until a formal 3.0 release.
+The supported release line is **3.0.x**: security fixes land there. Fixes also
+target current `master`, where the next release line is prepared. **TruePad 3.0.0
+is the current formal release.**
+
+**2.0.0 was the project's first formal release and is now the previous one.** This
+repository maintains one line at a time, and that line is 3.0.x, so 2.0.x is not
+claimed as an ongoing maintenance commitment — no promise of continued fixes is
+made for it. The `v2.0.0` tag and its GitHub release stay exactly where they are,
+as history.
 
 There is no supported v1.x release, because there was never a formal TruePad 1.0.
 
