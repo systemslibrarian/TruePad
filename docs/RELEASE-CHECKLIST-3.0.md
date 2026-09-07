@@ -169,8 +169,22 @@ The repaired commit then failed the iOS workflow at
     PASS  the vendored BoringSSL provides CCryptoBoringSSL_XWING_encap
     FAIL  CCryptoBoringSSL_XWING_decap is missing — the X-Wing path is not the vendored one
 
-**The symbol was present.** This is a false negative in the gate, and it was
-demonstrated rather than argued:
+**The symbol was present.** This is a false negative in the gate, and CI proved it
+on its own, without reference to any local measurement: **re-running the identical
+job on the identical commit failed with the two symbols swapped.**
+
+| attempt on `88ffb47` | `..._XWING_encap` | `..._XWING_decap` |
+| --- | --- | --- |
+| 1 | PASS | **FAIL** |
+| 2 | **FAIL** | PASS |
+
+Same commit, same tree, same object, opposite verdicts. A symbol that is genuinely
+absent cannot trade places with one that is present. (Attempt 2's overall
+conclusion reads `cancelled` because a later push to the same ref cancelled the
+job under its `cancel-in-progress` concurrency rule, but the inspection step had
+already completed with the failure shown above.)
+
+The mechanism was then measured directly:
 
 > The old §4 presence probe was empirically false-negative. Against a local
 > object where both X-Wing symbols were independently verified present — both
