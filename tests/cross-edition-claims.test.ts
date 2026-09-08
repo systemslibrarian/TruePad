@@ -3,216 +3,268 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /* ============================================================================
- * THE CLAIMS TABLE MUST KEEP UP WITH THE PRODUCTS
+ * THE CLAIMS TABLE MUST KEEP UP WITH THE PRODUCTS — AND THE GUARD MUST PIN
+ * EVIDENCE, NOT SLOGANS
  * ----------------------------------------------------------------------------
- * `docs/PRODUCT-CLAIMS.md` is the cross-edition ledger. For most of 3.0's life
- * it carried a real defect: three of its columns said *forthcoming* while three
- * editions had shipped. Nobody lied — but an unpopulated column reads as a
- * silence, and a silence next to a shipping product is drift.
+ * `docs/PRODUCT-CLAIMS.md` is the cross-edition ledger. Its first defect was
+ * three columns reading "forthcoming" while three editions shipped.
  *
- * This file is the guard that stops it recurring. It does NOT re-derive the
- * claims — deriving the expectation from whatever the file happens to say would
- * make the check vacuous. It pins the SHAPE that keeps the table honest:
+ * The SECOND defect was in this file. An adversarial pass mutated the document
+ * and demonstrated, by execution, that the guard stayed green while the ledger
+ * said things that were flatly false. Every rule below exists because a specific
+ * mutation walked through the old version:
  *
- *   · every shipping edition has its own column;
- *   · no cell is left as a placeholder;
- *   · a "not claimed" is spelled with the vocabulary the doc defines, so that
- *     absence stays visible rather than being softened into prose;
- *   · the four rows that are absent-on-purpose stay absent on every edition
- *     that cannot back them, because those are exactly the rows that would be
- *     most tempting to quietly upgrade.
+ *   · row 15 rewritten to "✓ guaranteed — this is no longer NOT CLAIMED" passed,
+ *     because the check was a SUBSTRING match for "NOT CLAIMED" anywhere in the
+ *     cell. A cell that mentions its own verdict in order to renounce it now
+ *     fails: the verdict must be the cell's LEADING token.
+ *   · row 2 passed both when iOS was promoted to Android's standing and when
+ *     Android was demoted to UNVERIFIED, because the check was an unordered bag
+ *     of lexemes with no per-edition verdict pinned.
+ *   · 22 cells replaced with a bare "✓" passed, including rows where the doc
+ *     says the opposite. A bare check is now legal only on a UNIFORM row.
+ *   · cells set to U+200B, `&nbsp;` and `<!-- -->` passed `cell.length > 0`,
+ *     because `String.trim()` removes none of them.
+ *   · every Class VALUE blanked passed, because only the header was checked.
+ *   · deleting the legend passed once the matrix heading was renamed, because
+ *     `indexOf` returned -1 and `slice(0, -1)` is the whole document.
+ *   · IOS-OP / NATIVE-OP deleted from every cell passed, because the check was
+ *     `DOC.toContain(name)` and the legend still defined them.
+ *   · the 240d7f0 pin survived a cell rewritten to say the pin had been REMOVED,
+ *     because the guard only asked whether seven characters occurred somewhere.
+ *
+ * The rule this file now follows: pin the EVIDENCE and the VERDICT, never the
+ * document's own self-description. A phrase that a defect can simply contain is
+ * not a guard.
  * ========================================================================= */
 
 const ROOT = resolve(__dirname, "..");
 const DOC = readFileSync(resolve(ROOT, "docs/PRODUCT-CLAIMS.md"), "utf8");
 
-/** The matrix rows, as arrays of trimmed cells. Header and rule excluded. */
-function matrix(): string[][] {
-  const rows = DOC.split("\n").filter((l) => /^\|\s*\d+\s*\|/.test(l));
-  return rows.map((l) => l.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim()));
+/** Columns before the per-edition verdicts: #, Claim, Class. */
+const EDITION_COLUMNS = 3;
+const EDITIONS = ["Browser", "Android", "iOS", "CLI / Native"] as const;
+
+function splitRow(line: string): string[] {
+  return line.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
 }
 
-/** The header row of the matrix, as trimmed cells. */
+/** The matrix rows, as arrays of trimmed cells. */
+function matrix(): string[][] {
+  return DOC.split("\n").filter((l) => /^\|\s*\d+\s*\|/.test(l)).map(splitRow);
+}
+
 function header(): string[] {
   const line = DOC.split("\n").find((l) => /^\|\s*#\s*\|/.test(l));
   expect(line, "the matrix header must exist").toBeDefined();
-  return (line as string).replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  return splitRow(line as string);
 }
 
-/** Columns that hold a per-edition verdict: everything after # / Claim / Class. */
-const EDITION_COLUMNS = 3;
+function row(n: number): string[] {
+  const r = matrix().find((x) => Number(x[0]) === n);
+  expect(r, `row ${n} must exist`).toBeDefined();
+  return r as string[];
+}
 
-describe("the claims table covers every shipping edition", () => {
-  it("finds a matrix at all", () => {
-    // POSITIVE CONTROL. A guard that silently matches zero rows passes forever.
-    expect(matrix().length, "claim rows found").toBeGreaterThanOrEqual(17);
+const cellsOf = (n: number): string[] => row(n).slice(EDITION_COLUMNS);
+
+/**
+ * What a cell renders as, once the things that LOOK like content but are not
+ * have been removed. U+200B/U+FEFF/U+00A0 survive String.trim(); an HTML comment
+ * and a bare entity render as nothing at all. All three were used to empty cells
+ * while keeping this file green.
+ */
+function visible(cell: string): string {
+  return cell
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/&nbsp;|&#160;|&#xA0;/gi, "")
+    .replace(/[​-‍﻿ ]/g, "")
+    .replace(/[*_`~]/g, "")
+    .trim();
+}
+
+/**
+ * The cell's VERDICT: the leading token, not any token. "NOT CLAIMED" appearing
+ * mid-sentence is prose; appearing first is a classification.
+ */
+function verdict(cell: string): string {
+  const v = visible(cell);
+  const bold = v.match(/^([A-Z][A-Z]+(?: [A-Z]+)*)\b/);
+  if (bold) return bold[1];
+  if (v.startsWith("✓")) return "✓";
+  return v.slice(0, 24);
+}
+
+describe("the table's structure cannot rot", () => {
+  it("finds a matrix of the expected size", () => {
+    // POSITIVE CONTROL: a guard that silently matches zero rows passes forever.
+    expect(matrix().length, "claim rows").toBe(17);
     expect(DOC.length, "bytes of PRODUCT-CLAIMS.md").toBeGreaterThan(10_000);
   });
 
   it("has one column per shipping edition, and no stale ones", () => {
     const cols = header();
     expect(cols.slice(0, 3)).toEqual(["#", "Claim", "Class"]);
-    expect(cols.slice(3), "the four edition columns, in order")
-      .toEqual(["Browser", "Android", "iOS", "CLI / Native"]);
+    expect(cols.slice(3), "the four edition columns, in order").toEqual([...EDITIONS]);
+    expect(cols.join(" ")).not.toMatch(/\bDesktop\b/);
   });
 
-  it("leaves no cell unpopulated", () => {
-    for (const row of matrix()) {
-      const n = row[0];
-      expect(row.length, `row ${n} must have every column`).toBe(3 + 4);
-      for (let i = EDITION_COLUMNS; i < row.length; i++) {
-        const cell = row[i];
-        expect(cell.length, `row ${n}, column ${header()[i]} is empty`).toBeGreaterThan(0);
-        // The exact word that used to stand in for three shipped products.
-        expect(cell.toLowerCase(), `row ${n}, column ${header()[i]} is still a placeholder`)
+  it("keeps every row full width, with a real Class VALUE", () => {
+    for (const r of matrix()) {
+      expect(r.length, `row ${r[0]} must have every column`).toBe(EDITION_COLUMNS + 4);
+      // Not just the Class HEADING — the value. Blanking all 17 used to pass.
+      expect(visible(r[2]).length, `row ${r[0]} has no classification`).toBeGreaterThan(2);
+    }
+  });
+
+  it("leaves no cell empty, including cells that only look full", () => {
+    for (const r of matrix()) {
+      for (let i = EDITION_COLUMNS; i < r.length; i++) {
+        const raw = r[i];
+        const label = `row ${r[0]}, ${header()[i]}`;
+        expect(visible(raw).length, `${label} renders empty`).toBeGreaterThan(0);
+        expect(raw.toLowerCase(), `${label} is a placeholder`)
           .not.toMatch(/\b(forthcoming|tbd|todo|xxx|n\/a)\b/);
       }
     }
   });
 
-  it("names no edition that does not ship", () => {
-    // "Desktop" was a column heading for an edition that never shipped under
-    // that name; the operational path is the CLI. Keep the ledger's nouns and
-    // the product's nouns the same.
-    expect(header().join(" ")).not.toMatch(/\bDesktop\b/);
+  it("allows a bare check only where the whole row is uniform", () => {
+    // 22 cells were replaced with "✓" and this file stayed green — including
+    // row 16, where the document says both phones expose no filesystem identity.
+    // A bare check beside a qualified sibling is a hidden platform difference.
+    for (const r of matrix()) {
+      const cells = r.slice(EDITION_COLUMNS);
+      const bare = cells.filter((c) => visible(c) === "✓");
+      if (bare.length === 0 || bare.length === cells.length) continue;
+      expect.fail(
+        `row ${r[0]}: ${bare.length} of ${cells.length} cells are a bare "✓" while `
+        + `the others carry qualification — a bare check next to a qualified cell `
+        + `hides the platform difference this table exists to show`);
+    }
   });
 });
 
 describe("the rows that are absent on purpose stay absent", () => {
-  /** Cells of the row whose claim text matches, edition columns only. */
-  function rowCells(fragment: string): string[] {
-    const row = matrix().find((r) => r[1].toLowerCase().includes(fragment.toLowerCase()));
-    expect(row, `no claim row mentions "${fragment}"`).toBeDefined();
-    return (row as string[]).slice(EDITION_COLUMNS);
+  /** Rows whose verdict must LEAD the cell, per edition index. */
+  const ABSENT: Array<{ n: number; want: string; only?: number[] }> = [
+    { n: 15, want: "NOT CLAIMED" },                 // physical erasure, everywhere
+    { n: 14, want: "NOT OFFERED" },                 // independent external witness
+    { n: 13, want: "NOT CLAIMED", only: [0, 1, 2] },// power loss; the CLI qualifies
+  ];
+
+  for (const { n, want, only } of ABSENT) {
+    it(`keeps row ${n} at "${want}" as the leading verdict`, () => {
+      const cells = cellsOf(n);
+      const idxs = only ?? cells.map((_, i) => i);
+      for (const i of idxs) {
+        expect(verdict(cells[i]), `row ${n}, ${EDITIONS[i]}: the verdict must LEAD `
+          + `the cell, not merely appear in it`).toBe(want);
+        expect(cells[i], `row ${n}, ${EDITIONS[i]} must not claim the thing it denies`)
+          .not.toMatch(/\bguaranteed\b/i);
+      }
+    });
   }
 
-  it("does not let physical erasure become a claim anywhere", () => {
-    // TruePad may never promote software evidence into proof of physical
-    // erasure. Not on one edition, not on four.
-    for (const cell of rowCells("Physical erasure")) {
-      expect(cell).toMatch(/NOT CLAIMED/);
-    }
+  it("keeps power-loss durability confined to where it was measured", () => {
+    expect(cellsOf(13)[3], "the CLI claims it only on Linux ext4").toMatch(/ext4/);
   });
 
-  it("keeps the independent external witness a CLI-only capability", () => {
-    const [browser, android, ios, cli] = rowCells("independent external");
-    for (const cell of [browser, android, ios]) expect(cell).toMatch(/NOT OFFERED/);
-    // …and the CLI's is not upgraded into something the phones could borrow.
-    expect(cli).toMatch(/independent host/);
+  it("records that NO edition reaches an independent host witness", () => {
+    // This corrected a real overclaim: the CLI cell used to read "✓ the one
+    // edition that can be pointed at an independent host". remote-monotonic is
+    // refused witness-unsupported, so no store can carry it.
+    const cli = cellsOf(14)[3];
+    expect(cli).toMatch(/remote-monotonic/);
+    expect(cli, "the refusal is the evidence").toMatch(/witness-unsupported/);
+    expect(cli, "and the CLI must not re-acquire the capability")
+      .not.toMatch(/✓/);
+  });
+});
+
+describe("row 2 pins a verdict per edition, not a bag of words", () => {
+  it("keeps Browser and CLI on the real binary, with the §2 carve-out", () => {
+    const [browser, , , cli] = cellsOf(2);
+    expect(browser).toMatch(/browser-interop\.test\.ts/);
+    expect(browser, "the unqualified byte-equality is the ENVELOPE one").toMatch(/envelope/i);
+    for (const c of [browser, cli]) expect(c).toMatch(/carve-out|§2/);
+    expect(row(2)[1], "the row's own claim must carry the carve-out")
+      .toMatch(/pairId/);
   });
 
+  it("keeps Android at a check, naming its transcript and the PINNED commit", () => {
+    const android = cellsOf(2)[1];
+    expect(verdict(android), "Android is proven for this row").toBe("✓");
+    expect(android).toMatch(/EngineTraceTest|engine-trace\.json/);
+    expect(android, "the pinned commit, not the tag name").toMatch(/240d7f0/);
+    // The pin survived a cell that said the pin had been REMOVED. Naming it is
+    // not enough; the cell must not simultaneously disown it.
+    expect(android, "the cell must not narrate the pin's removal")
+      .not.toMatch(/\b(removed|no longer|regenerated on every run|not pinned)\b/i);
+    expect(android, "the residual live round trip stays named").toMatch(/UNVERIFIED/);
+  });
+
+  it("keeps iOS UNVERIFIED, and weaker than Android for a stated reason", () => {
+    const ios = cellsOf(2)[2];
+    expect(verdict(ios), "iOS must not be promoted on this row").toBe("UNVERIFIED");
+    expect(ios, "the stub fixture is why").toMatch(/stub/);
+    expect(ios).toMatch(/formatVersion/);
+    expect(ios, "iOS must not borrow Android's artifact").not.toMatch(/EngineTraceTest/);
+  });
+});
+
+describe("claims whose scope the summary keeps flattening", () => {
   it("keeps the SPT pad-influence dependency stated, never denied", () => {
-    // The row reads as "nothing about my pad reaches metadata", and a bare check
-    // in every column used to say exactly that. It is true for the N14 store
-    // scope and NOT true without qualification: sealed transfer writes a durable
-    // handoff.json whose packageIdentity/confirmHash the pad influences, and
-    // SEALED-PAD-TRANSFER.md §17 states that rather than denying it. The ledger
-    // must not be quieter than the specification it summarises.
-    const row = matrix().find((r) => r[1].includes("No pad-derived value"));
-    expect(row, "the N14 row must exist").toBeDefined();
-    const claim = (row as string[])[1];
-    expect(claim, "the SPT exception must stay named").toMatch(/handoff\.json/);
-    expect(claim).toMatch(/stated rather than denied/);
-    expect(claim, "…and be labelled computational, not information-theoretic")
-      .toMatch(/computational/);
-    for (const cell of (row as string[]).slice(EDITION_COLUMNS)) {
-      expect(cell, "no column may carry a bare, unscoped check on this row")
+    // The old guard required the literal phrase "stated rather than denied" —
+    // which a cell DENYING the dependency can simply contain. Pin the mechanism.
+    const claim = row(10)[1];
+    expect(claim).toMatch(/handoff\.json/);
+    expect(claim, "the influence path is the evidence").toMatch(/padHash/);
+    expect(claim).toMatch(/computational/);
+    expect(claim, "the dependency must not be denied")
+      .not.toMatch(/the pad does not|no pad-derived value in any metadata|none in handoff/i);
+    for (const c of cellsOf(10)) {
+      expect(c, "no column may carry a bare, unscoped check on this row")
         .toMatch(/N14 store scope|same scope/);
     }
   });
 
   it("states secret.bin's write rule at N13's real scope", () => {
-    // "Written once and never rewritten" is what the row used to say, and a
-    // reviewer who greps finds THREE durable write sites (gen, import staging,
-    // import commit) because import materialises the bundle's secret.bin halves.
-    // N13 is scoped "after gen" for exactly that reason. A ledger that is
-    // tidier than its own spec teaches the reviewer to distrust it.
-    const row = matrix().find((r) => r[1].includes("Retirement is logical"));
-    expect(row, "the retirement row must exist").toBeDefined();
-    const claim = (row as string[])[1];
-    expect(claim, "N13's scope must be carried, not flattened")
-      .toMatch(/after gen/i);
-    expect(claim, "the import write path must be named, not hidden")
-      .toMatch(/import/i);
-    expect(claim, "…and destroy must remain the one exception")
-      .toMatch(/destroy/);
-  });
-
-  it("keeps power-loss durability confined to where it was measured", () => {
-    const [browser, android, ios, cli] = rowCells("Power-loss durability");
-    for (const cell of [browser, android, ios]) expect(cell).toMatch(/NOT CLAIMED/);
-    expect(cli, "the CLI claims it only on Linux ext4, and must keep saying so")
-      .toMatch(/ext4/);
-  });
-
-  it("keeps byte-identity evidence attached to what actually proves it", () => {
-    // THIS GUARD HAS BEEN WRONG IN BOTH DIRECTIONS, so it pins per-edition facts
-    // rather than one slogan.
-    //
-    // First it required Android AND iOS to say "No whole-store byte-identity test
-    // exists" — false for Android, which has EngineTraceTest against a released
-    // transcript of REAL artifacts (811-byte v2 heads, 768-byte secrets, a 5 KB
-    // container). Understating evidence is drift too, and a guard can make it
-    // permanent.
-    //
-    // Then the correction over-swung and promoted iOS on the same row. It must
-    // not be: the shared courier fixture holds THREE STUB FILES — head.json is
-    // the literal 19 bytes {"formatVersion":2} — so it pins the bundle envelope
-    // format, not store bytes, and iOS has no engine-trace equivalent at all.
-    // The two phones are NOT at the same standing, and the table must not say so.
-    const [browser, android, ios, cli] = rowCells("byte-identical");
-
-    // Browser/CLI: the real binary on both ends, and the §2 carve-out carried.
-    expect(browser).toMatch(/browser-interop\.test\.ts/);
-    expect(browser, "the byte-equality that is unqualified is the ENVELOPE one")
-      .toMatch(/envelope/i);
-    for (const cell of [browser, cli]) {
-      expect(cell, "the browser ⇄ CLI pair must carry the §2 carve-out")
-        .toMatch(/carve-out|§2/);
-    }
-
-    // Android: names its transcript, the PINNED released commit, and its residual.
-    expect(android).toMatch(/EngineTraceTest|engine-trace\.json/);
-    expect(android, "the PINNED commit, not just the tag name").toMatch(/240d7f0/);
-    expect(android).toMatch(/hash-pinned/);
-    expect(android, "no live round trip runs; that must stay named")
-      .toMatch(/UNVERIFIED/);
-    expect(android).toMatch(/live/);
-
-    // iOS: must stay UNVERIFIED, and must say WHY it is weaker than Android.
-    expect(ios, "iOS has no engine-trace equivalent and must not be promoted")
-      .toMatch(/UNVERIFIED/);
-    expect(ios, "the stub fixture is the reason, and must be stated")
-      .toMatch(/stub/);
-    expect(ios).toMatch(/formatVersion/);
-
-    // And the two phones must not be described as equally proven.
-    expect(ios, "iOS must not claim Android's standing").not.toMatch(/EngineTraceTest/);
+    const claim = row(8)[1];
+    expect(claim, "N13's scope must be carried").toMatch(/after gen/i);
+    expect(claim, "the acquisition write must be named").toMatch(/import|ceremony/i);
+    expect(claim).toMatch(/destroy/);
+    // The flattened slogan the row exists to forbid, which the old lexeme guard
+    // happily allowed a cell to contain.
+    expect(claim, "the universal slogan must not return")
+      .not.toMatch(/written once and never rewritten/i);
   });
 });
 
-describe("the vocabulary the table depends on is actually defined", () => {
-  it("defines every classification it uses", () => {
-    const used = new Set<string>();
-    for (const row of matrix()) {
-      for (const word of ["PROTOCOL", "PLATFORM-OP", "OPERATOR", "NOT CLAIMED",
-        "NOT OFFERED", "UNVERIFIED"]) {
-        if (row.slice(2).some((c) => c.includes(word))) used.add(word);
-      }
-    }
-    expect(used.size, "the table should exercise its own vocabulary").toBeGreaterThanOrEqual(5);
-    const legend = DOC.slice(0, DOC.indexOf("## Cross-edition claims matrix"));
-    for (const word of used) {
-      expect(legend, `"${word}" is used in the matrix but never defined above it`)
-        .toContain(`**${word}**`);
+describe("the vocabulary the table depends on is actually defined and used", () => {
+  it("defines every classification it uses, above the matrix", () => {
+    const anchor = DOC.indexOf("## Cross-edition claims matrix");
+    // indexOf returning -1 made slice(0, -1) the WHOLE document, so the legend
+    // could be deleted entirely and this still passed.
+    expect(anchor, "the matrix heading must be findable").toBeGreaterThan(0);
+    const legend = DOC.slice(0, anchor);
+    const WORDS = ["PROTOCOL", "PLATFORM-OP", "OPERATOR", "NOT CLAIMED",
+      "NOT OFFERED", "UNVERIFIED"];
+    const used = WORDS.filter((w) => matrix().some((r) => r.slice(2).some((c) => c.includes(w))));
+    expect(used.length, "the table should exercise its vocabulary").toBeGreaterThanOrEqual(5);
+    for (const w of used) {
+      expect(legend, `"${w}" is used in the matrix but never defined above it`)
+        .toContain(`**${w}**`);
     }
   });
 
-  it("names each platform's operational form separately", () => {
-    // The whole point of PLATFORM-OP is that one edition's strength is never
-    // quoted for another. Each substrate needs its own name.
+  it("names each platform's operational form inside actual CELLS", () => {
+    // DOC.toContain(name) was satisfied by the legend alone, so all four names
+    // could be deleted from every cell and replaced with a generic PLATFORM-OP.
+    const body = matrix().flatMap((r) => r.slice(EDITION_COLUMNS)).join("\n");
     for (const name of ["BROWSER-OP", "ANDROID-OP", "IOS-OP", "NATIVE-OP"]) {
-      expect(DOC, `${name} must be defined and used`).toContain(name);
+      expect(body, `${name} must name a substrate in real cells, not just the legend`)
+        .toContain(name);
     }
   });
 });

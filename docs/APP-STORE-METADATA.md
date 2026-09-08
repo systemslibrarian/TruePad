@@ -41,7 +41,10 @@ which is a deliberate cost, not a feature to be marketed around.
 >
 > **What it does**
 > • Create a pad and share it with one other person — in person, or as a sealed
->   package over an ordinary channel
+>   package over an ordinary channel. That sealed delivery is protected by
+>   post-quantum computational cryptography. The messages themselves are
+>   protected by the pad, which is not computational. The two are different
+>   guarantees, and TruePad does not merge them
 > • Send and open messages and files that are encrypted with that pad
 > • Scan a receive code by QR, straight off the other phone's screen
 > • Watch the pad be consumed, and stop when it runs out
