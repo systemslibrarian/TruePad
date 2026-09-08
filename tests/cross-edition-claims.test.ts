@@ -101,6 +101,43 @@ describe("the rows that are absent on purpose stay absent", () => {
     expect(cli).toMatch(/independent host/);
   });
 
+  it("keeps the SPT pad-influence dependency stated, never denied", () => {
+    // The row reads as "nothing about my pad reaches metadata", and a bare check
+    // in every column used to say exactly that. It is true for the N14 store
+    // scope and NOT true without qualification: sealed transfer writes a durable
+    // handoff.json whose packageIdentity/confirmHash the pad influences, and
+    // SEALED-PAD-TRANSFER.md §17 states that rather than denying it. The ledger
+    // must not be quieter than the specification it summarises.
+    const row = matrix().find((r) => r[1].includes("No pad-derived value"));
+    expect(row, "the N14 row must exist").toBeDefined();
+    const claim = (row as string[])[1];
+    expect(claim, "the SPT exception must stay named").toMatch(/handoff\.json/);
+    expect(claim).toMatch(/stated rather than denied/);
+    expect(claim, "…and be labelled computational, not information-theoretic")
+      .toMatch(/computational/);
+    for (const cell of (row as string[]).slice(EDITION_COLUMNS)) {
+      expect(cell, "no column may carry a bare, unscoped check on this row")
+        .toMatch(/N14 store scope|same scope/);
+    }
+  });
+
+  it("states secret.bin's write rule at N13's real scope", () => {
+    // "Written once and never rewritten" is what the row used to say, and a
+    // reviewer who greps finds THREE durable write sites (gen, import staging,
+    // import commit) because import materialises the bundle's secret.bin halves.
+    // N13 is scoped "after gen" for exactly that reason. A ledger that is
+    // tidier than its own spec teaches the reviewer to distrust it.
+    const row = matrix().find((r) => r[1].includes("Retirement is logical"));
+    expect(row, "the retirement row must exist").toBeDefined();
+    const claim = (row as string[])[1];
+    expect(claim, "N13's scope must be carried, not flattened")
+      .toMatch(/after gen/i);
+    expect(claim, "the import write path must be named, not hidden")
+      .toMatch(/import/i);
+    expect(claim, "…and destroy must remain the one exception")
+      .toMatch(/destroy/);
+  });
+
   it("keeps power-loss durability confined to where it was measured", () => {
     const [browser, android, ios, cli] = rowCells("Power-loss durability");
     for (const cell of [browser, android, ios]) expect(cell).toMatch(/NOT CLAIMED/);
@@ -108,16 +145,49 @@ describe("the rows that are absent on purpose stay absent", () => {
       .toMatch(/ext4/);
   });
 
-  it("keeps whole-store byte-identity unclaimed where no test proves it", () => {
-    // Message-level interop is proven on the phones; whole-store byte identity
-    // is proven only browser ⇄ CLI. The distinction is the claim.
-    const [browser, android, ios] = rowCells("byte-identical");
+  it("keeps byte-identity evidence attached to what actually proves it", () => {
+    // THIS GUARD HAS BEEN WRONG IN BOTH DIRECTIONS, so it pins per-edition facts
+    // rather than one slogan.
+    //
+    // First it required Android AND iOS to say "No whole-store byte-identity test
+    // exists" — false for Android, which has EngineTraceTest against a released
+    // transcript of REAL artifacts (811-byte v2 heads, 768-byte secrets, a 5 KB
+    // container). Understating evidence is drift too, and a guard can make it
+    // permanent.
+    //
+    // Then the correction over-swung and promoted iOS on the same row. It must
+    // not be: the shared courier fixture holds THREE STUB FILES — head.json is
+    // the literal 19 bytes {"formatVersion":2} — so it pins the bundle envelope
+    // format, not store bytes, and iOS has no engine-trace equivalent at all.
+    // The two phones are NOT at the same standing, and the table must not say so.
+    const [browser, android, ios, cli] = rowCells("byte-identical");
+
+    // Browser/CLI: the real binary on both ends, and the §2 carve-out carried.
     expect(browser).toMatch(/browser-interop\.test\.ts/);
-    for (const cell of [android, ios]) {
-      expect(cell).toMatch(/UNVERIFIED/);
-      expect(cell, "an UNVERIFIED cell must name the missing evidence")
-        .toMatch(/No whole-store byte-identity test exists/);
+    expect(browser, "the byte-equality that is unqualified is the ENVELOPE one")
+      .toMatch(/envelope/i);
+    for (const cell of [browser, cli]) {
+      expect(cell, "the browser ⇄ CLI pair must carry the §2 carve-out")
+        .toMatch(/carve-out|§2/);
     }
+
+    // Android: names its transcript, the PINNED released commit, and its residual.
+    expect(android).toMatch(/EngineTraceTest|engine-trace\.json/);
+    expect(android, "the PINNED commit, not just the tag name").toMatch(/240d7f0/);
+    expect(android).toMatch(/hash-pinned/);
+    expect(android, "no live round trip runs; that must stay named")
+      .toMatch(/UNVERIFIED/);
+    expect(android).toMatch(/live/);
+
+    // iOS: must stay UNVERIFIED, and must say WHY it is weaker than Android.
+    expect(ios, "iOS has no engine-trace equivalent and must not be promoted")
+      .toMatch(/UNVERIFIED/);
+    expect(ios, "the stub fixture is the reason, and must be stated")
+      .toMatch(/stub/);
+    expect(ios).toMatch(/formatVersion/);
+
+    // And the two phones must not be described as equally proven.
+    expect(ios, "iOS must not claim Android's standing").not.toMatch(/EngineTraceTest/);
   });
 });
 
