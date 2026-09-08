@@ -1,8 +1,10 @@
 package dev.systemslibrarian.truepad.app
 
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -18,10 +20,12 @@ import dev.systemslibrarian.truepad.core.COMPACT_PREFIX
 import dev.systemslibrarian.truepad.storage.Party2
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.UUID
 
 /**
  * THE ANDROID HALF OF THE ANDROID↔iPHONE EXCHANGE.
@@ -90,13 +94,87 @@ class CrossEditionTest {
         android.util.Log.i("TP-COURIER", "$name=$text")
     }
 
-    private fun clipboard(): String {
-        var text = ""
+    /**
+     * What is on the clipboard right now. `null` means it could not be READ — no
+     * primary clip, or no item — which on Android is a different thing from an
+     * empty string: an app without window focus is refused the read rather than
+     * handed nothing.
+     */
+    private fun readClipboard(): String? {
+        var text: String? = null
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            text = cm.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
+            text = cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
         }
         return text
+    }
+
+    /** Best effort; a platform that refuses the write is reported, not fatal. */
+    private fun seedClipboard(sentinel: String): Boolean =
+        try {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("truepad-test-sentinel", sentinel))
+            }
+            readClipboard() == sentinel
+        } catch (t: Throwable) {
+            false
+        }
+
+    /**
+     * Click a real Copy control and wait, WITH A DEADLINE, for the clipboard to
+     * actually change into something carrying [expectedPrefix].
+     *
+     * THE SAME REPAIR `FixedRecordSmokeTest` ALREADY CARRIES, applied here because
+     * this file had the identical defect. `performClick` returns when the click is
+     * DISPATCHED, not when the handler's clipboard write has landed; the immediate
+     * read this replaces came back EMPTY on a CI emulator and failed a release for
+     * a reason that was not about TruePad.
+     *
+     * AND WHY IT COMPARES AGAINST THE PRE-CLICK VALUE, not just the sentinel. This
+     * ceremony copies SEVERAL times — a receive code, then an envelope, then
+     * another envelope. If the seed were the only guard and the platform ever
+     * refused it, a later wait would find an EARLIER copy still sitting there,
+     * correctly prefixed and completely wrong, and return it as though Copy had
+     * just delivered it. Requiring a change from what was there before the click
+     * catches a missing Copy either way.
+     */
+    private fun copyAndAwait(
+        tag: String,
+        expectedPrefix: String,
+        timeoutMs: Long = 15_000,
+    ): String {
+        val sentinel = "truepad-clipboard-sentinel-" + UUID.randomUUID()
+        val seeded = seedClipboard(sentinel)
+        val before = readClipboard()
+
+        compose.onNodeWithTag(tag).performScrollTo().performClick()
+        compose.waitForIdle()
+
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var last = before
+        while (SystemClock.uptimeMillis() < deadline) {
+            last = readClipboard()
+            val value = last
+            val changed = value != null && value.isNotEmpty() && value != before && value != sentinel
+            if (changed && value.startsWith(expectedPrefix)) return value
+            SystemClock.sleep(50)
+        }
+
+        // NEVER THE CONTENT. What is here should be public transport, but a
+        // harness that prints clipboards into a log is one product defect away
+        // from printing a plaintext into one. Report the SHAPE only.
+        fail(
+            "$tag did not deliver a $expectedPrefix value within ${timeoutMs}ms. " +
+                "sentinel seeded=$seeded, " +
+                "clipboard unreadable=${last == null}, " +
+                "clipboard unchanged since before the click=${last == before}, " +
+                "clipboard still the sentinel=${last == sentinel}, " +
+                "clipboard empty=${last?.isEmpty()}, " +
+                "length=${last?.length}, " +
+                "carries $expectedPrefix=${last?.startsWith(expectedPrefix)}",
+        )
+        error("unreachable")
     }
 
     /** The same instance the composition uses: `viewModel()` stores it on the activity. */
@@ -145,8 +223,9 @@ class CrossEditionTest {
         awaitTag("btn-create-receive-code")
         compose.onNodeWithTag("btn-create-receive-code").performClick()
         awaitTag("receive-code-output", 60_000)
-        compose.onNodeWithTag("btn-copy-receive-code").performScrollTo().performClick()
-        val code = clipboard()
+        val code = copyAndAwait("btn-copy-receive-code", "TPR2:")
+        // Redundant by construction — the wait only returns on this prefix — and
+        // kept because it bites again the moment the wait's condition is loosened.
         assertTrue("Copy code did not hand over a TPR2 request", code.startsWith("TPR2:"))
         out("tpr2", code)
 
@@ -250,8 +329,7 @@ class CrossEditionTest {
         compose.onNodeWithTag("field-message").performTextInput(message)
         compose.onNodeWithTag("btn-encrypt").performScrollTo().performClick()
         awaitTag("envelope-output", 60_000)
-        compose.onNodeWithTag("btn-copy-envelope").performScrollTo().performClick()
-        val copied = clipboard()
+        val copied = copyAndAwait("btn-copy-envelope", COMPACT_PREFIX)
         val canonical = (viewModel().state.value.lastResult as? OpResult.Sent)?.envelope ?: ""
         compose.onNodeWithTag("btn-back-to-pad").performScrollTo().performClick()
         awaitTag("btn-send", 90_000)

@@ -234,6 +234,15 @@ adb shell "pm clear $APP_ID" >/dev/null 2>&1 || true
 # is already there, so a leftover from an earlier or hand-driven run would be
 # consumed as this run's evidence and reported as a pass.
 adb shell "rm -f $DROP/transfer.tps2 $DROP/iphone-tp2.txt $DROP/iphone-json.txt" || true
+# AND THE CLIPBOARD, WHICH IS ALSO A COURIER HERE. The reasoning above applies to
+# it exactly: the ceremony carries a TPR2 receive code and two TP2 envelopes
+# across the clipboard, and a leftover from an earlier run is a correctly
+# prefixed, entirely stale value. `CrossEditionTest` now refuses any value that
+# has not CHANGED since before its Copy click, so this is belt and braces rather
+# than the only defence — but leaving a stale carrier in place while clearing
+# the other three was an inconsistency, not a decision.
+adb shell "am broadcast -a clipper.set -e text ''" >/dev/null 2>&1 || true
+adb shell "service call clipboard 2" >/dev/null 2>&1 || true
 adb logcat -c
 
 # --------------------------- 3. ONE instrumentation invocation, in the background

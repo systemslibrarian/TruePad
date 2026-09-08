@@ -42,10 +42,44 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+
+      # WHAT THIS DEPLOYMENT IS MADE OF, stated by the deployment itself.
+      #
+      # The v3.0.0 tag deployment was REFUSED by the github-pages environment
+      # (which permitted only the master branch), and the cutover was then done
+      # by dispatch on master at the identical commit. Content was right, ref was
+      # not, and NOTHING in the artefact recorded which of those had happened —
+      # so "what is Pages serving" could only be answered by correlating API
+      # deployment records after the fact. The build now stamps its own ref and
+      # SHA into the artefact, so the public site can be asked directly.
+      - name: Record the deployment source
+        run: |
+          set -euo pipefail
+          echo "source ref:  $GITHUB_REF"
+          echo "source SHA:  $GITHUB_SHA"
+          echo "event:       $GITHUB_EVENT_NAME"
+          # The checkout must BE the SHA this run claims. A mismatch would mean
+          # the artefact does not correspond to the ref it is published under.
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$GITHUB_SHA" ]; then
+            echo "::error::checked-out $actual but this run claims $GITHUB_SHA"
+            exit 1
+          fi
+          echo "checked out: $actual (matches)"
+
       # Build FIRST: the bundle-boundary assertion in the claim guards reads
       # dist/ and skips when it is absent, so testing before building made
       # the one check that keeps ML-KEM out of the UI thread a no-op in CI.
       - run: npm run build
+      # Stamped AFTER the build so `vite build` cannot clear it, and BEFORE the
+      # artefact upload so it travels with the deployed bytes.
+      - name: Stamp the source into the artefact
+        run: |
+          set -euo pipefail
+          printf '{"ref":"%s","sha":"%s","event":"%s","built_at":"%s"}\n' \
+            "$GITHUB_REF" "$GITHUB_SHA" "$GITHUB_EVENT_NAME" \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > dist/deploy-source.json
+          cat dist/deploy-source.json
       - run: npm test
       # The e2e suite drives the real exhibit in Chromium against the dev
       # server (playwright.config.ts). It gates the deploy like the unit suites.
@@ -84,3 +118,16 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+
+      # DEPLOY STATUS IS NOT BUILD STATUS, and reading one for the other is how
+      # a refused deployment went unnoticed: the build job was green, the deploy
+      # job never ran a step, and the run looked ordinary in a list. This step
+      # only runs when the deployment actually succeeded, and says what it
+      # published and from where.
+      - name: State what was published
+        run: |
+          set -euo pipefail
+          echo "deployed ref:  $GITHUB_REF"
+          echo "deployed SHA:  $GITHUB_SHA"
+          echo "page URL:      ${{ steps.deployment.outputs.page_url }}"
+          echo "DEPLOYMENT SUCCEEDED (this line is absent from any run whose deploy step did not)"

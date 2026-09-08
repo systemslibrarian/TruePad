@@ -53,9 +53,25 @@
 name: Android
 
 on:
+  # NO PATH FILTER ON MASTER OR ON A RELEASE TAG, DELIBERATELY.
+  #
+  # This workflow is release-REQUIRED (docs/RELEASE-CHECKLIST-3.0.md Section A).
+  # It used to be path-filtered on push, which meant a candidate commit touching
+  # none of those paths produced NO RUN AT ALL — and an absent run is visually
+  # identical to a passing one in a checks list. During the 3.0.0 release that
+  # happened twice, and both times the gap was closed only because someone
+  # noticed and dispatched the workflow by hand.
+  #
+  # Worse, no workflow but deploy.yml declared `tags:`, so pushing the v3.0.0 tag
+  # ran exactly one of the five. The release ref itself was the least covered ref
+  # in the repository.
+  #
+  # "It did not run, so nothing it covers can have changed" is fail-OPEN unless
+  # something proves it, and nothing did. Pull requests keep the filter, where a
+  # missing run costs nothing and cannot be mistaken for a release gate.
   push:
     branches: [master]
-    paths: ['android/**', 'docs/ANDROID-SECURITY.md', '.github/workflows/android.yml']
+    tags: ['v*']
   pull_request:
     paths: ['android/**', 'docs/ANDROID-SECURITY.md', '.github/workflows/android.yml']
   workflow_dispatch:

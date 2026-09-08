@@ -344,6 +344,92 @@ This is recorded explicitly because the previous version of this checklist made
 it release-blocking, which would have deadlocked the release on an event the
 project had already decided not to require.
 
+## C2. Post-release assurance cleanup (2026-09-07, after v3.0.0)
+
+`v3.0.0` is immutable: tag object `6377f9485da987ba450a81818b79b0848f5ca5f7`,
+peeling to `996ee4edccfa899f43e74847fe1380cb8399b57d`. Nothing in this section
+moves it. What follows repairs the machinery around it.
+
+### Pages: build success is not deployment success
+
+**What actually happened at the release.** The `v3.0.0` tag push created
+deployment `6315627084` (ref `v3.0.0`, sha `996ee4edc`) and it **FAILED** — the
+`github-pages` environment carried a custom policy permitting only the branch
+`master`, so a tag ref was refused before a single step ran. The cutover was then
+done by dispatch on `master` at the identical commit (deployment `6315676005`,
+sha `996ee4edc`, success). **The deployed bytes were always the tag's bytes**; the
+ref was not, and the release note's "deployed to GitHub Pages from this tag"
+described a mechanism that had been refused.
+
+Nothing in the artefact recorded which of those had happened. "What is Pages
+serving" could only be answered by correlating deployment records after the fact,
+and a green *build* job sat next to a failed *deploy* job in a way that reads as
+an ordinary run.
+
+**Repaired three ways.** The environment now carries a **tag** policy for `v*`
+alongside the existing `master` branch policy — a tag gains deployment authority,
+no branch does. The build stamps `dist/deploy-source.json` with its ref, SHA and
+event, so the public site states its own provenance and can be asked directly
+rather than inferred. And the deploy job ends with a step that runs only on a
+successful deployment and names the ref and SHA it published, so a refused
+deployment can no longer look like a quiet one.
+
+**Then proved, by redeploying the exact immutable v3.0.0 content from the tag
+ref.** Deployment `6318368290` — ref `v3.0.0`, sha `996ee4edc` — succeeded, and is
+now the active Pages deployment; the earlier master-ref deployment went inactive.
+So the released note's "deployed to GitHub Pages from this tag" is **true now,
+and was not true when it was written**. Both halves of that are recorded rather
+than resolved by quietly letting the sentence stand: the tag was never moved, the
+release commit was never altered, and the claim was made true by fixing the
+mechanism it described instead of by softening the words.
+
+### Required checks: ABSENT is not green
+
+**The gap.** `ios.yml` and `android.yml` were path-filtered on push, so a
+candidate commit touching none of their paths produced **no run at all** — and an
+absent run is visually identical to a passing one. Worse, only `deploy.yml`
+declared `tags:`, so pushing `v3.0.0` ran exactly one of the five workflows: the
+release ref was the least-covered ref in the repository. Both gaps were closed
+during the release only because someone noticed and dispatched the workflows by
+hand.
+
+**The rule.** "It did not run, so nothing it covers can have changed" is
+fail-OPEN unless something proves it. Nothing did.
+
+**Repaired two ways.** The required workflows no longer path-filter their push
+trigger and now run on `v*` tags as well as `master`; pull requests keep the
+filter, where a missing run costs nothing and cannot be mistaken for a release
+gate. And `scripts/verify-release-gates.sh` is now the authority on whether a SHA
+is releasable: it takes an exact commit, enumerates the required checks by name,
+and distinguishes **PASS / FAIL / PENDING / CANCELLED / SKIPPED / ABSENT**. Only
+`PASS` is green. Optional workflows are reported and never block.
+
+| Workflow | Disposition | Why |
+| --- | --- | --- |
+| Deploy demo to GitHub Pages | **REQUIRED** | its build job carries the Section A Browser/CLI gates: typecheck, `npm test`, build, Playwright |
+| Android | **REQUIRED** | `./gradlew check`, `connectedDebugAndroidTest`, `assembleRelease` — "All are blocking" |
+| iOS | **REQUIRED** | `swift test`, Debug/Release builds, the five scripts, ASan/TSan — "All are blocking" |
+| CodeQL | optional | valuable, but Section A never lists it; it must not become a gate by accident |
+| TPM emulator interoperability | optional | swtpm is EMULATOR evidence; physical TPM is recorded NON-BLOCKING, and requiring this would promote it past what it is |
+| Dependabot Updates | optional | dependency automation, not a gate on any commit |
+
+The classifier is pure and driven by data, so every state is tested without a
+network (`tests/release-gates.test.ts`), including the cases that actually bit:
+absent, cancelled, pending, and an older green run masking a newer red one.
+
+### Version policy after a release
+
+**Master stays at the released version until the next line is deliberately
+opened.** This is the project's existing practice rather than a new rule: after
+`v2.0.0` was tagged on 2026-09-01, master remained at `2.0.0` through the next
+commit and took the next line's development stamp only on 2026-09-02, in a commit
+whose whole purpose was "Mark master as TruePad 3.0 development" — a deliberate,
+separately named act rather than part of the release. Recorded here because it was
+implicit, and because the released-state guards assert `3.0.0` with literals.
+
+This lane is assurance, test and deployment repair. It opens no new line, so
+master remains at **3.0.0** and no version was bumped.
+
 ## D. Release mechanics — performed 2026-09-07, after the three blocking items were green
 
 > Section B is **not** a precondition of this section, and this heading used to
