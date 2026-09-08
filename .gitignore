@@ -22,3 +22,12 @@ DerivedData/
 # deleting it later does not remove it. PROVENANCE.md already says the evidence
 # bundle "is not committed"; this is what makes that true rather than a habit.
 artifacts/
+
+# Xcode writes this into the VENDORED package when it resolves dependencies, and
+# `ios/vendor/verify-vendor.sh` then fails: that script compares the vendored tree
+# against pristine upstream plus the one reviewed patch, and an extra file is a
+# difference. It is generated build debris, never tracked, and ignoring it keeps a
+# routine archive from producing a supply-chain gate failure that looks alarming
+# and means nothing. The app's OWN resolved pins are tracked separately, at
+# ios/TruePadApp/TruePadApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved.
+ios/vendor/swift-crypto/Package.resolved

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    TruePad — the app's privacy manifest.
+
+    THREE SEPARATE QUESTIONS, answered separately, because Apple asks them
+    separately and conflating them is how a manifest becomes decorative:
+
+      1. Does the developer COLLECT data?          No.
+      2. Does the app TRACK?                       No.
+      3. Does the app call a REQUIRED-REASON API?  Yes — one category.
+
+    (1) and (2) are not asserted because TruePad feels private. They are asserted
+    because the shipping binary has no egress path: it links no networking
+    framework, and imports zero networking, cloud or tracking symbols. A pad, a
+    message and a receive code all exist ON DEVICE; none of them is collected by
+    anyone. Data existing on a device is not data collected by a developer, and
+    only the second is what this file declares.
+
+    (3) is declared because it is TRUE, not because it is safe. TruePad makes
+    three stat-family calls, all in TruePadStorage/DarwinFs.swift and all on paths
+    inside the app's own container:
+
+      · `stat` in the read path — a regular file, reached through a symlink or
+        not, reads normally. This one FOLLOWS, deliberately, so this edition and
+        Android answer alike.
+      · `lstat` in the not-a-regular-file branch — a path that exists but is not a
+        regular file must not be reported as absent, because absence is the state
+        that permits a second handoff.
+      · `lstat` in `exists(_:)` — whether a path is there, WITHOUT following. A
+        `stat` that follows would let a `destroyed.json` symlinked to a deleted
+        target read as absent, and a destroyed pair become usable again.
+
+    Neither reads a timestamp. Apple's category is defined by the API, not by the
+    field used, so the declaration is made on the API. The approved reason is
+    C617.1: metadata of files inside the app container.
+
+    NOTHING ELSE IS DECLARED. The other required-reason categories — system boot
+    time, disk space, active keyboard, user defaults — are absent from the
+    shipping source, and `tests/…` guards that they stay absent rather than this
+    file being padded with reasons that describe nothing.
+-->
+<plist version="1.0">
+<dict>
+    <key>NSPrivacyTracking</key>
+    <false/>
+
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array/>
+
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>C617.1</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

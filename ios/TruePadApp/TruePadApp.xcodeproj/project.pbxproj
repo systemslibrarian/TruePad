@@ -49,6 +49,7 @@
 
 /* Begin PBXBuildFile section */
 		TP0000000000000000000008 /* TruePadAppMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = TP0000000000000000000007 /* TruePadAppMain.swift */; };
+		TP000000000000000000004B /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = TP000000000000000000004A /* PrivacyInfo.xcprivacy */; };
 		TP0000000000000000000017 /* TruePadUI in Frameworks */ = {isa = PBXBuildFile; productRef = TP0000000000000000000014 /* TruePadUI */; };
 		TP0000000000000000000018 /* TruePadSPT in Frameworks */ = {isa = PBXBuildFile; productRef = TP0000000000000000000015 /* TruePadSPT */; };
 		TP0000000000000000000019 /* TruePadStorage in Frameworks */ = {isa = PBXBuildFile; productRef = TP0000000000000000000016 /* TruePadStorage */; };
@@ -64,6 +65,7 @@
 		TP0000000000000000000006 /* TruePad.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TruePad.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		TP0000000000000000000007 /* TruePadAppMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TruePadAppMain.swift; sourceTree = "<group>"; };
 		TP0000000000000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		TP000000000000000000004A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		TP0000000000000000000020 /* TruePadAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TruePadAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		TP0000000000000000000021 /* TruePadPhysicalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TruePadPhysicalTests.swift; sourceTree = "<group>"; };
 		TP0000000000000000000041 /* ExternalSourceLifetimeTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalSourceLifetimeTest.swift; sourceTree = "<group>"; };
@@ -118,6 +120,7 @@
 			children = (
 				TP0000000000000000000007 /* TruePadAppMain.swift */,
 				TP0000000000000000000009 /* Info.plist */,
+				TP000000000000000000004A /* PrivacyInfo.xcprivacy */,
 			);
 			path = TruePadApp;
 			sourceTree = "<group>";
@@ -248,6 +251,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				TP000000000000000000004B /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
