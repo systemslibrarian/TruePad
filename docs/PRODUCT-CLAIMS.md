@@ -17,84 +17,100 @@ The authoritative per-edition detail lives elsewhere and is only summarised
 here:
 
 - **Browser Edition** — `docs/BROWSER-SECURITY.md` (the source of the Browser
+  column below). That document uses its own older vocabulary — **NATIVE-ONLY /
+  UNVERIFIED** — for the browser-versus-CLI comparison it was written to make.
+  It maps onto this table's **NOT CLAIMED** / **NOT OFFERED** / **UNVERIFIED**
+  and is not a second, competing set of claims.
+- **Android Edition** — `docs/ANDROID-SECURITY.md` (the source of the Android
   column below).
+- **iOS Edition** — `docs/IOS-SECURITY.md` (the source of the iOS column below).
 - **Frozen protocol** — `docs/FORMAT-V2.md` (Store Format v2, `wc-one-time-v1`,
   the §11 vectors, §12 transactions, §17 destruction).
 - **Byte-for-byte interop** — `docs/INTEROPERABILITY.md` (a browser store and a
   CLI store are the same files; the interop suite proves it).
 
-Only the **Browser Edition** column is populated today. **Operational
-(Desktop/CLI)** claims are governed by `FORMAT-V2.md` §10 and are not restated
-here; the **Android** and **Desktop** *product* columns are marked
-`forthcoming` and must not be read as present guarantees.
+**Every edition is now assessed row by row.** 3.0.0 ships three user-facing
+editions — Browser, Android and iOS — alongside the operational `truepad2`
+CLI, and leaving three columns marked *forthcoming* while three products
+shipped was itself a claims defect. The columns below are populated from the
+evidence that already exists in this repository; where that evidence does not
+reach, the cell says **UNVERIFIED** and names what is missing, rather than
+borrowing a neighbouring column's strength.
 
-**Read `forthcoming` as "not yet assessed against this table", not as "does not
-exist".** That distinction has become material: the Android Edition and the iOS
-Edition both **ship in 3.0.0**. Neither
-has been evaluated row-by-row here, so neither column is populated — and an
-unpopulated column is not a claim in either direction. Their current security
-boundaries live in `docs/ANDROID-SECURITY.md` and `docs/IOS-SECURITY.md`.
+The authoritative per-edition boundaries remain:
+`docs/BROWSER-SECURITY.md`, `docs/ANDROID-SECURITY.md`, `docs/IOS-SECURITY.md`,
+and `FORMAT-V2.md` §10 for the CLI.
 
 ---
 
-## The four classifications
+## The six classifications
 
-Every row carries exactly one classification. It answers "*who or what makes
+Every cell carries exactly one classification. It answers "*who or what makes
 this true, and how strong is it?*", not "*is it good?*".
 
 - **PROTOCOL** — guaranteed by the frozen Store Format v2 / `wc-one-time-v1`
-  construction. Identical on every edition, because every edition reuses the
-  **same `src/core` modules byte-for-byte** (`hex`, `gf128`, `wc-one-time`,
-  `envelope2`, `partition2`, `frame2`). A PROTOCOL claim does not get weaker or
-  stronger when the platform changes.
+  construction. Identical on every edition, because every edition implements
+  the **same frozen wire** and is held to the **same vectors** (`hex`, `gf128`,
+  `wc-one-time`, `envelope2`, `partition2`, `frame2`). A PROTOCOL claim does
+  not get weaker or stronger when the platform changes. Note the difference in
+  *mechanism*: Browser and CLI reuse `src/core` **byte-for-byte**; Android and
+  iOS are **independent reimplementations held to the same test vectors**,
+  which is a real cross-check but a different kind of assurance.
 
 - **PLATFORM-OP** — an *operational* guarantee an edition enforces using its
   platform's primitives (single-writer locking, durable commit ordering,
   destruction boundary). The **guarantee is real but platform-scoped and named
-  by its substrate**: the Browser Edition's instance is **BROWSER-OP** (OPFS
-  sync access handles, `flush()`, Web Locks — see `BROWSER-SECURITY.md`), which
-  is weaker than and distinct from the CLI's native equivalent. Never quote one
-  edition's PLATFORM-OP strength for another.
+  by its substrate**: **BROWSER-OP** (OPFS sync access handles, `flush()`, Web
+  Locks), **ANDROID-OP** (app-private `filesDir`/`noBackupFilesDir`, `NioFs`),
+  **IOS-OP** (app container, `DarwinFs`), **NATIVE-OP** (the CLI's POSIX
+  equivalent). Never quote one edition's PLATFORM-OP strength for another.
 
 - **OPERATOR** — an assumption **only the operator can discharge**: physical
   source provenance and uniformity, out-of-band pad delivery, not clearing
   site data / not restoring an old backup, keeping the two couriered copies
   disciplined. The tool states these; it cannot enforce them.
 
-- **NATIVE-ONLY / UNVERIFIED** — a guarantee **some** edition makes that the
-  edition in question does **not**. Stated as absent, never faked or borrowed.
-  For the Browser Edition these are power-loss durability, an independent
-  external rollback witness, and physical media erasure.
+- **NOT CLAIMED** — the edition does not assert this, and nothing here should
+  be read as asserting it. Stated as absent, never faked or borrowed.
+
+- **NOT OFFERED** — the edition has no mechanism for it at all, because its
+  substrate cannot reach one. Distinct from NOT CLAIMED: there is nothing to
+  turn on.
+
+- **UNVERIFIED** — the mechanism is present and is believed to hold, but the
+  specific evidence that would make it a claim **has not been produced in this
+  repository**. An UNVERIFIED cell is not a promise and not a denial; it names
+  the missing test. This is the honest classification for anything a shipped
+  edition does that no gate yet measures.
 
 ---
 
 ## Cross-edition claims matrix
 
-Legend: **✓ PROTOCOL** identical everywhere · **BROWSER-OP** / native-op the
-platform's operational form · **OPERATOR** the operator's to discharge ·
-**not claimed** stated absent · **forthcoming** not yet assessed row-by-row in
-this table — NOT a statement that the edition does not exist (see above); do not
-rely on an unpopulated column in either direction.
+Legend: **✓ PROTOCOL** identical everywhere · **BROWSER-OP / ANDROID-OP /
+IOS-OP / NATIVE-OP** the platform's operational form · **OPERATOR** the
+operator's to discharge · **NOT CLAIMED** / **NOT OFFERED** stated absent ·
+**UNVERIFIED** mechanism present, evidence not produced here.
 
-| # | Claim | Class | Browser Edition | Android (forthcoming) | Desktop (forthcoming) |
-| - | --- | --- | --- | --- | --- |
-| 1 | Store Format v2 files, canonical JSON bytes, POLYVAL, `wc-one-time-v1`, four-slice partition, fixed-record frame, strict envelope grammar | PROTOCOL | ✓ `src/core` reused byte-for-byte; the §11 vectors and the adversarial corpus pass in the browser build (`INTEROPERABILITY.md`) | forthcoming | forthcoming |
-| 2 | A store written on one edition is byte-identical and openable on another (browser ⇄ CLI) | PROTOCOL | ✓ proven by `tests/browser-interop.test.ts` (browser-none stores; witnessClass `none`) | forthcoming | forthcoming |
-| 3 | Authenticated by default; no downgrade, no `--legacy` / `--no-auth` / `--force`, no v1 path | PROTOCOL | ✓ the browser engine has no such request at all; a v1 store is refused `v1-store` | forthcoming | forthcoming |
-| 4 | Commit-before-emit; **loss is acceptable, reuse is not** | PROTOCOL (order) + PLATFORM-OP (durability) | BROWSER-OP: the §12 order preserved in the worker over OPFS `flush()` | forthcoming | forthcoming |
-| 5 | Exactly one mutator per pair at a time | PLATFORM-OP | BROWSER-OP: Web Locks (`navigator.locks`), not a UI `isBusy` flag | forthcoming | forthcoming |
-| 6 | Three-counter rollback witness; a regressed store refuses `witness-regressed` before consuming anything | PROTOCOL (the record + refusal) + PLATFORM-OP (where it lives) | BROWSER-OP: `browser-none` or `browser-local-witness` (a crash-safe append-only journal in a second, separately-cleared OPFS store, keyed by pair.json; an established witness fails closed, never fresh), §4 | forthcoming | forthcoming |
-| 7 | Irreversible `destroyed.json` boundary; restartable, idempotent destroy that refuses the pair everywhere after | PROTOCOL + PLATFORM-OP | BROWSER-OP: tombstone in OPFS; every verb gates on it before any secret read | forthcoming | forthcoming |
-| 8 | Retirement is logical — advancing durable counters retires material; `secret.bin` is written once and never rewritten (only zero-overwritten at destroy) | PROTOCOL | ✓ | forthcoming | forthcoming |
-| 9 | Uniformity is conditional and stated verbatim: *"Uniform if at least one declared source was uniform and independent of the others."* | PROTOCOL (combiner) + OPERATOR (source) | ✓ verdict shown verbatim at gen; the combiner is unconditional given the conditions, the source is graded separately | forthcoming | forthcoming |
-| 10 | No pad-derived value in any metadata (no hash / checksum / fingerprint in head or manifest, N14) | PROTOCOL | ✓ | forthcoming | forthcoming |
-| 11 | Secrets never leave the engine boundary; the UI receives only wire-public envelopes, non-secret meters, and plaintext on a successful open | PLATFORM-OP | BROWSER-OP: engine + store live in a dedicated Web Worker + OPFS; no secret in `localStorage`/`sessionStorage`/URL/history/console/logs | forthcoming | forthcoming |
-| 12 | No backend, accounts, analytics, telemetry, cloud, or auto-sync; zero network requests during cryptographic operation | PLATFORM-OP | BROWSER-OP: installable PWA with a local shell; third-party assets vendored, strict CSP | forthcoming | forthcoming |
-| 13 | Power-loss durability of a mid-write | NATIVE-ONLY / UNVERIFIED | **not claimed** — OPFS documents no power-loss semantics (the CLI claims it only on Linux ext4, `FORMAT-V2.md` §10) | forthcoming | forthcoming |
-| 14 | An **independent external** rollback witness (a separate host failure domain) | NATIVE-ONLY | **not offered** — the browser cannot reach an independent host domain; it offers only the browser-local classes of §4, and says so verbatim | forthcoming | forthcoming |
-| 15 | Physical erasure of pad material on destroy | NATIVE-ONLY / not claimed | **not claimed** — *"Software can forget its reference to pad material; it cannot prove that flash forgot the bytes."* Zero-overwrite is best-effort hygiene | forthcoming | forthcoming |
-| 16 | Physical source provenance / one-file-one-source **by filesystem identity** | OPERATOR / platform caveat | declared, not verified; the browser File API exposes no inode, so alias detection is limited to spotting the *same `File` object* re-selected in one session — an object-reference check, never a comparison of source bytes (§6, §9). Source **content never conditions acceptance** — stated, not invented | forthcoming | forthcoming |
-| 17 | Store survives "clear site data", profile restore, or an Incognito context ending | OPERATOR | **not protected** — these destroy or regress the OPFS store; stated operator responsibilities (§2) | forthcoming | forthcoming |
+| # | Claim | Class | Browser | Android | iOS | CLI / Native |
+| - | --- | --- | --- | --- | --- | --- |
+| 1 | Store Format v2 files, canonical JSON bytes, POLYVAL, `wc-one-time-v1`, four-slice partition, fixed-record frame, strict envelope grammar | PROTOCOL | ✓ `src/core` reused byte-for-byte; the §11 vectors and the adversarial corpus pass in the browser build (`INTEROPERABILITY.md`) | ✓ independent Kotlin implementation held to the same frozen vectors (`android/vectors/wc-one-time-v1.json`, `envelope-encode.json`, `envelope-refusals.json`, `head-key-order.json`) | ✓ independent Swift implementation held to the same frozen vectors (`ios/vectors/`), 472 Swift tests incl. ASan/TSan | ✓ `src/core` reused byte-for-byte; the reference implementation of the frozen wire |
+| 2 | A store written on one edition is byte-identical and openable on another | PROTOCOL | ✓ browser ⇄ CLI proven by `tests/browser-interop.test.ts` (browser-none stores; witnessClass `none`) | **UNVERIFIED** — message-level interop is proven (device-generated SPT corpus replayed by `tests/spt-android-interop.test.ts`; a physical two-handset ceremony opened both a TP2 and a canonical-JSON message). **No whole-store byte-identity test exists** for Android, as it does for browser ⇄ CLI | **UNVERIFIED** — same standing as Android (`tests/spt-ios-interop.test.ts`, same physical ceremony). **No whole-store byte-identity test exists** for iOS | ✓ the other half of the browser ⇄ CLI proof |
+| 3 | Authenticated by default; no downgrade, no `--legacy` / `--no-auth` / `--force`, no v1 path | PROTOCOL | ✓ the browser engine has no such request at all; a v1 store is refused `v1-store` | ✓ no downgrade request exists in the app; `v1-store` refusal shared across editions | ✓ no downgrade request exists in the app; `v1-store` refusal shared across editions | ✓ `truepad2` has no downgrade flag; v1 lives only in the separate teaching CLI |
+| 4 | Commit-before-emit; **loss is acceptable, reuse is not** | PROTOCOL (order) + PLATFORM-OP (durability) | BROWSER-OP: the §12 order preserved in the worker over OPFS `flush()` | ANDROID-OP: the §12 order preserved over `NioFs` on app-private storage | IOS-OP: the §12 order preserved over `DarwinFs` in the app container | NATIVE-OP: the §12 order over POSIX; durability claimed only where §10 says |
+| 5 | Exactly one mutator per pair at a time | PLATFORM-OP | BROWSER-OP: Web Locks (`navigator.locks`), not a UI `isBusy` flag | ANDROID-OP: a process-scoped mutator lock in `PadViewModel`, not a UI enabled/disabled flag. **Single-process only** — it does not arbitrate a second app instance | IOS-OP: single-process serialisation in the app container. **Single-process only** | NATIVE-OP: OS file locking, which is the strongest of the four |
+| 6 | Three-counter rollback witness; a regressed store refuses `witness-regressed` before consuming anything | PROTOCOL (the record + refusal) + PLATFORM-OP (where it lives) | BROWSER-OP: `browser-none` or `browser-local-witness` (a crash-safe append-only journal in a second, separately-cleared OPFS store, keyed by pair.json; an established witness fails closed, never fresh), §4 | ANDROID-OP: an append-only witness log under `noBackupFilesDir/truepad/witness/<pairId>.log` — a **different failure domain from the store**, and excluded from Android backup/restore, so a restored store meets a witness that still remembers. Refuses `witness-regressed` / `witness-inconsistent` | IOS-OP: `ios-local-witness`, or `ios-none` when no witness is established | NATIVE-OP: `witness-inconsistent` / `witness-locked` / `witness-unreachable` / `witness-path-unsafe`; the only edition that can point at an **independent host** |
+| 7 | Irreversible `destroyed.json` boundary; restartable, idempotent destroy that refuses the pair everywhere after | PROTOCOL + PLATFORM-OP | BROWSER-OP: tombstone in OPFS; every verb gates on it before any secret read | ANDROID-OP: tombstone in app-private storage; every verb gates on it | IOS-OP: tombstone in the app container, probed with `lstat` so a **symlinked tombstone cannot read as absent** and revive a destroyed pair | NATIVE-OP: tombstone on the filesystem; every verb gates on it |
+| 8 | Retirement is logical — advancing durable counters retires material; `secret.bin` is written once and never rewritten (only zero-overwritten at destroy) | PROTOCOL | ✓ | ✓ | ✓ | ✓ |
+| 9 | Uniformity is conditional and stated verbatim: *"Uniform if at least one declared source was uniform and independent of the others."* | PROTOCOL (combiner) + OPERATOR (source) | ✓ verdict shown verbatim at gen; the combiner is unconditional given the conditions, the source is graded separately | ✓ the same verdict text, shown verbatim | ✓ the same verdict text, shown verbatim | ✓ the same verdict text, shown verbatim |
+| 10 | No pad-derived value in any metadata (no hash / checksum / fingerprint in head or manifest, N14) | PROTOCOL | ✓ | ✓ | ✓ | ✓ |
+| 11 | Secrets never leave the engine boundary; the UI receives only wire-public envelopes, non-secret meters, and plaintext on a successful open | PLATFORM-OP | BROWSER-OP: engine + store live in a dedicated Web Worker + OPFS; no secret in `localStorage`/`sessionStorage`/URL/history/console/logs | ANDROID-OP: secrets stay inside the engine's process memory; **never in the Keychain-equivalent, never in `SharedPreferences`, never in a log**. The clipboard, when the operator uses it, is a **stated egress** the app cannot close | IOS-OP: the same boundary; **no pad material in the Keychain**, by rule. The system clipboard (and Universal Clipboard) is a **stated egress** | NATIVE-OP: process memory and the filesystem the operator chose |
+| 12 | No backend, accounts, analytics, telemetry, cloud, or auto-sync; zero network requests during cryptographic operation | PLATFORM-OP | BROWSER-OP: installable PWA with a local shell; third-party assets vendored, strict CSP | ANDROID-OP: **`INTERNET` and `ACCESS_NETWORK_STATE` are removed from the merged manifest** (`tools:node="remove"`), the datatransport uploader's entry points with them; `allowBackup="false"`. CAMERA is the only capability-granting permission, for the receive-code QR. Enforced by `ManifestHardeningTest` | IOS-OP: no networking symbol in shipping source — `URLSession`, `NWConnection`, `CloudKit`, `AdSupport` and six more are gate-banned (`tests/ios-privacy-manifest.test.ts`); the privacy manifest declares no tracking and no collected data | NATIVE-OP: no network code path in `truepad2` |
+| 13 | Power-loss durability of a mid-write | PLATFORM-OP where claimed; otherwise NOT CLAIMED | **NOT CLAIMED** — OPFS documents no power-loss semantics | **NOT CLAIMED** — Android's storage stack documents no power-loss semantics TruePad can rely on, and none has been tested | **NOT CLAIMED** — same standing; not tested | claimed **only on Linux ext4** (`FORMAT-V2.md` §10), and nowhere else |
+| 14 | An **independent external** rollback witness (a separate host failure domain) | NOT OFFERED except on the CLI | **NOT OFFERED** — the browser cannot reach an independent host domain; only the browser-local classes of §4, stated verbatim | **NOT OFFERED** — the app has no network and no independent host; its witness is device-local, in a different *directory* failure domain, not a different *host* | **NOT OFFERED** — device-local only | ✓ the one edition that can be pointed at an independent host |
+| 15 | Physical erasure of pad material on destroy | NOT CLAIMED on every edition | **NOT CLAIMED** — *"Software can forget its reference to pad material; it cannot prove that flash forgot the bytes."* Zero-overwrite is best-effort hygiene | **NOT CLAIMED** — identical reasoning; flash translation layers and wear levelling are outside the app | **NOT CLAIMED** — identical reasoning | **NOT CLAIMED** — identical reasoning, on every filesystem |
+| 16 | Physical source provenance / one-file-one-source **by filesystem identity** | OPERATOR / platform caveat | declared, not verified; the browser File API exposes no inode, so alias detection is limited to spotting the *same `File` object* re-selected in one session — an object-reference check, never a comparison of source bytes (§6, §9). Source **content never conditions acceptance** | **OPERATOR** — the Storage Access Framework hands back a per-URI grant, not an inode; two URIs can name one file. Declared, not verified. Source **content never conditions acceptance** | **OPERATOR** — the document picker likewise exposes no stable filesystem identity. Declared, not verified. Source **content never conditions acceptance** | the only edition with real filesystem identity available (`src/cli/v2/ceremony.ts`), and the only one that should ever be quoted for it |
+| 17 | Store survives a platform-level data wipe (clear site data, app uninstall, profile restore) | OPERATOR | **not protected** — clearing site data destroys or regresses the OPFS store; stated operator responsibilities (§2) | **not protected** — uninstall, or "Clear storage", removes both the store and its witness. `allowBackup="false"` is deliberate: a restored store is a **reuse risk**, so it is refused rather than restored | **not protected** — deleting the app removes the container. Pad material is deliberately excluded from backup | **not protected** — the operator owns the filesystem, and the pad file with it |
 
 ---
 
@@ -373,13 +389,22 @@ operator meets the browser's actual scope, never a borrowed one.
 
 ## How to read a future edition column
 
-When the Android or Desktop columns are populated they follow the same rule:
+Every column is populated, and each one stays honest by the same rules:
 
-- A **PROTOCOL** row stays ✓ **only if** that edition reuses `src/core`
-  byte-for-byte and passes the §11 vectors and the adversarial corpus in its
-  own build. Anything less is not the frozen protocol.
+- A **PROTOCOL** row stays ✓ **only if** that edition either reuses `src/core`
+  byte-for-byte (Browser, CLI) **or** is an independent implementation that
+  passes the same frozen vectors in its own build (Android, iOS). Anything less
+  is not the frozen protocol. The two mechanisms are not interchangeable and
+  the cell must say which one it is.
 - A **PLATFORM-OP** row must name that edition's own substrate and its own
   strength. It may not inherit the Browser Edition's BROWSER-OP wording, nor
   quote the CLI's native strength.
-- A **NATIVE-ONLY** row is filled in only when that edition genuinely provides
-  the guarantee on its platform — never by relabelling a weaker mechanism.
+- **NOT OFFERED** is filled in only when the substrate has no mechanism at all;
+  **NOT CLAIMED** when a mechanism exists but the guarantee is not asserted.
+  Neither may be quietly upgraded by relabelling a weaker mechanism.
+- **UNVERIFIED** must name the missing evidence, so the cell reads as a piece
+  of outstanding work rather than as a hedge. When that evidence is produced,
+  the cell changes; until then it does not drift upward.
+
+A regression guard enforces the shape of this table:
+`tests/cross-edition-claims.test.ts`.

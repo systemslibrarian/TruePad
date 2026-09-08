@@ -30,11 +30,17 @@ A reused pad cannot be fixed at all.
 working, audited implementation that states on every screen what it does not do.
 
 > **Release status.** The latest *formal release* is **TruePad 3.0.0**
-> (`package.json` reads `3.0.0`): the Browser Edition, a native Android Edition,
-> a native iOS Edition, Sealed Pad Transfer between two real handsets, and the
-> maximum-assurance architecture (TPM-anchored monotonic authority, an
-> operator-pinned root of trust, the ceremony state machine). **TruePad does NOT
-> guarantee perfect secrecy as a product claim.**
+> (`package.json` reads `3.0.0`). It ships **three user-facing editions** — the
+> Browser Edition, a native Android Edition and a native iOS Edition — with Sealed
+> Pad Transfer working between two real handsets. **TruePad does NOT guarantee
+> perfect secrecy as a product claim.**
+>
+> **The maximum-assurance architecture is a separate, advanced, native path** — a
+> TPM-anchored monotonic authority, an operator-pinned root of trust and the
+> ceremony state machine, reached through the `truepad2` CLI. **The phone apps are
+> not TPM-backed**, and they do not become so because this repository contains
+> that architecture. **Physical TPM 2.0 validation was NOT performed** for 3.0.0;
+> the swtpm evidence in CI is emulator interoperability only.
 >
 > **Reviewing the cryptography?** Start at
 > [`docs/REVIEWER-START-HERE.md`](docs/REVIEWER-START-HERE.md) — a two-hour path,
@@ -97,6 +103,36 @@ distinctions.
 The teaching page: Shannon's three conditions, watching a pad burn and run out,
 why reuse fails, secrecy versus integrity, and the DeckBook comparison.
 
+### Two people, two different jobs — and you never pick which one you are
+
+A pad pair is **not symmetric**. It holds four slices of secret material, and
+which two are yours depends on **how the pad reached you**:
+
+- **You created the pad** — your copy is recorded `generated-here`, and you send
+  on the **A→B** slices.
+- **You received the pad** (a pad file, or a sealed online transfer) — your copy
+  is recorded `imported`, and you send on the **B→A** slices.
+
+That is the whole workflow: **one person generates, the other receives.** Do it
+once, in that order, and the two halves fit.
+
+**There is deliberately no "I am A / I am B" control anywhere in TruePad.** The
+role is *derived* from the pad's own origin, which travels with the pad rather
+than with the device. Only where that origin cannot say does TruePad fall back
+to the record it wrote **at the moment the pad was acquired** — and that record
+is written by the act of creating or receiving, never offered as a choice. When
+neither can say, **the app refuses to send or open with that pad** and tells you
+to acquire it again by a route that records which half is yours.
+
+Refusing is *loss*, which this project accepts. Guessing would be *reuse*, which
+it does not: two people who both believed they were A would spend the same
+slices against the same one-time authentication material, each device's counters
+advancing perfectly monotonically while nothing on either side could see it.
+
+> **You must not both generate.** If each person generates a pad and sends it to
+> the other, you have two unrelated pairs, not one shared pair. Generate once;
+> the other side receives.
+
 ## Where to go next
 
 - **[How online pad delivery works](docs/HOW-ONLINE-PAD-DELIVERY-WORKS.md)** — plain English, no cryptography required
@@ -151,11 +187,18 @@ The latest **formal release is 3.0.0**, tagged `v3.0.0`, and it is what the
 public demo serves. It is the project's **second** formally tagged release rather
 than its third: there was never a formal TruePad 1.0, so 2.0.0 is where the formal
 version history begins, not the second entry in it. 3.0.0 adds the Android and iOS
-editions, Sealed Pad Transfer on mobile, fixed-length records, corrected
-fixed-record capacity accounting, and the maximum-assurance architecture (see
-[Changelog](CHANGELOG.md) and [docs/MAXIMUM-ASSURANCE.md](docs/MAXIMUM-ASSURANCE.md)).
-It is **not** published to npm: the distribution is this repository, the GitHub
-release, and the Pages demo.
+editions, Sealed Pad Transfer on mobile, fixed-length records, and corrected
+fixed-record capacity accounting. It is **not** published to npm: the distribution
+is this repository, the GitHub release, and the Pages demo.
+
+3.0.0 also lands the **maximum-assurance architecture**, and it is worth being
+precise about what that is and is not. It is an *advanced native* path — reached
+through the `truepad2` CLI, not through any phone — adding a TPM-anchored
+monotonic authority, an operator-pinned root of trust and a ceremony state machine
+(see [Changelog](CHANGELOG.md) and
+[docs/MAXIMUM-ASSURANCE.md](docs/MAXIMUM-ASSURANCE.md)). **Installing the Android
+or iOS app does not give you any of it**, and physical TPM hardware validation was
+never performed — see below.
 
 Four things were **not** done for 3.0.0 and are not claimed: human TalkBack
 testing, human VoiceOver testing, physical TPM 2.0 validation, and independent
