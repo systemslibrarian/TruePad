@@ -69,13 +69,51 @@ Inspected in the resulting `TruePad.app`:
 | Camera symbols (expected) | `AVCapture` present |
 | App icon | **ABSENT — see §9** |
 
-### No export/upload path exists yet — NEEDS USER ACTION
+### Export path — PREPARED, NEVER RUN
 
-There is no `ExportOptions.plist`, no `xcodebuild -exportArchive` invocation, and
-no upload tooling anywhere in the repository. Turning an archive into an
-uploadable `.ipa` is therefore a step that does not yet exist here. It is listed
-as owed work rather than assumed, and it cannot meaningfully be written until a
-signing team exists to write it against.
+`ios/TruePadApp/ExportOptions.plist` targets `app-store-connect` with automatic
+signing and carries **no secrets**: no team id, no provisioning profile, no
+certificate. The team is supplied on the command line so an account identity never
+becomes a committed fact.
+
+```
+xcodebuild archive -scheme TruePadApp -configuration Release \
+    -destination 'generic/platform=iOS' -archivePath build/TruePad.xcarchive \
+    DEVELOPMENT_TEAM=YOUR_TEAM_ID
+
+ios/scripts/check-app-store-archive.sh build/TruePad.xcarchive
+
+xcodebuild -exportArchive -archivePath build/TruePad.xcarchive \
+    -exportPath build/export \
+    -exportOptionsPlist ios/TruePadApp/ExportOptions.plist \
+    -allowProvisioningUpdates DEVELOPMENT_TEAM=YOUR_TEAM_ID
+```
+
+**This path has never been executed successfully**, because it needs a developer
+team. It is a prepared route, not a demonstrated one, and is described that way
+deliberately.
+
+### Archive inspection — READY
+
+`ios/scripts/check-app-store-archive.sh` fails closed on: wrong or clone bundle
+identifier, missing icon, wrong marketing version, missing or invalid build
+number, test bundle in the archive, embedded frameworks, background modes, URL
+types, ATS exceptions, file sharing, missing privacy manifest, a wrong
+`ITSAppUsesNonExemptEncryption`, a camera string that has lost its retention
+promise, unexpected entitlements, networking or tracking symbols, and test-only
+KAT surface. It reuses the repaired captured-symbol machinery rather than
+re-implementing a `nm | grep -q` probe.
+
+Run against the current archive it reports **FAIL**, and the only failing section
+is the icon — which is the correct answer today.
+
+### Build number — READY
+
+`ios/scripts/set-build-number.sh` sets `CURRENT_PROJECT_VERSION` in all four
+configurations at once and **refuses to decrease it**, because App Store Connect
+rejects a build number that goes backward and finding that out at upload is the
+expensive way. `tests/release-state.test.ts` asserts all four agree. Current
+value: **2**. Bumping it is a TestFlight upload, not a GitHub release.
 
 ## 4. Signing — NEEDS USER ACTION
 
@@ -150,25 +188,24 @@ device is not data collected by a developer, and only the second is what Apple
 asks. No claim is made about what Apple or iOS itself collects; TruePad does not
 control that.
 
-## 9. App icon — BLOCKED: FINAL ARTWORK REQUIRED
+## 9. App icon — infrastructure READY / artwork BLOCKED
 
-There is no asset catalog in the app target, and the built bundle has no
-`Assets.car`, no `CFBundleIconName` and no `CFBundleIcons`. **The App Store will
-not accept a build without an icon.**
+**Infrastructure: READY.** `Assets.xcassets/AppIcon.appiconset` exists with the
+single 1024×1024 universal slot modern Xcode uses, is a resource of the app
+target, and `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon` is set in **both** app
+configurations. `tests/ios-distribution.test.ts` holds all of that, and was
+mutation-proved seven ways.
 
-This is an artwork blocker, not an engineering one. No placeholder has been
-committed, deliberately: a generic square would make the archive look ready when it
-is not. What is needed:
+**Artwork: BLOCKED — FINAL ARTWORK REQUIRED.** The slot carries no `filename`
+because no icon exists. Measured consequence, not assumed: with the catalog wired
+and the slot empty, `xcodebuild archive` **still succeeds**, and the bundle still
+has **no `Assets.car`, no `CFBundleIconName`, no `CFBundleIcons`**. Wiring the
+infrastructure does not fake readiness, which is the point.
 
-- `Assets.xcassets` in the app target containing an `AppIcon.appiconset`;
-- a **1024×1024** App Store marketing icon, opaque, no alpha channel, no rounded
-  corners (iOS applies the mask);
-- the catalog wired as a resource and `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`;
-- after wiring, `CFBundleIconName` must appear in the built `Info.plist` — that is
-  the check that it actually took.
-
-Review criteria worth applying to the artwork: legible at 40×40, adequate contrast
-in both light and dark home screens, and no text small enough to become noise.
+No placeholder has been committed, and the guard fails if one appears: an
+unreferenced image in the iconset is treated as filler dropped in to green the
+gate. The full handoff — sizes, colour space, legibility criteria and the
+acceptance procedure — is in [`APP-ICON-SPEC.md`](APP-ICON-SPEC.md).
 
 ## 10. Export compliance — NEEDS APP STORE CONNECT DETERMINATION
 

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Export options for an App Store / TestFlight build.
+
+    NO SECRETS ARE IN THIS FILE, and none may be added to it. No team ID, no
+    certificate, no provisioning-profile name, no Apple ID, no App Store Connect
+    API key. The team is supplied on the command line at export time so that a
+    developer's account identity never becomes a committed fact:
+
+        xcodebuild -exportArchive \
+            -archivePath  build/TruePad.xcarchive \
+            -exportPath   build/export \
+            -exportOptionsPlist ios/TruePadApp/ExportOptions.plist \
+            -allowProvisioningUpdates \
+            DEVELOPMENT_TEAM=YOUR_TEAM_ID
+
+    NOTHING HERE HAS BEEN RUN SUCCESSFULLY. Producing a signed archive needs an
+    Apple Developer team, which this repository deliberately does not carry, so
+    this file is a prepared path rather than a demonstrated one. See
+    docs/APP-STORE-READINESS.md for what that boundary means and what is still
+    owed.
+-->
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>app-store-connect</string>
+
+    <!-- Let Xcode fetch/refresh what it needs rather than pinning a profile by
+         name, which would bind this file to one developer's account. -->
+    <key>signingStyle</key>
+    <string>automatic</string>
+
+    <!-- TruePad performs no network I/O, so there are no symbols worth uploading
+         for crash symbolication of a network path; but dSYM upload is what makes
+         any future crash report readable at all, and costs nothing. -->
+    <key>uploadSymbols</key>
+    <true/>
+
+    <!-- App thinning is irrelevant here: one architecture, no asset variants. -->
+    <key>thinning</key>
+    <string>&lt;none&gt;</string>
+
+    <!-- Bitcode has been removed from the toolchain; stated explicitly so nobody
+         re-adds it believing it is required. -->
+    <key>compileBitcode</key>
+    <false/>
+
+    <!-- Do NOT let the export step invent an export-compliance answer. The
+         truthful declaration lives in the app's Info.plist
+         (ITSAppUsesNonExemptEncryption = true) and the determination is still
+         open — see docs/EXPORT-DETERMINATION-PACKET.md. -->
+    <key>manageAppVersionAndBuildNumber</key>
+    <false/>
+</dict>
+</plist>

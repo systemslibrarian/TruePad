@@ -49,6 +49,7 @@
 
 /* Begin PBXBuildFile section */
 		TP0000000000000000000008 /* TruePadAppMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = TP0000000000000000000007 /* TruePadAppMain.swift */; };
+		TP000000000000000000004D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = TP000000000000000000004C /* Assets.xcassets */; };
 		TP000000000000000000004B /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = TP000000000000000000004A /* PrivacyInfo.xcprivacy */; };
 		TP0000000000000000000017 /* TruePadUI in Frameworks */ = {isa = PBXBuildFile; productRef = TP0000000000000000000014 /* TruePadUI */; };
 		TP0000000000000000000018 /* TruePadSPT in Frameworks */ = {isa = PBXBuildFile; productRef = TP0000000000000000000015 /* TruePadSPT */; };
@@ -66,6 +67,7 @@
 		TP0000000000000000000007 /* TruePadAppMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TruePadAppMain.swift; sourceTree = "<group>"; };
 		TP0000000000000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		TP000000000000000000004A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		TP000000000000000000004C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		TP0000000000000000000020 /* TruePadAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TruePadAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		TP0000000000000000000021 /* TruePadPhysicalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TruePadPhysicalTests.swift; sourceTree = "<group>"; };
 		TP0000000000000000000041 /* ExternalSourceLifetimeTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalSourceLifetimeTest.swift; sourceTree = "<group>"; };
@@ -121,6 +123,7 @@
 				TP0000000000000000000007 /* TruePadAppMain.swift */,
 				TP0000000000000000000009 /* Info.plist */,
 				TP000000000000000000004A /* PrivacyInfo.xcprivacy */,
+				TP000000000000000000004C /* Assets.xcassets */,
 			);
 			path = TruePadApp;
 			sourceTree = "<group>";
@@ -252,6 +255,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				TP000000000000000000004B /* PrivacyInfo.xcprivacy in Resources */,
+				TP000000000000000000004D /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -337,6 +341,7 @@
 		TP0000000000000000000011 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "";
@@ -361,6 +366,7 @@
 		TP0000000000000000000012 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "";

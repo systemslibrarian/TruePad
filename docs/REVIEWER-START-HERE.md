@@ -72,7 +72,7 @@ npm run test:tpm-interop    # OPTIONAL, needs Linux + swtpm + tpm2-tools (emulat
 ```
 
 The falsification/mutation approach and the guard tests are described in the
-review brief. Reproduced counts at this SHA: **1753 unit tests / 84 files**
+review brief. Reproduced counts at this SHA: **1763 unit tests / 85 files**
 (`npm test`) and **36 Playwright tests / 6 files** (`npm run test:e2e`). Re-run
 them rather than citing these; they move whenever a test is added. The falsification matrix is described in the
 review brief; its count is not restated here, because a number quoted without
