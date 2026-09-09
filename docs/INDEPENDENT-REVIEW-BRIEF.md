@@ -14,9 +14,13 @@ is handled like any other security report under `SECURITY.md`.
 evidence, not independent review. This brief is the request for the latter.**
 
 - **Repository:** https://github.com/systemslibrarian/TruePad
-- **Version under review:** `master` = **3.0.0**, the current formal release.
-  (An earlier revision of this brief pointed at `3.0.0-dev.0` / `a6a8b6…`, which
-  was the development state at the time it was written.)
+- **Version under review:** pinned by
+  [`INDEPENDENT-REVIEW-PACKET.md`](INDEPENDENT-REVIEW-PACKET.md), **not by this
+  file** — a review target that reads "current master" cannot be triaged, and
+  master has moved past 3.0.0 with post-release assurance work. This brief is the
+  standing offer and the catalogue of adversarial questions; the packet is the
+  handoff. (Earlier revisions of this brief pointed at `3.0.0-dev.0` / `a6a8b6…`
+  and then at `master`; both were the state at the time of writing.)
 - **Previous formal release:** TruePad 2.0.0 (`240d7f0`).
 
 ## Scope

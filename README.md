@@ -46,7 +46,9 @@ working, audited implementation that states on every screen what it does not do.
 > [`docs/REVIEWER-START-HERE.md`](docs/REVIEWER-START-HERE.md) — a two-hour path,
 > the security-critical code map, the normative
 > [3.0 spec](docs/TRUEPAD-3-SPEC.md), and the questions we want challenged in the
-> [independent-review brief](docs/INDEPENDENT-REVIEW-BRIEF.md). Internal AI
+> [independent-review brief](docs/INDEPENDENT-REVIEW-BRIEF.md), with the
+> reviewer handoff in
+> [docs/INDEPENDENT-REVIEW-PACKET.md](docs/INDEPENDENT-REVIEW-PACKET.md). Internal AI
 > adversarial audits are engineering evidence, **not** an independent human review.
 
 ## Three guarantees, deliberately not merged

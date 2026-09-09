@@ -13,6 +13,12 @@ Releasing 3.0.0 did **not** create an independent review: none was performed, an
 none was required — see `docs/RELEASE-CHECKLIST-3.0.md` §C. This page is still the
 place to start if you want to do one.
 
+**Doing a paid or formal review?** Start instead with
+[`docs/INDEPENDENT-REVIEW-PACKET.md`](INDEPENDENT-REVIEW-PACKET.md) — it pins the
+exact review SHA, the six in-scope areas, what is explicitly out of scope, the
+attacker goals, and the reporting format. This page is the orientation; that one
+is the handoff.
+
 ## The claim, in one paragraph
 
 TruePad is an educational/research implementation of **authenticated one-time-pad
