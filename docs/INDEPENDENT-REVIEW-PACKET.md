@@ -21,6 +21,12 @@ report. It deliberately does not restate the normative documents; it links them.
 **Do not review "latest master".** Master moves; findings that name a moving
 target cannot be triaged. Every finding must say which SHA it applies to.
 
+**This packet was added *after* `REVIEW_SHA`,** so checking out `REVIEW_SHA` will
+not contain this file. That is expected: read the packet from `master`, and
+review the **code** at `REVIEW_SHA`. Everything committed after `REVIEW_SHA` is
+documentation — `git diff 1677291..master --stat` will show you exactly that, and
+if it ever shows code, this line is the bug.
+
 The **formal released baseline** is separate and immutable:
 
 | | |
